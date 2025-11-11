@@ -24,8 +24,6 @@
     # --- User and Path Configuration ---
     exa_user: "exasol"
     initial_user: "ubuntu"
-    # Version files directory (relative to deployment dir)
-    version_files_dir: "{{ playbook_dir }}/../.version-files"
 
   tasks:
     # ==============================================================================
@@ -43,12 +41,28 @@
         exa_admin_password: "{{ deployment_config.adminui_password }}"
         db_download_url: "{{ deployment_config.db_download_url }}"
         c4_download_url: "{{ deployment_config.c4_download_url }}"
+        exa_working_copy: "{{ deployment_config.db_working_copy | default('@' + (deployment_config.db_download_url | basename | regex_replace('\\.tar\\.gz$', ''))) }}"
       delegate_to: "{{ ansible_play_hosts[0] }}"
       run_once: true
 
-    - name: Determine if using local files
+    - name: Determine artifact locality
       ansible.builtin.set_fact:
-        use_local_files: "{{ db_download_url.startswith('file://') }}"
+        db_is_local: "{{ db_download_url.startswith('file://') }}"
+        c4_is_local: "{{ c4_download_url.startswith('file://') }}"
+      delegate_to: "{{ ansible_play_hosts[0] }}"
+      run_once: true
+
+    - name: Derive local artifact paths
+      ansible.builtin.set_fact:
+        db_local_path: "{{ db_is_local | ternary(db_download_url | regex_replace('^file://', ''), '') }}"
+        c4_local_path: "{{ c4_is_local | ternary(c4_download_url | regex_replace('^file://', ''), '') }}"
+      delegate_to: "{{ ansible_play_hosts[0] }}"
+      run_once: true
+
+    - name: Derive artifact filenames
+      ansible.builtin.set_fact:
+        db_artifact_filename: "{{ (db_local_path | basename) if (db_is_local | bool) else (db_download_url | basename) }}"
+        c4_artifact_filename: "{{ (c4_local_path | basename) if (c4_is_local | bool) else (c4_download_url | basename) }}"
       delegate_to: "{{ ansible_play_hosts[0] }}"
       run_once: true
 
@@ -61,9 +75,9 @@
           ansible.builtin.wait_for_connection:
             timeout: 300
 
-        - name: Set hostname to n1, n2, etc.
+        - name: Set hostname to n11, n12, etc.
           ansible.builtin.hostname:
-            name: "n{{ ansible_play_hosts.index(inventory_hostname) + 1 }}"
+            name: "n{{ ansible_play_hosts.index(inventory_hostname) + 11 }}"
 
         - name: Update apt cache
           ansible.builtin.apt:
@@ -82,7 +96,7 @@
           ansible.builtin.lineinfile:
             path: /etc/hosts
             regexp: "^{{ hostvars[item]['ansible_default_ipv4']['address'] }}.*"
-            line: "{{ hostvars[item]['ansible_default_ipv4']['address'] }} n{{ ansible_play_hosts.index(item) + 1 }}"
+            line: "{{ hostvars[item]['ansible_default_ipv4']['address'] }} n{{ ansible_play_hosts.index(item) + 11 }}"
             state: present
           loop: "{{ ansible_play_hosts }}"
 
@@ -129,7 +143,7 @@
             create: yes
             validate: 'visudo -cf %s'
 
-        - name: Generate SSH key for ubuntu user on n1
+        - name: Generate SSH key for ubuntu user on n11
           community.crypto.openssh_keypair:
             path: "/home/{{ initial_user }}/.ssh/id_rsa"
             owner: "{{ initial_user }}"
@@ -137,63 +151,89 @@
           delegate_to: "{{ ansible_play_hosts[0] }}"
           run_once: true
 
-        - name: Fetch the ubuntu user public key from n1
+        - name: Fetch the ubuntu user public key from n11
           ansible.builtin.slurp:
             src: "/home/{{ initial_user }}/.ssh/id_rsa.pub"
           register: ubuntu_user_pub_key
           delegate_to: "{{ ansible_play_hosts[0] }}"
           run_once: true
 
-        - name: Distribute n1's ubuntu public key to all nodes for the exasol user
+        - name: Distribute n11's ubuntu public key to all nodes for the exasol user
           ansible.posix.authorized_key:
             user: "{{ exa_user }}"
             state: present
             key: "{{ ubuntu_user_pub_key['content'] | b64decode }}"
 
-        - name: Distribute n1's 'initial_user' public key to all nodes
+        - name: Distribute n11's 'initial_user' public key to all nodes
           ansible.posix.authorized_key:
             user: "{{ initial_user }}"
             state: present
             key: "{{ ubuntu_user_pub_key['content'] | b64decode }}"
 
     # ==============================================================================
-    # SECTION 3: CONFIGURE STORAGE, GENERATE CONFIG, AND UPLOAD (Runs from n1)
+    # SECTION 3A: DISCOVER DATA DISKS AND CREATE SYMLINKS (RUNS ON EVERY NODE)
     # ==============================================================================
-    - name: "SECTION 3: Final Configuration and Software Upload"
+    - name: "SECTION 3A: Discover data disks and create /dev/exasol_data_* links"
       block:
-        - name: Find the Exasol release tarball in version files directory
-          ansible.builtin.find:
-            paths: "{{ version_files_dir }}"
-            patterns: "exasol-*.tar.gz"
-            file_type: file
-          register: tarball_search
-          delegate_to: localhost
-          become: no
-
-        - name: Set tarball path
-          ansible.builtin.set_fact:
-            exasol_tarball_path: "{{ tarball_search.files[0].path if tarball_search.files | length > 0 else '' }}"
-
-        - name: Fail if no Exasol tarball is found
-          ansible.builtin.fail:
-            msg: "No Exasol tarball found in {{ version_files_dir }}"
-          when: exasol_tarball_path == ''
-
-        - name: Extract release version from tarball filename
-          ansible.builtin.set_fact:
-            exasol_release_version: "{{ exasol_tarball_path | basename | regex_replace('\\.tar\\.gz$', '') }}"
-
-        - name: Find the unused data disks on n1 (assuming same path for all nodes)
+        - name: Find unused EBS volumes (exclude root, ephemeral, and loop devices)
           ansible.builtin.shell:
-            cmd: "comm -23 <(lsblk -dno NAME | sort) <(lsblk -no PKNAME | awk 'NF' | sort -u) | grep -v loop | awk '{print \"/dev/\"$1}'"
+            cmd: |
+              lsblk -ndo NAME,TYPE,MOUNTPOINT,SERIAL | \
+                awk '$2=="disk" && $3=="" && $4!="" {print "/dev/"$1}' | \
+                while read -r dev; do
+                  if [ -b "$dev" ]; then
+                    if ! lsblk -nlo MOUNTPOINT "$dev" | grep -q '^/'; then
+                      echo "$dev"
+                    fi
+                  fi
+                done
             executable: /bin/bash
           register: data_disks_result
           changed_when: false
           failed_when: data_disks_result.stdout == ""
 
-        - name: Consolidate data disk paths into a single string
+        - name: Record data disk device paths for this host
           ansible.builtin.set_fact:
-            data_disk_paths: "{{ data_disks_result.stdout_lines | join(' ') }}"
+            host_data_disk_paths: "{{ data_disks_result.stdout_lines }}"
+
+        - name: Remove stale exasol data symlinks
+          ansible.builtin.find:
+            paths: /dev
+            patterns: "exasol_data_*"
+            file_type: link
+          register: stale_symlinks
+
+        - name: Clean up stale exasol data symlinks
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ stale_symlinks.files }}"
+          when: stale_symlinks.matched | default(0) | int > 0
+
+        - name: Create /dev/exasol_data_* symlinks for discovered devices
+          ansible.builtin.file:
+            src: "{{ item }}"
+            path: "/dev/exasol_data_{{ '%02d' | format(loop.index) }}"
+            state: link
+            force: true
+          loop: "{{ host_data_disk_paths }}"
+          loop_control:
+            label: "{{ item }}"
+
+    # ==============================================================================
+    # SECTION 3B: CONFIGURE STORAGE METADATA, GENERATE CONFIG, AND UPLOAD (Runs from n11)
+    # ==============================================================================
+    - name: "SECTION 3B: Final Configuration and Software Upload"
+      block:
+        - name: Gather Exasol data disk symlinks from n11
+          ansible.builtin.command:
+            cmd: "ls -1 /dev/exasol_data_*"
+          register: exasol_symlinks
+          changed_when: false
+
+        - name: Consolidate data disk symlink paths into a single string
+          ansible.builtin.set_fact:
+            data_disk_paths: "{{ exasol_symlinks.stdout_lines | join(' ') }}"
 
         - name: Create final Exasol config file from template
           ansible.builtin.template:
@@ -207,9 +247,9 @@
             external_ips: "{{ ansible_play_hosts | map('extract', hostvars, 'ansible_host') | join(' ') }}"
             data_disk_paths_var: "{{ data_disk_paths }}"
             exa_image_password: "{{ random_image_pass }}"
-            exa_release_version: "{{ exasol_release_version }}"
+            exa_working_copy: "{{ exa_working_copy }}"
 
-        - name: Create installation directory on n1
+        - name: Create installation directory on n11
           ansible.builtin.file:
             path: "/home/{{ initial_user }}/exasol-release"
             state: directory
@@ -222,61 +262,48 @@
             cmd: "mv /home/{{ initial_user }}/config /home/{{ initial_user }}/exasol-release/config"
             creates: "/home/{{ initial_user }}/exasol-release/config"
 
-        # ==============================================================================
-        # FILE TRANSFER: Use transfer_file.yml for file:// URLs only
-        # ==============================================================================
-        - name: Transfer files using file transfer method (for file:// URLs)
-          when: use_local_files | bool
-          block:
-            - name: Get stats and checksums of local release files
-              ansible.builtin.stat:
-                path: "{{ item }}"
-                checksum_algorithm: sha256
-              with_fileglob:
-                - "{{ version_files_dir }}/c4*"
-                - "{{ version_files_dir }}/exasol-*.tar.gz"
-              register: local_release_files_stat
-              delegate_to: localhost
-              become: no
+        - name: Transfer local Exasol database tarball
+          when: db_is_local | bool
+          ansible.builtin.copy:
+            src: "{{ db_local_path }}"
+            dest: "/home/{{ initial_user }}/exasol-release/{{ db_artifact_filename }}"
+            owner: "{{ initial_user }}"
+            group: "{{ initial_user }}"
+            mode: '0644'
 
-            - name: Transfer release files from local paths
-              ansible.builtin.include_tasks: transfer_file.yml
-              loop: "{{ local_release_files_stat.results }}"
-              loop_control:
-                loop_var: file_item
-                label: "{{ file_item.item | basename }}"
-              vars:
-                dest_path: "/home/{{ initial_user }}/exasol-release/{{ file_item.item | basename }}"
-              when: local_release_files_stat is defined
+        - name: Download Exasol database tarball
+          when: not (db_is_local | bool)
+          ansible.builtin.get_url:
+            url: "{{ db_download_url }}"
+            dest: "/home/{{ initial_user }}/exasol-release/{{ db_artifact_filename }}"
+            owner: "{{ initial_user }}"
+            group: "{{ initial_user }}"
+            mode: '0644'
+          register: db_download
+          retries: 3
+          delay: 5
 
-        # ==============================================================================
-        # DIRECT DOWNLOAD: For HTTP(S) URLs, download directly on the remote node
-        # ==============================================================================
-        - name: Download files directly (for http(s):// URLs)
-          when: not (use_local_files | bool)
-          block:
-            - name: Download Exasol database tarball
-              ansible.builtin.get_url:
-                url: "{{ db_download_url }}"
-                dest: "/home/{{ initial_user }}/exasol-release/{{ db_download_url | basename }}"
-                owner: "{{ initial_user }}"
-                group: "{{ initial_user }}"
-                mode: '0644'
-              register: db_download
-              retries: 3
-              delay: 5
+        - name: Transfer local c4 binary
+          when: c4_is_local | bool
+          ansible.builtin.copy:
+            src: "{{ c4_local_path }}"
+            dest: "/home/{{ initial_user }}/exasol-release/{{ c4_artifact_filename }}"
+            owner: "{{ initial_user }}"
+            group: "{{ initial_user }}"
+            mode: '0755'
 
-            - name: Download c4 binary
-              ansible.builtin.get_url:
-                url: "{{ c4_download_url }}"
-                dest: "/home/{{ initial_user }}/exasol-release/{{ c4_download_url | basename }}"
-                owner: "{{ initial_user }}"
-                group: "{{ initial_user }}"
-                mode: '0755'
-              register: c4_download
-              retries: 3
-              delay: 5
+        - name: Download c4 binary
+          when: not (c4_is_local | bool)
+          ansible.builtin.get_url:
+            url: "{{ c4_download_url }}"
+            dest: "/home/{{ initial_user }}/exasol-release/{{ c4_artifact_filename }}"
+            owner: "{{ initial_user }}"
+            group: "{{ initial_user }}"
+            mode: '0755'
+          register: c4_download
+          retries: 3
+          delay: 5
 
-      # This entire block is delegated to run on n1 only
+      # This entire block is delegated to run on n11 only
       delegate_to: "{{ ansible_play_hosts[0] }}"
       run_once: true

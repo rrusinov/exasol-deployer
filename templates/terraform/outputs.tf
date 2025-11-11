@@ -7,7 +7,7 @@ output "instance_details" {
   description = "Detailed information for each created instance."
   value = {
     for idx, instance in aws_instance.exasol_node :
-    "exasol-node-${idx + 1}" => {
+    "n${idx + 11}" => {
       instance_id = instance.id
       public_ip   = instance.public_ip
       private_ip  = instance.private_ip
@@ -53,10 +53,10 @@ output "next_steps" {
        ansible-playbook -i ${local_file.ansible_inventory.filename} setup-exasol-cluster.yml
 
     3. Connect to a node using the generated SSH config:
-       ssh -F ${local_file.ssh_config.filename} exasol-node-1
+       ssh -F ${local_file.ssh_config.filename} n11
 
     Or use individual SSH commands:
-    ${join("\n    ", [for idx, instance in aws_instance.exasol_node : "ssh -i ${local_file.exasol_private_key_pem.filename} ubuntu@${instance.public_ip}  # exasol-node-${idx + 1}"])}
+    ${join("\n    ", [for idx, instance in aws_instance.exasol_node : "ssh -i ${local_file.exasol_private_key_pem.filename} ubuntu@${instance.public_ip}  # n${idx + 11}"])}
   EOT
 }
 

@@ -77,44 +77,6 @@ cmd_deploy() {
         c4_url=$(jq -r '.c4_download_url // empty' "$credentials_file")
     fi
 
-    # Download version files only if URLs start with file://
-    local version_files_dir="$deploy_dir/.version-files"
-    if [[ "$db_url" == file://* ]]; then
-        log_info ""
-        log_info "📦 Preparing local version files..."
-
-        ensure_directory "$version_files_dir"
-
-        # Extract file paths from file:// URLs
-        local db_file_path="${db_url#file://}"
-        local c4_file_path="${c4_url#file://}"
-
-        # Copy files to version files directory if not already there
-        if [[ ! -f "$version_files_dir/$(basename "$db_file_path")" ]]; then
-            log_info "Copying database tarball: $(basename "$db_file_path")"
-            cp "$db_file_path" "$version_files_dir/" || {
-                state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
-                die "Failed to copy database tarball from $db_file_path"
-            }
-        fi
-
-        if [[ ! -f "$version_files_dir/$(basename "$c4_file_path")" ]]; then
-            log_info "Copying c4 binary: $(basename "$c4_file_path")"
-            cp "$c4_file_path" "$version_files_dir/" || {
-                state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
-                die "Failed to copy c4 binary from $c4_file_path"
-            }
-            chmod +x "$version_files_dir/$(basename "$c4_file_path")"
-        fi
-
-        log_info "Local version files ready"
-    else
-        # For HTTP(S) URLs, Ansible will download directly on the remote nodes
-        log_info "Using remote download URLs (files will be downloaded by Ansible)"
-        # Still create the directory for consistency
-        ensure_directory "$version_files_dir"
-    fi
-
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"
 

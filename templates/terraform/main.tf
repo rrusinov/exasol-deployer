@@ -22,7 +22,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      "owner"      = "<UNKNWON>"
+      "owner" = var.owner
     }
   }
 }
@@ -112,16 +112,29 @@ resource "aws_security_group" "exasol_cluster" {
   description = "Security group for Exasol cluster"
   vpc_id      = aws_vpc.exasol_vpc.id
 
-  # SSH access
-  ingress {
-    description = "SSH from allowed CIDR"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.allowed_cidr]
+  # External access rules - dynamically created for each port
+  dynamic "ingress" {
+    for_each = {
+      22    = "SSH access"
+      2581  = "Default bucketfs"
+      8443  = "Exasol Admin UI"
+      8563  = "Default Exasol database connection"
+      20002 = "Exasol container ssh"
+      20003 = "Exasol confd API"
+    }
+
+    content {
+      from_port   = ingress.key
+      to_port     = ingress.key
+      protocol    = "tcp"
+      cidr_blocks = [var.allowed_cidr]
+      description = ingress.value
+    }
   }
 
+  # ICMP for network diagnostics
   ingress {
+    description = "ICMP from allowed CIDR"
     from_port   = -1
     to_port     = -1
     protocol    = "icmp"
@@ -206,7 +219,7 @@ resource "aws_instance" "exasol_node" {
   }
 
   tags = {
-    Name    = "exasol-node-${count.index + 1}"
+    Name    = "n${count.index + 11}"
     Role    = "worker"
     Cluster = "exasol-cluster"
   }
@@ -226,7 +239,7 @@ resource "aws_ebs_volume" "data_volume" {
   encrypted         = true
 
   tags = {
-    Name    = "exasol-node-${count.index + 1}-data"
+    Name    = "n${count.index + 11}-data"
     Cluster = "exasol-cluster"
   }
 }
@@ -256,7 +269,7 @@ resource "local_file" "ssh_config" {
   content = <<-EOF
     # Exasol Cluster SSH Config
     %{for idx, instance in aws_instance.exasol_node~}
-    Host exasol-node-${idx + 1}
+    Host n${idx + 11}
         HostName ${instance.public_ip}
         User ubuntu
         IdentityFile ${local_file.exasol_private_key_pem.filename}

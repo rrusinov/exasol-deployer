@@ -56,6 +56,10 @@ cmd_destroy() {
                 rm -rf "$deploy_dir"
                 log_info "Deployment directory removed"
             fi
+        else
+            # With --auto-approve, automatically remove the deployment directory
+            rm -rf "$deploy_dir"
+            log_info "Deployment directory removed"
         fi
         return 0
     fi
@@ -137,6 +141,9 @@ cmd_destroy() {
             log_info "Deployment directory preserved: $deploy_dir"
         fi
     else
-        log_info "Deployment directory preserved: $deploy_dir"
+        # With --auto-approve, automatically remove the deployment directory
+        cd ..
+        rm -rf "$deploy_dir"
+        log_info "Deployment directory removed"
     fi
 }

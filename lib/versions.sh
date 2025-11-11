@@ -66,10 +66,13 @@ get_version_config() {
 validate_version_format() {
     local version="$1"
 
-    # Expected format: X.Y.Z-ARCH (e.g., 8.0.0-x86_64 or 8.0.0-arm64)
-    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(x86_64|arm64)$ ]]; then
+    # Expected formats:
+    # - X.Y.Z-ARCH (e.g., 8.0.0-x86_64 or 8.0.0-arm64)
+    # - name-X.Y.Z-ARCH (e.g., exasol-2025.1.0-x86_64)
+    if [[ ! "$version" =~ ^([a-z]+-)?[0-9]+\.[0-9]+\.[0-9]+-(x86_64|arm64)(-[a-z]+)?$ ]]; then
         log_error "Invalid version format: $version"
-        log_error "Expected format: X.Y.Z-ARCH (e.g., 8.0.0-x86_64 or 8.0.0-arm64)"
+        log_error "Expected format: [name-]X.Y.Z-ARCH[-suffix]"
+        log_error "Examples: 8.0.0-x86_64, exasol-2025.1.0-x86_64, 8.0.0-arm64-local"
         return 1
     fi
 }

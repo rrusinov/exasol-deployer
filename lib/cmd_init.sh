@@ -172,9 +172,10 @@ cmd_init() {
     local credentials_file="$deploy_dir/.credentials.json"
 
     # Get download URLs from version config
-    local db_url c4_url
+    local db_url c4_url db_working_copy
     db_url=$(get_version_config "$db_version" "DB_DOWNLOAD_URL")
     c4_url=$(get_version_config "$db_version" "C4_DOWNLOAD_URL")
+    db_working_copy=$(get_version_config "$db_version" "DB_VERSION")
 
     cat > "$credentials_file" <<EOF
 {
@@ -182,6 +183,7 @@ cmd_init() {
   "adminui_password": "$adminui_password",
   "db_download_url": "$db_url",
   "c4_download_url": "$c4_url",
+  "db_working_copy": "$db_working_copy",
   "created_at": "$(get_timestamp)"
 }
 EOF
