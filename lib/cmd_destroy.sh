@@ -47,20 +47,10 @@ cmd_destroy() {
     # Check if anything was actually deployed
     if [[ ! -f "$deploy_dir/terraform.tfstate" ]]; then
         log_warn "No Terraform state found. Nothing to destroy."
-
-        # Ask if user wants to clean up the directory
-        if [[ "$auto_approve" == false ]]; then
-            echo ""
-            read -p "Remove deployment directory? (yes/no): " confirm
-            if [[ "$confirm" == "yes" ]]; then
-                rm -rf "$deploy_dir"
-                log_info "Deployment directory removed"
-            fi
-        else
-            # With --auto-approve, automatically remove the deployment directory
-            rm -rf "$deploy_dir"
-            log_info "Deployment directory removed"
-        fi
+        # Do NOT remove the deployment directory automatically.
+        # Inform the user that the directory is preserved and can be removed manually.
+        log_info "Deployment directory preserved: $deploy_dir"
+        log_info "If you want to remove it, delete it manually when it's safe to do so."
         return 0
     fi
 
@@ -101,8 +91,9 @@ cmd_destroy() {
     # Create lock
     lock_create "$deploy_dir" "destroy" || die "Failed to create lock"
 
-    # Trap to ensure lock is removed on exit
-    trap 'lock_remove "$deploy_dir"' EXIT INT TERM
+    # Trap to ensure lock is removed on exit. Expand $deploy_dir now so the
+    # trap uses a literal path when it runs (avoids unbound variable with set -u).
+    trap "lock_remove \"$deploy_dir\"" EXIT INT TERM
 
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"
@@ -111,39 +102,36 @@ cmd_destroy() {
     log_info ""
     log_info "🗑️  Destroying infrastructure..."
 
+    local destroy_rc=0
     if ! tofu destroy -auto-approve; then
+        destroy_rc=$?
         lock_remove "$deploy_dir"
-        die "Terraform destroy failed"
-    fi
-
-    # Clean up generated files
-    log_info ""
-    log_info "🧹 Cleaning up deployment files..."
-
-    rm -f inventory.ini ssh_config tfplan exasol-key.pem
-    rm -rf .terraform terraform.tfstate.backup
-
-    # Remove lock
-    lock_remove "$deploy_dir"
-
-    log_info ""
-    log_info "✅ All resources destroyed successfully!"
-    log_info ""
-
-    # Ask if user wants to remove the deployment directory
-    if [[ "$auto_approve" == false ]]; then
-        read -p "Remove deployment directory? (yes/no): " confirm
-        if [[ "$confirm" == "yes" ]]; then
-            cd ..
-            rm -rf "$deploy_dir"
-            log_info "Deployment directory removed"
-        else
-            log_info "Deployment directory preserved: $deploy_dir"
-        fi
+        log_error "Terraform destroy failed"
+        # Do not exit here with die() because we want to reach the final
+        # inspection/notification block and inform the user that manual
+        # cleanup is required before removing the deployment directory.
     else
-        # With --auto-approve, automatically remove the deployment directory
-        cd ..
-        rm -rf "$deploy_dir"
-        log_info "Deployment directory removed"
+        destroy_rc=0
     fi
+
+    # Clean up generated files only if destroy succeeded
+    if [[ $destroy_rc -eq 0 ]]; then
+        log_info ""
+        log_info "🧹 Cleaning up deployment files..."
+        rm -f inventory.ini ssh_config tfplan exasol-key.pem
+        rm -rf .terraform terraform.tfstate.backup
+
+        # Remove lock
+        lock_remove "$deploy_dir"
+
+        log_info ""
+        log_info "✅ All resources destroyed successfully!"
+        log_info ""
+    else
+        # Keep the lock removal as we already removed it on failure above.
+        log_warn "Some resources may not have been destroyed. Manual inspection and cleanup are required."
+        log_warn "The deployment directory will NOT be removed automatically." 
+        log_info "Please investigate the failure and clean up resources/files before deleting the deployment directory: $deploy_dir"
+    fi
+
 }
