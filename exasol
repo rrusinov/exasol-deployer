@@ -253,7 +253,10 @@ main() {
                 show_init_help
                 exit 0
             fi
-            check_required_commands
+            # Skip dependency check for --list-versions
+            if [[ "${1:-}" != "--list-versions" ]]; then
+                check_required_commands
+            fi
             cmd_init --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         deploy)
