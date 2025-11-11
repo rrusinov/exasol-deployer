@@ -175,50 +175,54 @@
     # ==============================================================================
     - name: "SECTION 3A: Discover data disks and create /dev/exasol_data_* links"
       block:
-        - name: Find unused EBS volumes (exclude root, ephemeral, and loop devices)
+        - name: Parse data volume IDs from inventory
+          ansible.builtin.set_fact:
+            volume_ids_list: "{{ data_volume_ids | from_json }}"
+
+        - name: Install symlink creation script for boot persistence
+          ansible.builtin.template:
+            src: exasol-data-symlinks.sh.j2
+            dest: /usr/local/bin/exasol-data-symlinks.sh
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: Install systemd service for symlink creation on boot
+          ansible.builtin.copy:
+            src: exasol-data-symlinks.service
+            dest: /etc/systemd/system/exasol-data-symlinks.service
+            owner: root
+            group: root
+            mode: '0644'
+          notify: Reload systemd
+
+        - name: Enable and start exasol-data-symlinks service
+          ansible.builtin.systemd:
+            name: exasol-data-symlinks.service
+            enabled: yes
+            daemon_reload: yes
+            state: started
+
+        - name: Discover existing /dev/exasol_data_* symlinks (sorted)
           ansible.builtin.shell:
             cmd: |
-              lsblk -ndo NAME,TYPE,MOUNTPOINT,SERIAL | \
-                awk '$2=="disk" && $3=="" && $4!="" {print "/dev/"$1}' | \
-                while read -r dev; do
-                  if [ -b "$dev" ]; then
-                    if ! lsblk -nlo MOUNTPOINT "$dev" | grep -q '^/'; then
-                      echo "$dev"
-                    fi
-                  fi
-                done
+              shopt -s nullglob
+              symlinks=(/dev/exasol_data_*)
+
+              if [ ${#symlinks[@]} -eq 0 ]; then
+                echo "ERROR: No /dev/exasol_data_* symlinks found" >&2
+                exit 1
+              fi
+
+              printf '%s\n' "${symlinks[@]}" | sort
             executable: /bin/bash
           register: data_disks_result
           changed_when: false
-          failed_when: data_disks_result.stdout == ""
+          failed_when: data_disks_result.rc != 0
 
-        - name: Record data disk device paths for this host
+        - name: Record data disk symlink paths for this host (in sorted order)
           ansible.builtin.set_fact:
             host_data_disk_paths: "{{ data_disks_result.stdout_lines }}"
-
-        - name: Remove stale exasol data symlinks
-          ansible.builtin.find:
-            paths: /dev
-            patterns: "exasol_data_*"
-            file_type: link
-          register: stale_symlinks
-
-        - name: Clean up stale exasol data symlinks
-          ansible.builtin.file:
-            path: "{{ item.path }}"
-            state: absent
-          loop: "{{ stale_symlinks.files }}"
-          when: stale_symlinks.matched | default(0) | int > 0
-
-        - name: Create /dev/exasol_data_* symlinks for discovered devices
-          ansible.builtin.file:
-            src: "{{ item }}"
-            path: "/dev/exasol_data_{{ '%02d' | format(loop.index) }}"
-            state: link
-            force: true
-          loop: "{{ host_data_disk_paths }}"
-          loop_control:
-            label: "{{ item }}"
 
     # ==============================================================================
     # SECTION 3B: CONFIGURE STORAGE METADATA, GENERATE CONFIG, AND UPLOAD (Runs from n11)
@@ -307,3 +311,8 @@
       # This entire block is delegated to run on n11 only
       delegate_to: "{{ ansible_play_hosts[0] }}"
       run_once: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: yes

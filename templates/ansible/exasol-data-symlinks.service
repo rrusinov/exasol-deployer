@@ -1,0 +1,26 @@
+[Unit]
+Description=Create stable Exasol data volume symlinks
+Documentation=https://github.com/exasol/exasol-deployer
+# Run after local filesystems are mounted and devices are available
+After=local-fs.target
+# Ensure udev has finished processing devices
+After=systemd-udev-settle.service
+# Run before any services that might need these symlinks
+Before=docker.service
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/exasol-data-symlinks.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+ProtectSystem=strict
+ReadWritePaths=/dev
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

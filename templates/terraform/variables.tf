@@ -62,6 +62,13 @@ variable "data_volume_size" {
   # Value will be set in variables.auto.tfvars during initialization
 }
 
+variable "data_volumes_per_node" {
+  description = "The number of data volumes to attach to each node."
+  type        = number
+  default     = 1
+  # Optional: Can be overridden in variables.auto.tfvars
+}
+
 variable "owner" {
   description = "Owner tag for all resources. Set with --owner during initialization."
   type        = string

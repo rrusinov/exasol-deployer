@@ -59,6 +59,15 @@ locals {
   # Map the architecture variable to the string used in the AMI name filter.
   # AWS and Ubuntu AMIs often use 'amd64' in the name for 'x86_64' architecture.
   ami_name_arch = var.instance_architecture == "x86_64" ? "amd64" : "arm64"
+
+  # Group volume IDs by node for Ansible inventory
+  # Creates a map: { "0" => ["vol-xxx", "vol-yyy"], "1" => ["vol-zzz", "vol-aaa"], ... }
+  node_volumes = {
+    for node_idx in range(var.node_count) : node_idx => [
+      for vol_idx in range(var.data_volumes_per_node) :
+      aws_ebs_volume.data_volume[node_idx * var.data_volumes_per_node + vol_idx].id
+    ]
+  }
 }
 
 data "aws_availability_zones" "available" {
@@ -107,9 +116,7 @@ locals {
   preferred_azs = length(var.preferred_availability_zones) > 0 ? var.preferred_availability_zones : data.aws_availability_zones.available.names
 
   # Only keep AZs that actually support the chosen instance type.
-  supported_azs = distinct([
-    for offering in data.aws_ec2_instance_type_offerings.supported.instance_type_offerings : offering.location
-  ])
+  supported_azs = distinct(tolist(data.aws_ec2_instance_type_offerings.supported.locations))
 
   prioritized_supported_azs = [
     for az in local.preferred_azs : az
@@ -274,37 +281,41 @@ resource "aws_instance" "exasol_node" {
 }
 
 # EBS Data Volumes
+# Creates data_volumes_per_node volumes for each node
 resource "aws_ebs_volume" "data_volume" {
-  count             = var.node_count
-  availability_zone = aws_instance.exasol_node[count.index].availability_zone
+  count             = var.node_count * var.data_volumes_per_node
+  availability_zone = aws_instance.exasol_node[floor(count.index / var.data_volumes_per_node)].availability_zone
   size              = var.data_volume_size
   type              = "gp3"
   encrypted         = true
 
   tags = {
-    Name    = "n${count.index + 11}-data"
-    Cluster = "exasol-cluster"
+    Name        = "n${floor(count.index / var.data_volumes_per_node) + 11}-data-${(count.index % var.data_volumes_per_node) + 1}"
+    Cluster     = "exasol-cluster"
+    VolumeIndex = tostring((count.index % var.data_volumes_per_node) + 1)
+    NodeIndex   = tostring(floor(count.index / var.data_volumes_per_node) + 11)
   }
 }
 
 # Attach Data Volumes
 resource "aws_volume_attachment" "data_attachment" {
-  count       = var.node_count
-  device_name = "/dev/sdf"
+  count       = var.node_count * var.data_volumes_per_node
+  device_name = "/dev/sd${substr("fghijklmnopqrstuvwxyz", count.index % var.data_volumes_per_node, 1)}"
   volume_id   = aws_ebs_volume.data_volume[count.index].id
-  instance_id = aws_instance.exasol_node[count.index].id
+  instance_id = aws_instance.exasol_node[floor(count.index / var.data_volumes_per_node)].id
 }
 
 # Generate Ansible Inventory
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/inventory.tftpl", {
-    instances = aws_instance.exasol_node
-    ssh_key   = local_file.exasol_private_key_pem.filename
+    instances    = aws_instance.exasol_node
+    node_volumes = local.node_volumes
+    ssh_key      = local_file.exasol_private_key_pem.filename
   })
   filename = "${path.module}/inventory.ini"
   file_permission = "0644" # REMOVED executable flag
 
-  depends_on = [aws_instance.exasol_node]
+  depends_on = [aws_instance.exasol_node, aws_volume_attachment.data_attachment]
 }
 
 # Generate SSH config
