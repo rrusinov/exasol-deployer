@@ -1,6 +1,6 @@
 # Exasol Cloud Deployer
 
-A bash-based cloud deployer for Exasol database that uses OpenTofu (Terraform) and Ansible to provision and configure Exasol clusters on AWS. This tool simulates the interface of the binary Exasol deployer while providing full control over the deployment process.
+A bash-based cloud deployer for Exasol database that uses OpenTofu (Terraform) and Ansible to provision and configure Exasol clusters on AWS. This tool provides a simple command-line interface for managing Exasol deployments with full control over the deployment process.
 
 ## Features
 
@@ -10,6 +10,7 @@ A bash-based cloud deployer for Exasol database that uses OpenTofu (Terraform) a
 - **Infrastructure as Code**: Uses OpenTofu/Terraform for reproducible infrastructure provisioning
 - **Automated Configuration**: Ansible playbooks for complete cluster setup
 - **Credential Management**: Secure password generation and storage
+- **Dynamic Configuration**: All Terraform variables generated from command-line parameters and version configurations
 
 ## Prerequisites
 
@@ -64,9 +65,7 @@ aws configure --profile default
 
 Output:
 ```
-8.0.0-x86_64
-8.0.0-arm64
-7.1.0-x86_64
+exasol-2025.1.4
 ```
 
 ### 2. Initialize a Deployment
@@ -78,12 +77,19 @@ Output:
 # Initialize with specific version and cluster size
 ./exasol init \
   --deployment-dir ./my-deployment \
-  --db-version 8.0.0-x86_64 \
+  --db-version exasol-2025.1.4 \
   --cluster-size 4 \
   --instance-type c7a.16xlarge \
   --data-volume-size 500 \
   --aws-region us-east-1
 ```
+
+The init command will:
+- Create the deployment directory structure
+- Generate dynamic Terraform variables based on your parameters and database version
+- Set default instance type from version configuration (can be overridden with `--instance-type`)
+- Generate secure random passwords for database and AdminUI
+- Copy Terraform and Ansible templates
 
 ### 3. Deploy the Infrastructure
 
@@ -92,13 +98,31 @@ Output:
 ```
 
 This will:
-1. Download required database files and binaries
+1. Download required database files and c4 binary
 2. Initialize OpenTofu/Terraform
 3. Create AWS infrastructure (VPC, subnets, security groups, EC2 instances, EBS volumes)
 4. Configure instances with Ansible
 5. Set up the Exasol cluster
 
-### 4. Check Deployment Status
+### 4. Connect to Your Cluster
+
+After deployment, you can connect to nodes using the generated SSH config:
+
+```bash
+# Using SSH config
+ssh -F ./my-deployment/ssh_config n11
+
+# Or directly
+ssh -i ./my-deployment/exasol-key.pem ubuntu@<public_ip>
+```
+
+Node naming convention:
+- First node: `n11`
+- Second node: `n12`
+- Third node: `n13`
+- And so on...
+
+### 5. Check Deployment Status
 
 ```bash
 ./exasol status --deployment-dir ./my-deployment
@@ -108,7 +132,7 @@ Output (JSON):
 ```json
 {
   "status": "database_ready",
-  "db_version": "8.0.0-x86_64",
+  "db_version": "exasol-2025.1.4",
   "architecture": "x86_64",
   "terraform_state_exists": true,
   "created_at": "2025-01-15T10:30:00Z",
@@ -116,10 +140,14 @@ Output (JSON):
 }
 ```
 
-### 5. Destroy the Deployment
+### 6. Destroy the Deployment
 
 ```bash
+# With confirmation prompts
 ./exasol destroy --deployment-dir ./my-deployment
+
+# Auto-approve (no prompts, removes deployment directory)
+./exasol destroy --deployment-dir ./my-deployment --auto-approve
 ```
 
 **Warning**: This will destroy all resources including data volumes. Make sure to backup any important data first.
@@ -135,10 +163,11 @@ Initialize a new deployment directory with configuration files.
 ```
 
 **Flags:**
-- `--db-version string`: Database version (format: X.Y.Z-ARCH, e.g., 8.0.0-x86_64)
+- `--deployment-dir string`: Directory for deployment files (default: current directory)
+- `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., exasol-2025.1.4 (x86_64 is implicit))
 - `--list-versions`: List all available database versions
 - `--cluster-size number`: Number of nodes (default: 1)
-- `--instance-type string`: EC2 instance type (auto-detected if not specified)
+- `--instance-type string`: EC2 instance type (uses version's DEFAULT_INSTANCE_TYPE if not specified)
 - `--data-volume-size number`: Data volume size in GB (default: 100)
 - `--db-password string`: Database password (randomly generated if not specified)
 - `--adminui-password string`: Admin UI password (randomly generated if not specified)
@@ -146,6 +175,13 @@ Initialize a new deployment directory with configuration files.
 - `--aws-region string`: AWS region (default: "us-east-1")
 - `--aws-profile string`: AWS profile to use (default: "default")
 - `--allowed-cidr string`: CIDR block for access (default: "0.0.0.0/0")
+
+**Configuration Flow:**
+1. Parse command-line arguments
+2. Load database version configuration from `versions.conf`
+3. Extract architecture and default instance type from version config
+4. Generate `variables.auto.tfvars` with all dynamic values
+5. Create `.credentials.json` with passwords and download URLs
 
 ### `deploy`
 
@@ -175,11 +211,11 @@ Get the current status of a deployment in JSON format.
 Destroy all resources associated with a deployment.
 
 ```bash
-./exasol destroy --deployment-dir ./my-deployment
+./exasol destroy --deployment-dir ./my-deployment [--auto-approve]
 ```
 
 **Flags:**
-- `--auto-approve`: Skip confirmation prompt
+- `--auto-approve`: Skip all confirmation prompts and automatically remove deployment directory
 
 ### `version`
 
@@ -204,23 +240,47 @@ Show help information.
 
 Database versions are configured in [`versions.conf`](versions.conf). Each version entry includes:
 
-- Architecture (x86_64 or arm64)
-- Database version number
-- Download URLs for database tarball and c4 binary
-- Checksums for verification
-- Default instance type
+- **ARCHITECTURE**: x86_64 or arm64
+- **DB_VERSION**: Version string for c4 (e.g., `@exasol-2025.1.4` or `@exasol-2025.1.4~linux-arm64`)
+- **DB_DOWNLOAD_URL**: URL to database tarball (HTTP/HTTPS or file://)
+- **DB_CHECKSUM**: SHA256 checksum for verification
+- **C4_VERSION**: c4 binary version
+- **C4_DOWNLOAD_URL**: URL to c4 binary (HTTP/HTTPS or file://)
+- **C4_CHECKSUM**: SHA256 checksum for c4 binary
+- **DEFAULT_INSTANCE_TYPE**: Default EC2 instance type for this version
 
 Example entry:
 ```ini
-[8.0.0-x86_64]
+[exasol-2025.1.4]
 ARCHITECTURE=x86_64
-DB_VERSION=8.0.0
-DB_DOWNLOAD_URL=https://...
-DB_CHECKSUM=sha256:...
-C4_VERSION=24.1.0
-C4_DOWNLOAD_URL=https://...
-C4_CHECKSUM=sha256:...
-DEFAULT_INSTANCE_TYPE=c7a.16xlarge
+DB_VERSION=@exasol-2025.1.4
+DB_DOWNLOAD_URL=https://x-up.s3.amazonaws.com/releases/exasol/exasol-2025.1.4.tar.gz
+DB_CHECKSUM=sha256:placeholder
+C4_VERSION=4.28.3
+C4_DOWNLOAD_URL=https://x-up.s3.amazonaws.com/releases/c4/linux/x86_64/4.28.3/c4
+C4_CHECKSUM=sha256:placeholder
+DEFAULT_INSTANCE_TYPE=m6idn.large
+```
+
+### Dynamic Variable Generation
+
+Unlike traditional Terraform setups with hardcoded defaults, this deployer generates `variables.auto.tfvars` dynamically during initialization:
+
+**variables.tf** (Template):
+- Defines variable types and descriptions
+- No hardcoded default values (except `root_volume_size`)
+- All values set via `variables.auto.tfvars`
+
+**variables.auto.tfvars** (Generated):
+```hcl
+aws_region = "us-east-1"
+aws_profile = "default"
+instance_type = "m6idn.large"          # From version config or --instance-type
+instance_architecture = "x86_64"       # From version config
+node_count = 1                         # From --cluster-size
+data_volume_size = 100                 # From --data-volume-size
+allowed_cidr = "0.0.0.0/0"            # From --allowed-cidr
+owner = "exasol-default"               # From --owner
 ```
 
 ### Deployment Directory Structure
@@ -230,35 +290,41 @@ After initialization, a deployment directory contains:
 ```
 my-deployment/
 ├── .exasol.json              # State file (do not modify)
-├── .credentials.json         # Passwords (keep secure, chmod 600)
-├── .templates/              # Terraform and Ansible templates
+├── .credentials.json         # Passwords and URLs (chmod 600)
+├── .templates/               # Terraform and Ansible templates
 │   ├── main.tf
 │   ├── variables.tf
 │   ├── outputs.tf
 │   ├── inventory.tftpl
 │   ├── setup-exasol-cluster.yml
 │   └── config.j2
-├── variables.auto.tfvars    # Terraform variables
-├── README.md                # Deployment-specific documentation
+├── variables.auto.tfvars     # Generated Terraform variables
+├── main.tf                   # Symlink to .templates/main.tf
+├── variables.tf              # Symlink to .templates/variables.tf
+├── outputs.tf                # Symlink to .templates/outputs.tf
+├── README.md                 # Deployment-specific documentation
 └── (generated during deployment):
-    ├── .version-files/      # Downloaded database files
-    ├── terraform.tfstate    # Terraform state
-    ├── inventory.ini        # Ansible inventory
-    ├── ssh_config           # SSH configuration
-    └── exasol-key.pem       # SSH private key
+    ├── .version-files/       # Downloaded database files
+    ├── terraform.tfstate     # Terraform state
+    ├── inventory.ini         # Ansible inventory
+    ├── ssh_config            # SSH configuration
+    └── exasol-key.pem        # SSH private key (chmod 400)
 ```
 
-### Customization
+### Node Naming Convention
 
-You can customize the deployment by editing [`variables.auto.tfvars`](variables.auto.tfvars) in your deployment directory before running `deploy`:
+All nodes follow a consistent naming scheme:
+- **Node 1**: `n11`
+- **Node 2**: `n12`
+- **Node 3**: `n13`
+- And so on...
 
-```hcl
-aws_region = "us-west-2"
-instance_type = "c7a.16xlarge"
-node_count = 4
-data_volume_size = 1000
-allowed_cidr = "10.0.0.0/8"
-```
+This naming is consistent across:
+- EC2 instance tags
+- SSH config hostnames
+- Ansible inventory
+- /etc/hosts entries
+- Terraform outputs
 
 ## Architecture
 
@@ -269,11 +335,15 @@ allowed_cidr = "10.0.0.0/8"
    - `common.sh`: Shared utilities, logging, validation
    - `state.sh`: State management and locking
    - `versions.sh`: Version configuration and file downloads
-   - `cmd_*.sh`: Command implementations
+   - `cmd_init.sh`: Initialize deployment directory
+   - `cmd_deploy.sh`: Deploy infrastructure and cluster
+   - `cmd_destroy.sh`: Destroy infrastructure
+   - `cmd_status.sh`: Check deployment status
 3. **Templates** ([`templates/`](templates/)):
    - Terraform configurations for AWS infrastructure
    - Ansible playbooks for cluster setup
 4. **Configuration** ([`versions.conf`](versions.conf)): Database version definitions
+5. **Tests** ([`tests/`](tests/)): Unit tests for core functionality
 
 ### State Management
 
@@ -291,6 +361,39 @@ The deployer creates lock files to prevent concurrent operations:
 - Lock is automatically removed on completion or error
 - Stale locks can be manually removed if needed
 
+## Testing
+
+### Running Unit Tests
+
+The project includes a comprehensive unit test suite:
+
+```bash
+# Run all tests
+./tests/run_tests.sh
+
+# Run specific test file
+./tests/test_common.sh
+./tests/test_versions.sh
+./tests/test_state.sh
+```
+
+Test coverage includes:
+- Common utilities (validation, parsing, config management)
+- Version management (version validation, config parsing)
+- State management (initialization, locking, status updates)
+- Variable file generation
+
+### Continuous Integration
+
+The project uses GitHub Actions for automated testing on pull requests:
+
+- **Unit Tests**: Runs all unit tests
+- **ShellCheck**: Lints shell scripts for common errors
+- **Integration Tests**: Tests init and status commands
+- **Terraform Validation**: Validates Terraform configurations
+
+See [`.github/workflows/pr-tests.yml`](.github/workflows/pr-tests.yml) for details.
+
 ## Advanced Usage
 
 ### Multi-Node Cluster
@@ -300,7 +403,7 @@ Deploy a 4-node Exasol cluster:
 ```bash
 ./exasol init \
   --deployment-dir ./prod-cluster \
-  --db-version 8.0.0-x86_64 \
+  --db-version exasol-2025.1.4 \
   --cluster-size 4 \
   --instance-type c7a.16xlarge \
   --data-volume-size 1000 \
@@ -312,12 +415,12 @@ Deploy a 4-node Exasol cluster:
 
 ### ARM64 Deployment
 
-Deploy on ARM64 (Graviton) instances:
+Deploy on ARM64 (Graviton) instances (when ARM64 version is available):
 
 ```bash
 ./exasol init \
   --deployment-dir ./arm-cluster \
-  --db-version 8.0.0-arm64 \
+  --db-version exasol-2025.1.4-arm64 \
   --instance-type c8g.16xlarge \
   --cluster-size 2
 
@@ -341,6 +444,18 @@ Use a specific AWS profile:
   --deployment-dir ./dev-cluster \
   --aws-profile dev-account \
   --aws-region eu-west-1
+```
+
+### Customization After Init
+
+You can edit `variables.auto.tfvars` in your deployment directory before running `deploy`:
+
+```hcl
+aws_region = "us-west-2"
+instance_type = "c7a.16xlarge"
+node_count = 4
+data_volume_size = 1000
+allowed_cidr = "10.0.0.0/8"
 ```
 
 ## Troubleshooting
@@ -385,15 +500,44 @@ Verify AWS credentials:
 aws sts get-caller-identity --profile default
 ```
 
-## Unsupported Features
+### Test Failures
 
-The following features from the binary deployer are not yet implemented:
+If tests fail, check the detailed output:
+```bash
+./tests/run_tests.sh
+```
 
-- `connect`: Open SQL connection to database
-- `diag`: Diagnostic tools
-- `completion`: Shell autocompletion
+## Contributing
 
-These commands will display "Feature not supported" messages.
+### Adding a New Database Version
+
+1. Edit [`versions.conf`](versions.conf)
+2. Add a new section with version details:
+   ```ini
+   [exasol-2025.2.0-x86_64]
+   ARCHITECTURE=x86_64
+   DB_VERSION=@exasol-2025.2.0
+   DB_DOWNLOAD_URL=https://...
+   DB_CHECKSUM=sha256:...
+   C4_VERSION=4.29.0
+   C4_DOWNLOAD_URL=https://...
+   C4_CHECKSUM=sha256:...
+   DEFAULT_INSTANCE_TYPE=m6idn.large
+   ```
+
+### Running Tests Before PR
+
+```bash
+# Run all tests
+./tests/run_tests.sh
+
+# Verify init works
+./exasol init --list-versions
+./exasol init --deployment-dir /tmp/test --db-version exasol-2025.1.4
+
+# Cleanup
+rm -rf /tmp/test
+```
 
 ## Differences from Binary Deployer
 
@@ -403,6 +547,7 @@ These commands will display "Feature not supported" messages.
 - **Version Control Friendly**: Configuration files can be tracked in git
 - **Extensible**: Easy to add custom Terraform resources or Ansible tasks
 - **No Binary Dependencies**: Pure bash script, runs anywhere
+- **Dynamic Configuration**: Variables generated from CLI parameters and version config
 
 ### Limitations
 
@@ -410,31 +555,49 @@ These commands will display "Feature not supported" messages.
 - **Manual Diagnostics**: No automated diagnostic tools
 - **Requires External Tools**: OpenTofu/Terraform and Ansible must be installed
 
-## Contributing
-
-To add a new database version:
-
-1. Edit [`versions.conf`](versions.conf)
-2. Add a new section with version details:
-   ```ini
-   [9.0.0-x86_64]
-   ARCHITECTURE=x86_64
-   DB_VERSION=9.0.0
-   DB_DOWNLOAD_URL=https://...
-   DB_CHECKSUM=sha256:...
-   C4_VERSION=25.0.0
-   C4_DOWNLOAD_URL=https://...
-   C4_CHECKSUM=sha256:...
-   DEFAULT_INSTANCE_TYPE=c7a.16xlarge
-   ```
-
 ## Security Considerations
 
 - **Credentials**: Stored in `.credentials.json` with chmod 600
-- **SSH Keys**: Generated per-deployment, stored in deployment directory
+- **SSH Keys**: Generated per-deployment, stored in deployment directory (chmod 400)
 - **AWS Access**: Uses your AWS profile credentials
-- **Network Security**: Configure `--allowed-cidr` to restrict access
+- **Network Security**: Configure `--allowed-cidr` to restrict access (recommended: use your IP address)
 - **State Files**: Contain sensitive information, protect them
+- **Passwords**: Auto-generated 16-character random passwords by default
+
+## Project Structure
+
+```
+exasol-deployer/
+├── exasol                    # Main executable
+├── lib/                      # Core libraries
+│   ├── common.sh
+│   ├── state.sh
+│   ├── versions.sh
+│   ├── cmd_init.sh
+│   ├── cmd_deploy.sh
+│   ├── cmd_destroy.sh
+│   └── cmd_status.sh
+├── templates/                # Terraform and Ansible templates
+│   ├── terraform/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   ├── outputs.tf
+│   │   └── inventory.tftpl
+│   └── ansible/
+│       ├── setup-exasol-cluster.yml
+│       └── config.j2
+├── tests/                    # Unit tests
+│   ├── run_tests.sh
+│   ├── test_helper.sh
+│   ├── test_common.sh
+│   ├── test_versions.sh
+│   └── test_state.sh
+├── .github/
+│   └── workflows/
+│       └── pr-tests.yml      # CI/CD pipeline
+├── versions.conf             # Database version configuration
+└── README.md                 # This file
+```
 
 ## License
 
@@ -446,6 +609,7 @@ For issues or questions:
 1. Check the [Troubleshooting](#troubleshooting) section
 2. Review deployment logs with `--log-level debug`
 3. Check Terraform state and Ansible output
+4. Run unit tests to verify system integrity
 
 ## Related Resources
 

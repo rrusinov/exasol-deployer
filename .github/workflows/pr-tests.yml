@@ -1,0 +1,127 @@
+name: Pull Request Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Run unit tests
+        run: |
+          chmod +x tests/run_tests.sh
+          ./tests/run_tests.sh
+
+      - name: Generate test report
+        if: always()
+        run: |
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Unit tests completed" >> $GITHUB_STEP_SUMMARY
+
+  shellcheck:
+    name: Shell Script Linting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: './lib'
+          severity: warning
+          ignore_paths: tests
+
+  integration-test:
+    name: Integration Test (Init)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Make exasol script executable
+        run: chmod +x exasol
+
+      - name: Test init command
+        run: |
+          ./exasol init --list-versions
+          ./exasol init --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.4
+
+      - name: Verify deployment structure
+        run: |
+          test -f /tmp/test-deploy/.exasol.json
+          test -f /tmp/test-deploy/.credentials.json
+          test -f /tmp/test-deploy/variables.auto.tfvars
+          test -d /tmp/test-deploy/.templates
+          echo "✅ Deployment structure verified"
+
+      - name: Test status command
+        run: |
+          ./exasol status --deployment-dir /tmp/test-deploy
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -rf /tmp/test-deploy
+
+  validation:
+    name: Configuration Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Terraform/OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.6.0
+
+      - name: Set up test deployment
+        run: |
+          chmod +x exasol
+          ./exasol init --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.4
+
+      - name: Validate Terraform configuration
+        run: |
+          cd /tmp/test-deploy
+          tofu init -backend=false
+          tofu validate
+          echo "✅ Terraform configuration is valid"
+
+      - name: Check Terraform formatting
+        run: |
+          cd templates/terraform
+          tofu fmt -check
+        continue-on-error: true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -rf /tmp/test-deploy
