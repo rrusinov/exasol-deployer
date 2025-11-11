@@ -177,7 +177,7 @@
       block:
         - name: Parse data volume IDs from inventory
           ansible.builtin.set_fact:
-            volume_ids_list: "{{ data_volume_ids | from_json }}"
+            volume_ids_list: "{{ data_volume_ids | from_json if data_volume_ids is string else data_volume_ids }}"
 
         - name: Install symlink creation script for boot persistence
           ansible.builtin.template:
@@ -205,16 +205,14 @@
 
         - name: Discover existing /dev/exasol_data_* symlinks (sorted)
           ansible.builtin.shell:
-            cmd: |
-              shopt -s nullglob
-              symlinks=(/dev/exasol_data_*)
-
-              if [ ${#symlinks[@]} -eq 0 ]; then
-                echo "ERROR: No /dev/exasol_data_* symlinks found" >&2
-                exit 1
-              fi
-
-              printf '%s\n' "${symlinks[@]}" | sort
+            cmd: >-
+              shopt -s nullglob;
+              symlinks=(/dev/exasol_data_*);
+              if [ {% raw %}${#symlinks[@]}{% endraw %} -eq 0 ]; then
+                echo "ERROR: No /dev/exasol_data_* symlinks found" >&2;
+                exit 1;
+              fi;
+              printf '%s\n' "{% raw %}${symlinks[@]}{% endraw %}" | sort
             executable: /bin/bash
           register: data_disks_result
           changed_when: false
@@ -224,95 +222,106 @@
           ansible.builtin.set_fact:
             host_data_disk_paths: "{{ data_disks_result.stdout_lines }}"
 
-    # ==============================================================================
-    # SECTION 3B: CONFIGURE STORAGE METADATA, GENERATE CONFIG, AND UPLOAD (Runs from n11)
-    # ==============================================================================
-    - name: "SECTION 3B: Final Configuration and Software Upload"
-      block:
-        - name: Gather Exasol data disk symlinks from n11
-          ansible.builtin.command:
-            cmd: "ls -1 /dev/exasol_data_*"
-          register: exasol_symlinks
-          changed_when: false
-
-        - name: Consolidate data disk symlink paths into a single string
-          ansible.builtin.set_fact:
-            data_disk_paths: "{{ exasol_symlinks.stdout_lines | join(' ') }}"
-
-        - name: Create final Exasol config file from template
-          ansible.builtin.template:
-            src: "{{ playbook_dir }}/config.j2"
-            dest: "/home/{{ initial_user }}/config"
-            owner: "{{ initial_user }}"
-            group: "{{ initial_user }}"
-            mode: '0644'
-          vars:
-            internal_ips: "{{ ansible_play_hosts | map('extract', hostvars, ['ansible_default_ipv4', 'address']) | join(' ') }}"
-            external_ips: "{{ ansible_play_hosts | map('extract', hostvars, 'ansible_host') | join(' ') }}"
-            data_disk_paths_var: "{{ data_disk_paths }}"
-            exa_image_password: "{{ random_image_pass }}"
-            exa_working_copy: "{{ exa_working_copy }}"
-
-        - name: Create installation directory on n11
-          ansible.builtin.file:
-            path: "/home/{{ initial_user }}/exasol-release"
-            state: directory
-            owner: "{{ initial_user }}"
-            group: "{{ initial_user }}"
-            mode: '0755'
-
-        - name: Move generated config file into place
-          ansible.builtin.command:
-            cmd: "mv /home/{{ initial_user }}/config /home/{{ initial_user }}/exasol-release/config"
-            creates: "/home/{{ initial_user }}/exasol-release/config"
-
-        - name: Transfer local Exasol database tarball
-          when: db_is_local | bool
-          ansible.builtin.copy:
-            src: "{{ db_local_path }}"
-            dest: "/home/{{ initial_user }}/exasol-release/{{ db_artifact_filename }}"
-            owner: "{{ initial_user }}"
-            group: "{{ initial_user }}"
-            mode: '0644'
-
-        - name: Download Exasol database tarball
-          when: not (db_is_local | bool)
-          ansible.builtin.get_url:
-            url: "{{ db_download_url }}"
-            dest: "/home/{{ initial_user }}/exasol-release/{{ db_artifact_filename }}"
-            owner: "{{ initial_user }}"
-            group: "{{ initial_user }}"
-            mode: '0644'
-          register: db_download
-          retries: 3
-          delay: 5
-
-        - name: Transfer local c4 binary
-          when: c4_is_local | bool
-          ansible.builtin.copy:
-            src: "{{ c4_local_path }}"
-            dest: "/home/{{ initial_user }}/exasol-release/{{ c4_artifact_filename }}"
-            owner: "{{ initial_user }}"
-            group: "{{ initial_user }}"
-            mode: '0755'
-
-        - name: Download c4 binary
-          when: not (c4_is_local | bool)
-          ansible.builtin.get_url:
-            url: "{{ c4_download_url }}"
-            dest: "/home/{{ initial_user }}/exasol-release/{{ c4_artifact_filename }}"
-            owner: "{{ initial_user }}"
-            group: "{{ initial_user }}"
-            mode: '0755'
-          register: c4_download
-          retries: 3
-          delay: 5
-
-      # This entire block is delegated to run on n11 only
-      delegate_to: "{{ ansible_play_hosts[0] }}"
-      run_once: true
-
   handlers:
     - name: Reload systemd
       ansible.builtin.systemd:
         daemon_reload: yes
+
+# ==============================================================================
+# PLAY 3: FINAL CONFIGURATION AND SOFTWARE UPLOAD (Runs on primary node only)
+# ==============================================================================
+- name: Play 3 - Final Configuration and Software Upload
+  hosts: "{{ groups['exasol_nodes'][0] }}"
+  become: yes
+  gather_facts: no
+
+  vars:
+    exa_user: "exasol"
+    initial_user: "ubuntu"
+
+  tasks:
+    - name: Gather Exasol data disk symlinks from primary node
+      ansible.builtin.shell:
+        cmd: "ls -1 /dev/exasol_data_*"
+        executable: /bin/bash
+      register: exasol_symlinks
+      changed_when: false
+
+    - name: Ensure data disk symlinks exist on primary node
+      ansible.builtin.assert:
+        that:
+          - exasol_symlinks.stdout_lines | length > 0
+        fail_msg: "No /dev/exasol_data_* symlinks found on {{ inventory_hostname }}"
+
+    - name: Consolidate data disk symlink paths into a single string
+      ansible.builtin.set_fact:
+        data_disk_paths: "{{ exasol_symlinks.stdout_lines | join(' ') }}"
+
+    - name: Create final Exasol config file from template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/config.j2"
+        dest: "/home/{{ initial_user }}/config"
+        owner: "{{ initial_user }}"
+        group: "{{ initial_user }}"
+        mode: '0644'
+      vars:
+        internal_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, ['ansible_default_ipv4', 'address']) | join(' ') }}"
+        external_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, 'ansible_host') | join(' ') }}"
+        data_disk_paths_var: "{{ data_disk_paths }}"
+        exa_image_password: "{{ random_image_pass }}"
+        exa_working_copy: "{{ exa_working_copy }}"
+
+    - name: Create installation directory on primary node
+      ansible.builtin.file:
+        path: "/home/{{ initial_user }}/exasol-release"
+        state: directory
+        owner: "{{ initial_user }}"
+        group: "{{ initial_user }}"
+        mode: '0755'
+
+    - name: Move generated config file into place
+      ansible.builtin.command:
+        cmd: "mv /home/{{ initial_user }}/config /home/{{ initial_user }}/exasol-release/config"
+        creates: "/home/{{ initial_user }}/exasol-release/config"
+
+    - name: Transfer local Exasol database tarball
+      when: db_is_local | bool
+      ansible.builtin.copy:
+        src: "{{ db_local_path }}"
+        dest: "/home/{{ initial_user }}/exasol-release/{{ db_artifact_filename }}"
+        owner: "{{ initial_user }}"
+        group: "{{ initial_user }}"
+        mode: '0644'
+
+    - name: Download Exasol database tarball
+      when: not (db_is_local | bool)
+      ansible.builtin.get_url:
+        url: "{{ db_download_url }}"
+        dest: "/home/{{ initial_user }}/exasol-release/{{ db_artifact_filename }}"
+        owner: "{{ initial_user }}"
+        group: "{{ initial_user }}"
+        mode: '0644'
+      register: db_download
+      retries: 3
+      delay: 5
+
+    - name: Transfer local c4 binary
+      when: c4_is_local | bool
+      ansible.builtin.copy:
+        src: "{{ c4_local_path }}"
+        dest: "/home/{{ initial_user }}/exasol-release/{{ c4_artifact_filename }}"
+        owner: "{{ initial_user }}"
+        group: "{{ initial_user }}"
+        mode: '0755'
+
+    - name: Download c4 binary
+      when: not (c4_is_local | bool)
+      ansible.builtin.get_url:
+        url: "{{ c4_download_url }}"
+        dest: "/home/{{ initial_user }}/exasol-release/{{ c4_artifact_filename }}"
+        owner: "{{ initial_user }}"
+        group: "{{ initial_user }}"
+        mode: '0755'
+      register: c4_download
+      retries: 3
+      delay: 5

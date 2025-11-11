@@ -75,5 +75,5 @@ for vol_id in "${VOLUME_IDS[@]}"; do
 done
 
 symlink_count=$((disk_idx - 1))
-log "Successfully created $symlink_count Exasol data volume symlinks (${#VOLUME_IDS[@]} volumes configured, skipped mounted volumes)"
+log "Successfully created $symlink_count Exasol data volume symlinks ({% raw %}${#VOLUME_IDS[@]}{% endraw %} volumes configured, skipped mounted volumes)"
 exit 0
