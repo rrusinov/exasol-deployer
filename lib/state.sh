@@ -23,6 +23,10 @@ readonly STATE_DEPLOYMENT_FAILED="deployment_failed"
 readonly STATE_DATABASE_CONNECTION_FAILED="database_connection_failed"
 readonly STATE_DATABASE_READY="database_ready"
 
+# Export state constants for use in other scripts
+export STATE_INITIALIZED STATE_DEPLOYMENT_IN_PROGRESS STATE_DEPLOYMENT_FAILED \
+       STATE_DATABASE_CONNECTION_FAILED STATE_DATABASE_READY
+
 # Initialize state file
 state_init() {
     local deploy_dir="$1"

@@ -147,7 +147,8 @@ cmd_init() {
     ensure_directory "$templates_dir"
 
     # Copy Terraform/Tofu templates
-    local script_root="$(cd "$LIB_DIR/.." && pwd)"
+    local script_root
+    script_root="$(cd "$LIB_DIR/.." && pwd)"
     log_info "Copying deployment templates..."
 
     cp -r "$script_root/templates/terraform/"* "$templates_dir/" 2>/dev/null || true

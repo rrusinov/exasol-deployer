@@ -102,7 +102,7 @@ cmd_destroy() {
     lock_create "$deploy_dir" "destroy" || die "Failed to create lock"
 
     # Trap to ensure lock is removed on exit
-    trap "lock_remove '$deploy_dir'" EXIT INT TERM
+    trap 'lock_remove "$deploy_dir"' EXIT INT TERM
 
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"

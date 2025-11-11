@@ -52,7 +52,7 @@ cmd_deploy() {
     lock_create "$deploy_dir" "deploy" || die "Failed to create lock"
 
     # Trap to ensure lock is removed on exit
-    trap "lock_remove '$deploy_dir'" EXIT INT TERM
+    trap 'lock_remove "$deploy_dir"' EXIT INT TERM
 
     # Update status
     state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_IN_PROGRESS"
@@ -68,14 +68,9 @@ cmd_deploy() {
     log_info "Database version: $db_version"
     log_info "Architecture: $architecture"
 
-    # Check if we need to download files locally (for file:// URLs)
-    local credentials_file="$deploy_dir/.credentials.json"
-    local db_url c4_url
-
-    if [[ -f "$credentials_file" ]]; then
-        db_url=$(jq -r '.db_download_url // empty' "$credentials_file")
-        c4_url=$(jq -r '.c4_download_url // empty' "$credentials_file")
-    fi
+    # Note: For c4-based deployments, download URLs are handled by Ansible
+    # The credentials file contains db_download_url and c4_download_url that
+    # are passed to Ansible for downloading files on remote nodes
 
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"

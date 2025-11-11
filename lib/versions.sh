@@ -13,7 +13,8 @@ source "$LIB_DIR/common.sh"
 
 # Get versions config file path
 get_versions_config_path() {
-    local script_root="$(cd "$LIB_DIR/.." && pwd)"
+    local script_root
+    script_root="$(cd "$LIB_DIR/.." && pwd)"
     echo "$script_root/versions.conf"
 }
 
