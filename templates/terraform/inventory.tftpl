@@ -1,0 +1,9 @@
+[exasol_nodes]
+%{~ for idx, instance in instances }
+exasol-node-${idx + 1} ansible_host=${instance.public_ip} ansible_user=ubuntu private_ip=${instance.private_ip}
+%{~ endfor }
+
+[exasol_nodes:vars]
+ansible_user=ubuntu
+ansible_ssh_private_key_file=${ssh_key}
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

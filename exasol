@@ -1,0 +1,313 @@
+#!/bin/bash
+# Exasol Cloud Deployer
+# A bash script that simulates the interface of the binary Exasol deployer
+# using OpenTofu and Ansible
+
+set -euo pipefail
+
+# Script information
+readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source libraries
+source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/state.sh"
+source "$SCRIPT_DIR/lib/versions.sh"
+source "$SCRIPT_DIR/lib/cmd_init.sh"
+source "$SCRIPT_DIR/lib/cmd_deploy.sh"
+source "$SCRIPT_DIR/lib/cmd_destroy.sh"
+source "$SCRIPT_DIR/lib/cmd_status.sh"
+
+# Global flags
+DEPLOYMENT_DIR="."
+LOG_LEVEL="info"
+
+# Show version
+show_version() {
+    echo "Exasol Cloud Deployer v${SCRIPT_VERSION}"
+    echo "Built with OpenTofu and Ansible"
+}
+
+# Show help
+show_help() {
+    cat <<EOF
+Installer for Exasol Database using OpenTofu and Ansible.
+
+Usage:
+  exasol [command] [flags]
+
+Available Commands:
+  init        Initialize a new deployment directory
+  deploy      Deploy using an existing deployment directory
+  destroy     Destroy an active deployment
+  status      Get the status of a deployment
+  version     Print the program version and exit
+  help        Show this help message
+
+Global Flags:
+  --deployment-dir string   The directory to store deployment files (default ".")
+  --log-level string        Set log level: debug, info, warn, error (default "info")
+  -h, --help               Show help
+
+Use "exasol [command] --help" for more information about a command.
+
+Examples:
+  # Initialize a new deployment with default version
+  exasol init --deployment-dir ./my-deployment
+
+  # Initialize with specific version and architecture
+  exasol init --db-version 8.0.0-x86_64 --cluster-size 4
+
+  # List available database versions
+  exasol init --list-versions
+
+  # Deploy the infrastructure
+  exasol deploy --deployment-dir ./my-deployment
+
+  # Check deployment status
+  exasol status --deployment-dir ./my-deployment
+
+  # Destroy the deployment
+  exasol destroy --deployment-dir ./my-deployment
+EOF
+}
+
+# Show init help
+show_init_help() {
+    cat <<EOF
+Initialize a new deployment directory.
+
+Usage:
+  exasol init [flags]
+
+Flags:
+  --db-version string         Database version to deploy (format: X.Y.Z-ARCH)
+  --list-versions            List all available database versions
+  --cluster-size number      Number of nodes in the cluster (default: 1)
+  --instance-type string     EC2 instance type (auto-detected from version if not specified)
+  --data-volume-size number  Size in GB for the database data volume (default: 100)
+  --db-password string       Database password (randomly generated if not specified)
+  --adminui-password string  Admin UI password (randomly generated if not specified)
+  --owner string             Owner tag for all resources (default: "exasol-default")
+  --aws-region string        AWS region (default: "us-east-1")
+  --aws-profile string       AWS profile to use (default: "default")
+  --allowed-cidr string      CIDR block allowed to access cluster (default: "0.0.0.0/0")
+  -h, --help                Show help
+
+Global Flags:
+  --deployment-dir string   The directory to store deployment files (default ".")
+  --log-level string        Set log level: debug, info, warn, error
+
+Examples:
+  # List available versions
+  exasol init --list-versions
+
+  # Initialize with default version (latest stable)
+  exasol init --deployment-dir ./my-deployment
+
+  # Initialize with specific version and 4-node cluster
+  exasol init --db-version 8.0.0-x86_64 --cluster-size 4
+
+  # Initialize ARM64 deployment
+  exasol init --db-version 8.0.0-arm64 --instance-type c8g.16xlarge
+EOF
+}
+
+# Show deploy help
+show_deploy_help() {
+    cat <<EOF
+Deploy using an existing deployment directory.
+
+Once a deployment is complete, state files will be stored in the deployment directory.
+Do not delete the deployment directory until the 'destroy' command has been executed.
+
+Usage:
+  exasol deploy [flags]
+
+Flags:
+  -h, --help   Show help
+
+Global Flags:
+  --deployment-dir string   The directory to store deployment files (default ".")
+  --log-level string        Set log level: debug, info, warn, error
+
+Example:
+  exasol deploy --deployment-dir ./my-deployment
+EOF
+}
+
+# Show destroy help
+show_destroy_help() {
+    cat <<EOF
+Destroy an active deployment using its deployment directory.
+
+Destroying a deployment releases all resources - including all data storage.
+If you want to retain any data, ensure you've created and moved backups to another safe location.
+
+Usage:
+  exasol destroy [flags]
+
+Flags:
+  --auto-approve   Skip confirmation prompt
+  -h, --help      Show help
+
+Global Flags:
+  --deployment-dir string   The directory to store deployment files (default ".")
+  --log-level string        Set log level: debug, info, warn, error
+
+Example:
+  exasol destroy --deployment-dir ./my-deployment
+EOF
+}
+
+# Show status help
+show_status_help() {
+    cat <<EOF
+Get the status of a deployment.
+
+Display the status of the current deployment in JSON format.
+
+The possible values for the 'status' field are:
+  - initialized
+  - deployment_in_progress
+  - deployment_failed
+  - database_connection_failed
+  - database_ready
+
+Usage:
+  exasol status [flags]
+
+Flags:
+  -h, --help   Show help
+
+Global Flags:
+  --deployment-dir string   The directory to store deployment files (default ".")
+  --log-level string        Set log level: debug, info, warn, error
+
+Example:
+  exasol status --deployment-dir ./my-deployment
+EOF
+}
+
+# Parse global flags
+parse_global_flags() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --deployment-dir)
+                DEPLOYMENT_DIR="$2"
+                shift 2
+                ;;
+            --log-level)
+                LOG_LEVEL="$2"
+                set_log_level "$LOG_LEVEL"
+                shift 2
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+}
+
+# Main entry point
+main() {
+    # Check if no arguments provided
+    if [[ $# -eq 0 ]]; then
+        show_help
+        exit 0
+    fi
+
+    # First, extract and parse global flags
+    local args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --deployment-dir|--log-level)
+                # Handle global flag
+                if [[ "$1" == "--deployment-dir" ]]; then
+                    DEPLOYMENT_DIR="$2"
+                elif [[ "$1" == "--log-level" ]]; then
+                    LOG_LEVEL="$2"
+                    set_log_level "$LOG_LEVEL"
+                fi
+                shift 2
+                ;;
+            *)
+                # Save non-global arguments
+                args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # Restore arguments without global flags
+    set -- "${args[@]}"
+
+    # Get command
+    local command="${1:-help}"
+    shift || true
+
+    # Route to appropriate command
+    case "$command" in
+        init)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_init_help
+                exit 0
+            fi
+            check_required_commands
+            cmd_init --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        deploy)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_deploy_help
+                exit 0
+            fi
+            check_required_commands
+            cmd_deploy --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        destroy)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_destroy_help
+                exit 0
+            fi
+            check_required_commands
+            cmd_destroy --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        status)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_status_help
+                exit 0
+            fi
+            cmd_status "$DEPLOYMENT_DIR"
+            ;;
+        version)
+            show_version
+            ;;
+        help|--help|-h)
+            show_help
+            ;;
+        connect)
+            log_error "Feature not supported: connect command"
+            log_info "This feature is not yet implemented in the bash version."
+            exit 1
+            ;;
+        diag)
+            log_error "Feature not supported: diag command"
+            log_info "This feature is not yet implemented in the bash version."
+            exit 1
+            ;;
+        completion)
+            log_error "Feature not supported: completion command"
+            log_info "This feature is not yet implemented in the bash version."
+            exit 1
+            ;;
+        *)
+            log_error "Unknown command: $command"
+            echo ""
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# Run main
+main "$@"
