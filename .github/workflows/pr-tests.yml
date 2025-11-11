@@ -65,12 +65,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
 
+      - name: Install Terraform/OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.6.0
+
+      - name: Install Ansible
+        run: |
+          sudo apt-get install -y ansible
+
       - name: Make exasol script executable
         run: chmod +x exasol
 
-      - name: Test init command
+      - name: Test list-versions (no dependencies required)
         run: |
           ./exasol init --list-versions
+
+      - name: Test init command
+        run: |
           ./exasol init --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.4
 
       - name: Verify deployment structure
