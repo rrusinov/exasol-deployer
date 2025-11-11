@@ -61,6 +61,10 @@ locals {
   ami_name_arch = var.instance_architecture == "x86_64" ? "amd64" : "arm64"
 }
 
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
 # Get latest Ubuntu 24.04 AMI
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -84,6 +88,37 @@ data "aws_ami" "ubuntu" {
   }
 }
 
+data "aws_ec2_instance_type_offerings" "supported" {
+  filter {
+    name   = "instance-type"
+    values = [var.instance_type]
+  }
+
+  filter {
+    name   = "location"
+    values = data.aws_availability_zones.available.names
+  }
+
+  location_type = "availability-zone"
+}
+
+locals {
+  # Prioritize user-supplied AZs, otherwise iterate over everything available in the region.
+  preferred_azs = length(var.preferred_availability_zones) > 0 ? var.preferred_availability_zones : data.aws_availability_zones.available.names
+
+  # Only keep AZs that actually support the chosen instance type.
+  supported_azs = distinct([
+    for offering in data.aws_ec2_instance_type_offerings.supported.instance_type_offerings : offering.location
+  ])
+
+  prioritized_supported_azs = [
+    for az in local.preferred_azs : az
+    if contains(local.supported_azs, az)
+  ]
+
+  selected_az = try(local.prioritized_supported_azs[0], null)
+}
+
 # Create a new VPC
 resource "aws_vpc" "exasol_vpc" {
   cidr_block           = "10.0.0.0/16"
@@ -100,9 +135,17 @@ resource "aws_subnet" "exasol_subnet" {
   vpc_id                  = aws_vpc.exasol_vpc.id
   cidr_block              = "10.0.1.0/24"
   map_public_ip_on_launch = true
+  availability_zone       = local.selected_az
 
   tags = {
     Name = "exasol-subnet"
+  }
+
+  lifecycle {
+    precondition {
+      condition     = local.selected_az != null
+      error_message = "Instance type ${var.instance_type} is not available in any AZ within region ${var.aws_region}. Select a different instance type/region or expand preferred_availability_zones."
+    }
   }
 }
 
@@ -283,4 +326,3 @@ resource "local_file" "ssh_config" {
 
   depends_on = [aws_instance.exasol_node]
 }
-

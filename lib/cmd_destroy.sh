@@ -119,7 +119,9 @@ cmd_destroy() {
         log_info ""
         log_info "🧹 Cleaning up deployment files..."
         rm -f inventory.ini ssh_config tfplan exasol-key.pem
-        rm -rf .terraform terraform.tfstate.backup
+        # Remove Terraform state and caches so subsequent destroy runs are no-ops
+        rm -f terraform.tfstate terraform.tfstate.backup
+        rm -rf .terraform
 
         # Remove lock
         lock_remove "$deploy_dir"

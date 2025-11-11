@@ -10,6 +10,12 @@ variable "aws_region" {
   # Value will be set in variables.auto.tfvars during initialization
 }
 
+variable "preferred_availability_zones" {
+  description = "Optional list of AZs (e.g., [\"us-east-1a\", \"us-east-1b\"]) to prioritize. The deployer will fall back to any AZ that supports the selected instance type."
+  type        = list(string)
+  default     = []
+}
+
 variable "instance_type" {
   description = "The EC2 instance type for the cluster nodes. Value is determined from the selected database version or can be overridden with --instance-type."
   type        = string
@@ -61,4 +67,3 @@ variable "owner" {
   type        = string
   # Value will be set in variables.auto.tfvars during initialization
 }
-
