@@ -19,8 +19,10 @@ Before using this deployer, ensure you have the following installed:
 - **OpenTofu** or Terraform (>= 1.0)
 - **Ansible** (>= 2.9)
 - **jq** (for JSON processing)
-- **AWS CLI** (configured with appropriate credentials)
 - **bash** (>= 4.0)
+- **AWS credentials** configured (see below)
+
+**Note:** AWS CLI is **not required**. The tool uses OpenTofu's AWS provider which reads credentials directly from `~/.aws/credentials` and `~/.aws/config`.
 
 ### Installation on macOS
 
@@ -33,9 +35,6 @@ brew install ansible
 
 # Install jq
 brew install jq
-
-# Configure AWS CLI
-aws configure --profile default
 ```
 
 ### Installation on Linux
@@ -50,9 +49,37 @@ sudo apt-get install -y ansible
 
 # Install jq
 sudo apt-get install -y jq
+```
 
-# Configure AWS CLI
+### AWS Credentials Setup
+
+You need to configure AWS credentials. You can do this in two ways:
+
+**Option 1: Using AWS CLI (convenient but not required)**
+```bash
+# Install AWS CLI if you want to use it for credential setup
 aws configure --profile default
+```
+
+**Option 2: Manual setup (no AWS CLI needed)**
+```bash
+# Create credentials file manually
+mkdir -p ~/.aws
+cat > ~/.aws/credentials <<EOF
+[default]
+aws_access_key_id = YOUR_ACCESS_KEY_ID
+aws_secret_access_key = YOUR_SECRET_ACCESS_KEY
+EOF
+
+# Create config file (optional)
+cat > ~/.aws/config <<EOF
+[default]
+region = us-east-1
+EOF
+
+# Set proper permissions
+chmod 600 ~/.aws/credentials
+chmod 600 ~/.aws/config
 ```
 
 ## Quick Start
@@ -495,9 +522,14 @@ which tofu ansible-playbook jq
 
 ### AWS Credentials
 
-Verify AWS credentials:
+Verify AWS credentials are configured:
 ```bash
+# Option 1: If you have AWS CLI installed
 aws sts get-caller-identity --profile default
+
+# Option 2: Without AWS CLI - check credential files exist
+test -f ~/.aws/credentials && echo "✓ AWS credentials file exists"
+test -f ~/.aws/config && echo "✓ AWS config file exists"
 ```
 
 ### Test Failures
@@ -514,15 +546,27 @@ If tests fail, check the detailed output:
 1. Edit [`versions.conf`](versions.conf)
 2. Add a new section with version details:
    ```ini
-   [exasol-2025.2.0-x86_64]
+   # x86_64 version (no architecture suffix)
+   [exasol-2025.2.0]
    ARCHITECTURE=x86_64
    DB_VERSION=@exasol-2025.2.0
-   DB_DOWNLOAD_URL=https://...
+   DB_DOWNLOAD_URL=https://x-up.s3.amazonaws.com/releases/exasol/exasol-2025.2.0.tar.gz
    DB_CHECKSUM=sha256:...
    C4_VERSION=4.29.0
-   C4_DOWNLOAD_URL=https://...
+   C4_DOWNLOAD_URL=https://x-up.s3.amazonaws.com/releases/c4/linux/x86_64/4.29.0/c4
    C4_CHECKSUM=sha256:...
    DEFAULT_INSTANCE_TYPE=m6idn.large
+
+   # ARM64 version (with -arm64 suffix)
+   [exasol-2025.2.0-arm64]
+   ARCHITECTURE=arm64
+   DB_VERSION=@exasol-2025.2.0~linux-arm64
+   DB_DOWNLOAD_URL=https://x-up.s3.amazonaws.com/releases/exasol/exasol-2025.2.0-arm64.tar.gz
+   DB_CHECKSUM=sha256:...
+   C4_VERSION=4.29.0
+   C4_DOWNLOAD_URL=https://x-up.s3.amazonaws.com/releases/c4/linux/arm64/4.29.0/c4
+   C4_CHECKSUM=sha256:...
+   DEFAULT_INSTANCE_TYPE=c8g.16xlarge
    ```
 
 ### Running Tests Before PR
