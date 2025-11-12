@@ -202,6 +202,9 @@ cmd_init() {
     fi
     deploy_dir=$(validate_directory "$deploy_dir")
 
+    # Set deployment directory for progress tracking
+    export EXASOL_DEPLOY_DIR="$deploy_dir"
+
     if [[ -z "$db_version" ]]; then
         db_version=$(get_default_version)
         log_info "Using default version: $db_version"
@@ -245,6 +248,9 @@ cmd_init() {
         log_info "Generated random AdminUI password"
     fi
 
+    # Emit progress: initialization started
+    progress_start "init" "validate_config" "Initializing deployment directory: $deploy_dir"
+
     log_info "Initializing deployment directory: $deploy_dir"
     log_info "  Cloud Provider: ${SUPPORTED_PROVIDERS[$cloud_provider]}"
     log_info "  Database version: $db_version"
@@ -275,13 +281,20 @@ cmd_init() {
             ;;
     esac
 
+    progress_complete "init" "validate_config" "Configuration validated"
+
     # Create deployment directory
+    progress_start "init" "create_directories" "Creating deployment directories"
     ensure_directory "$deploy_dir"
+    progress_complete "init" "create_directories" "Deployment directories created"
 
     # Initialize state file with cloud provider
+    progress_start "init" "initialize_state" "Initializing deployment state"
     state_init "$deploy_dir" "$db_version" "$architecture" "$cloud_provider" || die "Failed to initialize state"
+    progress_complete "init" "initialize_state" "Deployment state initialized"
 
     # Create templates directory
+    progress_start "init" "copy_templates" "Copying deployment templates for $cloud_provider"
     local templates_dir="$deploy_dir/.templates"
     ensure_directory "$templates_dir"
 
@@ -304,6 +317,7 @@ cmd_init() {
         log_debug "Copied cloud-specific templates for $cloud_provider"
     else
         log_error "No templates found for cloud provider: $cloud_provider"
+        progress_fail "init" "copy_templates" "Templates not found for $cloud_provider"
         die "Templates directory templates/terraform-$cloud_provider does not exist"
     fi
 
@@ -313,8 +327,10 @@ cmd_init() {
 
     # Create Terraform files in deployment directory
     create_terraform_files "$deploy_dir" "$architecture" "$cloud_provider"
+    progress_complete "init" "copy_templates" "Templates copied successfully"
 
     # Write variables file based on cloud provider
+    progress_start "init" "generate_variables" "Creating Terraform variables file"
     log_info "Creating variables file..."
     write_provider_variables "$deploy_dir" "$cloud_provider" \
         "$aws_region" "$aws_profile" "$aws_spot_instance" \
@@ -325,8 +341,10 @@ cmd_init() {
         "$instance_type" "$architecture" "$cluster_size" \
         "$data_volume_size" "$data_volumes_per_node" "$root_volume_size" \
         "$allowed_cidr" "$owner"
+    progress_complete "init" "generate_variables" "Variables file created"
 
     # Store passwords and deployment metadata securely
+    progress_start "init" "store_credentials" "Storing deployment credentials"
     local credentials_file="$deploy_dir/.credentials.json"
 
     # Get download URLs from version config
@@ -347,10 +365,16 @@ cmd_init() {
 }
 EOF
     chmod 600 "$credentials_file"
+    progress_complete "init" "store_credentials" "Credentials stored securely"
 
     # Create README
+    progress_start "init" "generate_readme" "Generating deployment README"
     create_readme "$deploy_dir" "$cloud_provider" "$db_version" "$architecture" \
         "$cluster_size" "$instance_type" "$aws_region" "$azure_region" "$gcp_region"
+    progress_complete "init" "generate_readme" "README generated"
+
+    # Mark initialization as complete
+    progress_complete "init" "complete" "Deployment directory initialized successfully"
 
     log_info ""
     log_info "✅ Deployment directory initialized successfully!"

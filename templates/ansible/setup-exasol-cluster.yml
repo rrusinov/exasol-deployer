@@ -286,3 +286,114 @@
       register: c4_download
       retries: 3
       delay: 5
+
+    # ==============================================================================
+    # SECTION 5: VERIFY CHECKSUMS AND DEPLOY EXASOL
+    # ==============================================================================
+    - name: "SECTION 5: Verify Checksums and Deploy Exasol"
+      block:
+        - name: Verify database tarball checksum (if checksum available)
+          when: deployment_config.db_checksum is defined and deployment_config.db_checksum != ""
+          ansible.builtin.stat:
+            path: "/home/{{ exa_user }}/exasol-release/{{ db_artifact_filename }}"
+            checksum_algorithm: sha256
+          register: db_stat
+          failed_when: db_stat.stat.checksum != deployment_config.db_checksum
+
+        - name: Verify c4 binary checksum (if checksum available)
+          when: deployment_config.c4_checksum is defined and deployment_config.c4_checksum != ""
+          ansible.builtin.stat:
+            path: "/home/{{ exa_user }}/exasol-release/{{ c4_artifact_filename }}"
+            checksum_algorithm: sha256
+          register: c4_stat
+          failed_when: c4_stat.stat.checksum != deployment_config.c4_checksum
+
+        - name: Display checksum verification status
+          ansible.builtin.debug:
+            msg: |
+              Checksum verification:
+              - DB tarball: {{ 'VERIFIED' if (deployment_config.db_checksum is defined and deployment_config.db_checksum != '') else 'SKIPPED (no checksum provided)' }}
+              - C4 binary: {{ 'VERIFIED' if (deployment_config.c4_checksum is defined and deployment_config.c4_checksum != '') else 'SKIPPED (no checksum provided)' }}
+
+        - name: Rename c4 binary to 'c4' for convenience
+          ansible.builtin.command:
+            cmd: "mv /home/{{ exa_user }}/exasol-release/{{ c4_artifact_filename }} /home/{{ exa_user }}/exasol-release/c4"
+            creates: "/home/{{ exa_user }}/exasol-release/c4"
+          become_user: "{{ exa_user }}"
+
+        - name: Verify C4 configuration diagnostic
+          ansible.builtin.command:
+            cmd: "./c4 host diag -i config"
+            chdir: "/home/{{ exa_user }}/exasol-release"
+          become_user: "{{ exa_user }}"
+          register: c4_diag
+          changed_when: false
+          failed_when: c4_diag.rc != 0
+
+        - name: Display C4 diagnostic output
+          ansible.builtin.debug:
+            msg: "{{ c4_diag.stdout_lines }}"
+
+        - name: Start Exasol database deployment
+          ansible.builtin.command:
+            cmd: "./c4 host play -i config"
+            chdir: "/home/{{ exa_user }}/exasol-release"
+          become_user: "{{ exa_user }}"
+          register: c4_play
+          async: 600  # Allow up to 10 minutes for deployment
+          poll: 0     # Don't wait, check status later
+
+        - name: Wait for C4 deployment to complete
+          ansible.builtin.async_status:
+            jid: "{{ c4_play.ansible_job_id }}"
+          register: c4_play_result
+          until: c4_play_result.finished
+          retries: 60  # 60 * 10 seconds = 10 minutes max
+          delay: 10
+          become_user: "{{ exa_user }}"
+
+        - name: Display C4 deployment output
+          ansible.builtin.debug:
+            msg: "{{ c4_play_result.stdout_lines | default(['No output']) }}"
+
+        - name: Wait for database to boot (stage 'd')
+          ansible.builtin.command:
+            cmd: "./c4 wait --stage d"
+            chdir: "/home/{{ exa_user }}/exasol-release"
+          become_user: "{{ exa_user }}"
+          register: c4_wait
+          timeout: 300  # 5 minutes timeout
+          changed_when: false
+
+        - name: Display database boot status
+          ansible.builtin.debug:
+            msg: "Database is now running at stage 'd'"
+
+        - name: Add COS SSH config entry to exasol user's SSH config
+          ansible.builtin.blockinfile:
+            path: "/home/{{ exa_user }}/.ssh/config"
+            create: yes
+            owner: "{{ exa_user }}"
+            group: "{{ exa_user }}"
+            mode: '0600'
+            marker: "# {mark} ANSIBLE MANAGED BLOCK - COS Access"
+            block: |
+              Host cos
+                  HostName localhost
+                  User root
+                  Port 20002
+                  StrictHostKeyChecking no
+                  UserKnownHostsFile /dev/null
+
+        - name: Display deployment completion message
+          ansible.builtin.debug:
+            msg: |
+              ========================================
+              Exasol cluster deployment completed!
+              ========================================
+              To access the database container:
+                ssh cos
+
+              Database credentials:
+                Admin Password: {{ exa_admin_password }}
+                DB Password: {{ exa_db_password }}

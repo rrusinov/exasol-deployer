@@ -11,13 +11,39 @@ on:
       - main
       - master
 
-env:
-  RUN_PR_CHECKS: ${{ github.event_name == 'pull_request' && (github.event.pull_request && github.event.pull_request.draft == false) }}
-
 jobs:
+  determine-run:
+    name: Determine PR Check Eligibility
+    runs-on: ubuntu-latest
+    outputs:
+      run_pr_checks: ${{ steps.set-output.outputs.run_pr_checks }}
+    steps:
+      - id: set-output
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const eventName = context.eventName;
+            let runChecks = false;
+
+            if (eventName === 'pull_request') {
+              runChecks = context.payload.pull_request && context.payload.pull_request.draft === false;
+            } else if (eventName === 'push') {
+              const branch = context.ref.replace('refs/heads/', '');
+              const prs = await github.paginate(github.rest.pulls.list, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head: `${context.repo.owner}:${branch}`,
+                state: 'open'
+              });
+              runChecks = prs.some(pr => pr.draft === false);
+            }
+
+            core.setOutput('run_pr_checks', runChecks);
+
   unit-tests:
     name: Unit Tests
-    if: ${{ env.RUN_PR_CHECKS == 'true' }}
+    needs: determine-run
+    if: ${{ needs.determine-run.outputs.run_pr_checks == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -43,7 +69,8 @@ jobs:
 
   shellcheck:
     name: Shell Script Linting
-    if: ${{ env.RUN_PR_CHECKS == 'true' }}
+    needs: determine-run
+    if: ${{ needs.determine-run.outputs.run_pr_checks == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -58,7 +85,8 @@ jobs:
 
   integration-test:
     name: Integration Test (Init)
-    if: ${{ env.RUN_PR_CHECKS == 'true' }}
+    needs: determine-run
+    if: ${{ needs.determine-run.outputs.run_pr_checks == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -109,7 +137,8 @@ jobs:
 
   validation:
     name: Configuration Validation
-    if: ${{ env.RUN_PR_CHECKS == 'true' }}
+    needs: determine-run
+    if: ${{ needs.determine-run.outputs.run_pr_checks == 'true' }}
     runs-on: ubuntu-latest
 
     steps:

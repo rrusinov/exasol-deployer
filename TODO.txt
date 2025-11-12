@@ -1,17 +1,14 @@
-Add to the setup-exasol-ansible.yml playbook at the end followng steps:
-verify the checksums of the downloaded c4 and db pacakges
-add to .ssh/config hostname cos equal to "ssh -p 20002 root@localhost"
-verify if the generated c4 configuration is correct:  cd /home/{{ exa_user }}/exasol-release && ./c4 host diag -i config
-start the database deployment: cd /home/{{ exa_user }}/exasol-release && ./c4 host play -i config
-wait with timeout of 5 minutes until the database boots: c4 wait --stage d
+✅ COMPLETED: Print during the whole init deploy and destroy (later start, stop) process parsable info about the current progress, goal is to enable UIs to show progress and information about current steps.
+
+Check what options do we have to have public available hostname with valid certificate, eventually having a load balancer to he open ports.
+
+The public signed certificate can be be installed (and needs to be installed) on all machines with: ssh cos confd_client cert_update ca: '"{< /root/tls_ca}"' cert: '"{< /root/tls_cert}"' key: '"{< /root/tls_key}"' || true
 
 
+Add way to see the needed permissions in order to deploy the infrastructure to the specific cloud. (eg. exasol --print-permissions [--deployment-dir])
+For example this tool:  https://github.com/JamesWoolfenden/pike which can be run locally in docker or podman (fallback) can be used to find the information I need. You can print json output like this:
 
-
-
-Add needed permissions options in deploy which runs over initilized deploy and checks which cloud permissions are needed to deploy/destroy the deployment.
-Use this tool, run it locally in docker or podman (fallback) if needed https://github.com/JamesWoolfenden/pike?tab=readme-ov-file and print json output like this:
-
+cloud specic permissions: 
 REQUIRED_PERMISSIONS = {
     // EC2 Permissions - Core compute and networking
     ec2: [
