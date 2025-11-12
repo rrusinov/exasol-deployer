@@ -11,9 +11,13 @@ on:
       - main
       - master
 
+env:
+  RUN_PR_CHECKS: ${{ github.event_name == 'pull_request' && (github.event.pull_request && github.event.pull_request.draft == false) }}
+
 jobs:
   unit-tests:
     name: Unit Tests
+    if: ${{ env.RUN_PR_CHECKS == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -39,6 +43,7 @@ jobs:
 
   shellcheck:
     name: Shell Script Linting
+    if: ${{ env.RUN_PR_CHECKS == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -53,6 +58,7 @@ jobs:
 
   integration-test:
     name: Integration Test (Init)
+    if: ${{ env.RUN_PR_CHECKS == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -103,6 +109,7 @@ jobs:
 
   validation:
     name: Configuration Validation
+    if: ${{ env.RUN_PR_CHECKS == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
