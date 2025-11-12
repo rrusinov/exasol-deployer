@@ -1,10 +1,13 @@
 # Exasol Cloud Deployer
 
-A bash-based cloud deployer for Exasol database that uses OpenTofu (Terraform) and Ansible to provision and configure Exasol clusters on AWS. This tool provides a simple command-line interface for managing Exasol deployments with full control over the deployment process.
+A bash-based multi-cloud deployer for Exasol database that uses OpenTofu (Terraform) and Ansible to provision and configure Exasol clusters. This tool provides a simple command-line interface for managing Exasol deployments with full control over the deployment process.
 
 ## Features
 
+- **Multi-Cloud Support**: Deploy on AWS, Azure, GCP, Hetzner Cloud, and DigitalOcean
 - **Multiple Database Versions**: Support for multiple Exasol database versions and architectures (x86_64, arm64)
+- **Cloud-Init Integration**: OS-agnostic user provisioning works across all Linux distributions
+- **Spot/Preemptible Instances**: Cost optimization with spot instances on AWS, Azure, and GCP
 - **Configurable Deployments**: Customize cluster size, instance types, storage, and network settings
 - **State Management**: Tracks deployment state with file-based locking for safe concurrent operations
 - **Infrastructure as Code**: Uses OpenTofu/Terraform for reproducible infrastructure provisioning
@@ -84,31 +87,93 @@ chmod 600 ~/.aws/config
 
 ## Quick Start
 
-### 1. List Available Database Versions
+### 1. List Available Options
 
 ```bash
+# List supported cloud providers
+./exasol init --list-providers
+
+# List available database versions
 ./exasol init --list-versions
 ```
 
 Output:
 ```
+Supported cloud providers:
+  - aws: Amazon Web Services
+  - azure: Microsoft Azure
+  - gcp: Google Cloud Platform
+  - hetzner: Hetzner Cloud
+  - digitalocean: DigitalOcean
+
+Available database versions:
 exasol-2025.1.4
 ```
 
 ### 2. Initialize a Deployment
 
+#### AWS Deployment
+
 ```bash
 # Initialize with default settings (single-node, default version)
-./exasol init --deployment-dir ./my-deployment
-
-# Initialize with specific version and cluster size
 ./exasol init \
-  --deployment-dir ./my-deployment \
+  --cloud-provider aws \
+  --deployment-dir ./my-aws-deployment
+
+# Initialize with specific version, cluster size, and spot instances
+./exasol init \
+  --cloud-provider aws \
+  --deployment-dir ./my-aws-deployment \
   --db-version exasol-2025.1.4 \
   --cluster-size 4 \
   --instance-type c7a.16xlarge \
   --data-volume-size 500 \
-  --aws-region us-east-1
+  --aws-region us-east-1 \
+  --aws-spot-instance
+```
+
+#### Azure Deployment
+
+```bash
+./exasol init \
+  --cloud-provider azure \
+  --deployment-dir ./my-azure-deployment \
+  --azure-region eastus \
+  --azure-subscription <your-subscription-id> \
+  --cluster-size 3 \
+  --azure-spot-instance
+```
+
+#### GCP Deployment
+
+```bash
+./exasol init \
+  --cloud-provider gcp \
+  --deployment-dir ./my-gcp-deployment \
+  --gcp-project my-project-id \
+  --gcp-region us-central1 \
+  --cluster-size 2 \
+  --gcp-spot-instance
+```
+
+#### Hetzner Cloud Deployment
+
+```bash
+./exasol init \
+  --cloud-provider hetzner \
+  --deployment-dir ./my-hetzner-deployment \
+  --hetzner-location nbg1 \
+  --hetzner-token <your-api-token>
+```
+
+#### DigitalOcean Deployment
+
+```bash
+./exasol init \
+  --cloud-provider digitalocean \
+  --deployment-dir ./my-do-deployment \
+  --digitalocean-region nyc3 \
+  --digitalocean-token <your-api-token>
 ```
 
 The init command will:

@@ -1,9 +1,16 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Exasol Cloud Deployer
 # A bash script that simulates the interface of the binary Exasol deployer
 # using OpenTofu and Ansible
 
 set -euo pipefail
+
+# Ensure we are running on Bash >= 4 (macOS ships with Bash 3.x which lacks associative arrays)
+if [[ -z "${BASH_VERSINFO:-}" ]] || [[ ${BASH_VERSINFO[0]} -lt 4 ]]; then
+  echo "This script requires Bash 4.0 or newer. Current version: ${BASH_VERSION:-unknown}" >&2
+  echo "On macOS, consider installing a newer bash via Homebrew (brew install bash) and ensure it's in your PATH." >&2
+  exit 1
+fi
 
 # Script information
 readonly SCRIPT_VERSION="1.0.0"
@@ -78,38 +85,69 @@ show_init_help() {
 Initialize a new deployment directory.
 
 Usage:
-  exasol init [flags]
+  exasol init --cloud-provider <provider> [flags]
 
-Flags:
+Required Flags:
+  --cloud-provider string    Cloud provider: aws, azure, gcp, hetzner, digitalocean
+
+Common Flags:
   --db-version string         Database version to deploy (format: X.Y.Z-ARCH)
   --list-versions            List all available database versions
+  --list-providers           List all supported cloud providers
   --cluster-size number      Number of nodes in the cluster (default: 1)
-  --instance-type string     EC2 instance type (auto-detected from version if not specified)
+  --instance-type string     Instance/VM type (auto-detected from version if not specified)
   --data-volume-size number  Size in GB for the database data volume (default: 100)
   --db-password string       Database password (randomly generated if not specified)
   --adminui-password string  Admin UI password (randomly generated if not specified)
   --owner string             Owner tag for all resources (default: "exasol-default")
-  --aws-region string        AWS region (default: "us-east-1")
-  --aws-profile string       AWS profile to use (default: "default")
   --allowed-cidr string      CIDR block allowed to access cluster (default: "0.0.0.0/0")
   -h, --help                Show help
+
+AWS-Specific Flags:
+  --aws-region string        AWS region (default: "us-east-1")
+  --aws-profile string       AWS profile to use (default: "default")
+  --aws-spot-instance        Enable spot instances for cost savings
+
+Azure-Specific Flags:
+  --azure-region string      Azure region (default: "eastus")
+  --azure-subscription string  Azure subscription ID
+  --azure-spot-instance      Enable spot instances
+
+GCP-Specific Flags:
+  --gcp-region string        GCP region (default: "us-central1")
+  --gcp-project string       GCP project ID
+  --gcp-spot-instance        Enable spot (preemptible) instances
+
+Hetzner-Specific Flags:
+  --hetzner-location string  Hetzner location (default: "nbg1")
+  --hetzner-token string     Hetzner API token
+
+DigitalOcean-Specific Flags:
+  --digitalocean-region string  DigitalOcean region (default: "nyc3")
+  --digitalocean-token string   DigitalOcean API token
 
 Global Flags:
   --deployment-dir string   The directory to store deployment files (default ".")
   --log-level string        Set log level: debug, info, warn, error
 
 Examples:
+  # List available providers
+  exasol init --list-providers
+
   # List available versions
   exasol init --list-versions
 
-  # Initialize with default version (latest stable)
-  exasol init --deployment-dir ./my-deployment
+  # Initialize AWS deployment with default version
+  exasol init --cloud-provider aws --deployment-dir ./my-deployment
 
-  # Initialize with specific version and 4-node cluster
-  exasol init --db-version 8.0.0-x86_64 --cluster-size 4
+  # Initialize AWS with specific version, 4-node cluster, and spot instances
+  exasol init --cloud-provider aws --db-version 8.0.0-x86_64 --cluster-size 4 --aws-spot-instance
 
-  # Initialize ARM64 deployment
-  exasol init --db-version 8.0.0-arm64 --instance-type c8g.16xlarge
+  # Initialize Azure deployment
+  exasol init --cloud-provider azure --azure-region westus2 --azure-subscription <sub-id>
+
+  # Initialize GCP deployment with spot instances
+  exasol init --cloud-provider gcp --gcp-project my-project --gcp-spot-instance
 EOF
 }
 

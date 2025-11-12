@@ -251,7 +251,7 @@ write_tfvars() {
 
 Create file: cmd/status.sh
 
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 source "$(dirname "$0")/../lib/paths.sh"

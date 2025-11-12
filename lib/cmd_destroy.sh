@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Destroy command implementation
 
 # Source dependencies

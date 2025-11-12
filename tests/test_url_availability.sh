@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests for URL availability in versions.conf
 # Tests that all configured URLs are accessible without fully downloading them
 

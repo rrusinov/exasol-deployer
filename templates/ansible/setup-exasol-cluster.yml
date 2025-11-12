@@ -23,7 +23,6 @@
   vars:
     # --- User and Path Configuration ---
     exa_user: "exasol"
-    initial_user: "ubuntu"
 
   tasks:
     # ==============================================================================
@@ -101,74 +100,37 @@
           loop: "{{ ansible_play_hosts }}"
 
     # ==============================================================================
-    # SECTION 2: CREATE EXASOL USER & CONFIGURE SSH
+    # SECTION 2: CONFIGURE SSH FOR INTER-NODE COMMUNICATION
     # ==============================================================================
+    # NOTE: The exasol user is now created via cloud-init during instance boot.
+    # This section only handles SSH key generation and distribution.
     - name: Generate a single password for the exasol user
       ansible.builtin.set_fact:
         random_image_pass: "{{ lookup('password', '/dev/null length=16 chars=ascii_letters,digits') }}"
       run_once: true
 
-    - name: "SECTION 2: Create Exasol User & Configure SSH"
+    - name: "SECTION 2: Configure SSH for Inter-Node Communication"
       block:
-        - name: Allow 'initial_user' user to run sudo without a password
-          ansible.builtin.lineinfile:
-            path: "/etc/sudoers.d/10-{{ initial_user }}-user"
-            line: "{{ initial_user }} ALL=(ALL) NOPASSWD: ALL"
-            state: present
-            mode: '0440'
-            create: yes
-            validate: 'visudo -cf %s'
-
-        - name: Ensure exasol group exists
-          ansible.builtin.group:
-            name: "{{ exa_user }}"
-            state: present
-
-        - name: Create the exasol user and set its password
-          ansible.builtin.user:
-            name: "{{ exa_user }}"
-            group: "{{ exa_user }}"
-            groups: sudo
-            shell: /bin/bash
-            state: present
-            create_home: yes
-            password: "{{ hostvars[ansible_play_hosts[0]]['random_image_pass'] | password_hash('sha512') }}"
-
-        - name: Allow exasol user to run sudo without a password
-          ansible.builtin.lineinfile:
-            path: "/etc/sudoers.d/11-{{ exa_user }}-user"
-            line: "{{ exa_user }} ALL=(ALL) NOPASSWD: ALL"
-            state: present
-            mode: '0440'
-            create: yes
-            validate: 'visudo -cf %s'
-
-        - name: Generate SSH key for ubuntu user on n11
+        - name: Generate SSH key for exasol user on n11
           community.crypto.openssh_keypair:
-            path: "/home/{{ initial_user }}/.ssh/id_rsa"
-            owner: "{{ initial_user }}"
-            group: "{{ initial_user }}"
+            path: "/home/{{ exa_user }}/.ssh/id_rsa"
+            owner: "{{ exa_user }}"
+            group: "{{ exa_user }}"
           delegate_to: "{{ ansible_play_hosts[0] }}"
           run_once: true
 
-        - name: Fetch the ubuntu user public key from n11
+        - name: Fetch the exasol user public key from n11
           ansible.builtin.slurp:
-            src: "/home/{{ initial_user }}/.ssh/id_rsa.pub"
-          register: ubuntu_user_pub_key
+            src: "/home/{{ exa_user }}/.ssh/id_rsa.pub"
+          register: exasol_user_pub_key
           delegate_to: "{{ ansible_play_hosts[0] }}"
           run_once: true
 
-        - name: Distribute n11's ubuntu public key to all nodes for the exasol user
+        - name: Distribute n11's exasol public key to all nodes
           ansible.posix.authorized_key:
             user: "{{ exa_user }}"
             state: present
-            key: "{{ ubuntu_user_pub_key['content'] | b64decode }}"
-
-        - name: Distribute n11's 'initial_user' public key to all nodes
-          ansible.posix.authorized_key:
-            user: "{{ initial_user }}"
-            state: present
-            key: "{{ ubuntu_user_pub_key['content'] | b64decode }}"
+            key: "{{ exasol_user_pub_key['content'] | b64decode }}"
 
     # ==============================================================================
     # SECTION 3A: DISCOVER DATA DISKS AND CREATE SYMLINKS (RUNS ON EVERY NODE)
@@ -237,7 +199,6 @@
 
   vars:
     exa_user: "exasol"
-    initial_user: "ubuntu"
 
   tasks:
     - name: Gather Exasol data disk symlinks from primary node
@@ -260,9 +221,9 @@
     - name: Create final Exasol config file from template
       ansible.builtin.template:
         src: "{{ playbook_dir }}/config.j2"
-        dest: "/home/{{ initial_user }}/config"
-        owner: "{{ initial_user }}"
-        group: "{{ initial_user }}"
+        dest: "/home/{{ exa_user }}/config"
+        owner: "{{ exa_user }}"
+        group: "{{ exa_user }}"
         mode: '0644'
       vars:
         internal_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, ['ansible_default_ipv4', 'address']) | join(' ') }}"
@@ -273,33 +234,33 @@
 
     - name: Create installation directory on primary node
       ansible.builtin.file:
-        path: "/home/{{ initial_user }}/exasol-release"
+        path: "/home/{{ exa_user }}/exasol-release"
         state: directory
-        owner: "{{ initial_user }}"
-        group: "{{ initial_user }}"
+        owner: "{{ exa_user }}"
+        group: "{{ exa_user }}"
         mode: '0755'
 
     - name: Move generated config file into place
       ansible.builtin.command:
-        cmd: "mv /home/{{ initial_user }}/config /home/{{ initial_user }}/exasol-release/config"
-        creates: "/home/{{ initial_user }}/exasol-release/config"
+        cmd: "mv /home/{{ exa_user }}/config /home/{{ exa_user }}/exasol-release/config"
+        creates: "/home/{{ exa_user }}/exasol-release/config"
 
     - name: Transfer local Exasol database tarball
       when: db_is_local | bool
       ansible.builtin.copy:
         src: "{{ db_local_path }}"
-        dest: "/home/{{ initial_user }}/exasol-release/{{ db_artifact_filename }}"
-        owner: "{{ initial_user }}"
-        group: "{{ initial_user }}"
+        dest: "/home/{{ exa_user }}/exasol-release/{{ db_artifact_filename }}"
+        owner: "{{ exa_user }}"
+        group: "{{ exa_user }}"
         mode: '0644'
 
     - name: Download Exasol database tarball
       when: not (db_is_local | bool)
       ansible.builtin.get_url:
         url: "{{ db_download_url }}"
-        dest: "/home/{{ initial_user }}/exasol-release/{{ db_artifact_filename }}"
-        owner: "{{ initial_user }}"
-        group: "{{ initial_user }}"
+        dest: "/home/{{ exa_user }}/exasol-release/{{ db_artifact_filename }}"
+        owner: "{{ exa_user }}"
+        group: "{{ exa_user }}"
         mode: '0644'
       register: db_download
       retries: 3
@@ -309,18 +270,18 @@
       when: c4_is_local | bool
       ansible.builtin.copy:
         src: "{{ c4_local_path }}"
-        dest: "/home/{{ initial_user }}/exasol-release/{{ c4_artifact_filename }}"
-        owner: "{{ initial_user }}"
-        group: "{{ initial_user }}"
+        dest: "/home/{{ exa_user }}/exasol-release/{{ c4_artifact_filename }}"
+        owner: "{{ exa_user }}"
+        group: "{{ exa_user }}"
         mode: '0755'
 
     - name: Download c4 binary
       when: not (c4_is_local | bool)
       ansible.builtin.get_url:
         url: "{{ c4_download_url }}"
-        dest: "/home/{{ initial_user }}/exasol-release/{{ c4_artifact_filename }}"
-        owner: "{{ initial_user }}"
-        group: "{{ initial_user }}"
+        dest: "/home/{{ exa_user }}/exasol-release/{{ c4_artifact_filename }}"
+        owner: "{{ exa_user }}"
+        group: "{{ exa_user }}"
         mode: '0755'
       register: c4_download
       retries: 3

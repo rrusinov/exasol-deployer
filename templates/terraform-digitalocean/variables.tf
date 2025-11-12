@@ -1,34 +1,32 @@
-variable "aws_profile" {
-  description = "The AWS profile to use for authentication."
+variable "digitalocean_token" {
+  description = "The DigitalOcean API token for authentication."
   type        = string
+  sensitive   = true
   # Value will be set in variables.auto.tfvars during initialization
 }
 
-variable "aws_region" {
-  description = "The AWS region to deploy the cluster in."
+variable "digitalocean_region" {
+  description = "The DigitalOcean region to deploy the cluster in (e.g., 'nyc1', 'nyc3', 'sfo3', 'lon1', 'fra1')."
   type        = string
   # Value will be set in variables.auto.tfvars during initialization
-}
-
-variable "preferred_availability_zones" {
-  description = "Optional list of AZs (e.g., [\"us-east-1a\", \"us-east-1b\"]) to prioritize. The deployer will fall back to any AZ that supports the selected instance type."
-  type        = list(string)
-  default     = []
 }
 
 variable "instance_type" {
-  description = "The EC2 instance type for the cluster nodes. Value is determined from the selected database version or can be overridden with --instance-type."
+  description = "The DigitalOcean droplet size for the cluster nodes (e.g., 's-2vcpu-4gb', 'c-4', 'g-8vcpu-32gb')."
   type        = string
   # Value will be set in variables.auto.tfvars during initialization
   # Examples:
-  # - x86_64: m6idn.large, c7a.16xlarge
-  # - arm64:  c8g.16xlarge
+  # - Basic: s-1vcpu-1gb, s-2vcpu-2gb, s-2vcpu-4gb, s-4vcpu-8gb
+  # - General Purpose: g-2vcpu-8gb, g-4vcpu-16gb, g-8vcpu-32gb
+  # - CPU-Optimized: c-2, c-4, c-8, c-16, c-32
+  # - Memory-Optimized: m-2vcpu-16gb, m-4vcpu-32gb, m-8vcpu-64gb
 }
 
 variable "instance_architecture" {
-  description = "The architecture for the EC2 instance (e.g., 'x86_64' or 'arm64'). Value is determined from the selected database version."
+  description = "The architecture for the droplet (e.g., 'x86_64' or 'arm64'). Value is determined from the selected database version."
   type        = string
   # Value will be set in variables.auto.tfvars during initialization
+  # Note: DigitalOcean currently only supports x86_64 droplets
 
   validation {
     condition     = contains(["x86_64", "arm64"], var.instance_architecture)
@@ -53,13 +51,15 @@ variable "root_volume_size" {
   description = "The size of the root volume in GB."
   type        = number
   default     = 50
-  # Fixed default value - not configurable via command line
+  # Note: DigitalOcean droplets come with fixed root disk sizes (usually 25GB minimum)
+  # This variable can trigger disk resize if value is larger than the default
 }
 
 variable "data_volume_size" {
   description = "The size of the data volume in GB. Set with --data-volume-size during initialization."
   type        = number
   # Value will be set in variables.auto.tfvars during initialization
+  # Minimum size: 1 GB, maximum: 16384 GB (16 TB)
 }
 
 variable "data_volumes_per_node" {
@@ -67,10 +67,19 @@ variable "data_volumes_per_node" {
   type        = number
   default     = 1
   # Optional: Can be overridden in variables.auto.tfvars
+  # Note: DigitalOcean allows up to 7 volumes per droplet
 }
 
 variable "owner" {
   description = "Owner tag for all resources. Set with --owner during initialization."
   type        = string
   # Value will be set in variables.auto.tfvars during initialization
+}
+
+variable "enable_spot_instances" {
+  description = "Enable spot instances for cost savings. Not supported on DigitalOcean."
+  type        = bool
+  default     = false
+  # DigitalOcean does not have spot/preemptible instances
+  # This variable is kept for consistency with other cloud providers
 }
