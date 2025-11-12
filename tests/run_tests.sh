@@ -47,6 +47,7 @@ run_test_file() {
 run_test_file "$TEST_DIR/test_common.sh"
 run_test_file "$TEST_DIR/test_versions.sh"
 run_test_file "$TEST_DIR/test_state.sh"
+run_test_file "$TEST_DIR/test_url_availability.sh"
 
 # Overall summary
 echo -e "${BLUE}=========================================${NC}"
