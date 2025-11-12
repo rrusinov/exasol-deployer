@@ -1,4 +1,3 @@
-✅ COMPLETED: Print during the whole init deploy and destroy (later start, stop) process parsable info about the current progress, goal is to enable UIs to show progress and information about current steps.
 
 Check what options do we have to have public available hostname with valid certificate, eventually having a load balancer to he open ports.
 
