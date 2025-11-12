@@ -121,7 +121,7 @@ jobs:
 
       - name: Validate Terraform configuration
         run: |
-          cd /tmp/test-deploy
+          cd /tmp/test-deploy/.templates
           tofu init -backend=false
           tofu validate
           echo "✅ Terraform configuration is valid"
