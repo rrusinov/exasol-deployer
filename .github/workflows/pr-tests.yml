@@ -83,7 +83,7 @@ jobs:
 
       - name: Test init command
         run: |
-          ./exasol init --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.4
+          ./exasol init --cloud-provider aws --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.4
 
       - name: Verify deployment structure
         run: |
@@ -118,7 +118,7 @@ jobs:
       - name: Set up test deployment
         run: |
           chmod +x exasol
-          ./exasol init --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.4
+          ./exasol init --cloud-provider aws --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.4
 
       - name: Validate Terraform configuration
         run: |
