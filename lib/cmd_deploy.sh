@@ -51,9 +51,12 @@ cmd_deploy() {
     # Create lock
     lock_create "$deploy_dir" "deploy" || die "Failed to create lock"
 
-    # Trap to ensure lock is removed on exit. Expand $deploy_dir now so the
-    # trap uses a literal path when it runs (avoids unbound variable with set -u).
-    trap "lock_remove \"$deploy_dir\"" EXIT INT TERM
+    # Ensure trap can access the deployment directory after this function
+    # returns by copying it to a global variable that the trap will use.
+    _EXASOL_TRAP_DEPLOY_DIR="$deploy_dir"
+    # Use single quotes so ShellCheck won't warn; the variable is global so
+    # it will still be available when the trap runs.
+    trap 'lock_remove "$_EXASOL_TRAP_DEPLOY_DIR"' EXIT INT TERM
 
     # Update status
     state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_IN_PROGRESS"
