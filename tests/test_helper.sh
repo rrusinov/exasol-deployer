@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Test helper functions for unit testing
 
 # Colors for test output

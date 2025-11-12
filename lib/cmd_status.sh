@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Status command implementation
 
 # Source dependencies

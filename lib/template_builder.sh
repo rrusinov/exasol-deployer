@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Template Builder - Generates cloud-specific templates from shared components
 # This avoids code duplication while keeping templates simple and readable
 
@@ -11,7 +11,7 @@ readonly __EXASOL_TEMPLATE_BUILDER_SH_INCLUDED__=1
 # Get the common cloud-init script
 get_cloud_init_script() {
     cat <<'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Create exasol group

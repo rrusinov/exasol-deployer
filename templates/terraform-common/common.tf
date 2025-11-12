@@ -38,7 +38,7 @@ locals {
   # Standard cloud-init script for creating exasol user
   # Works across all Linux distributions (Ubuntu, Debian, RHEL, Amazon Linux, etc.)
   cloud_init_script = <<-EOF
-    #!/bin/bash
+    #!/usr/bin/env bash
     set -euo pipefail
 
     # Create exasol group

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests for template validation (Terraform/OpenTofu and Ansible)
 # This test generates templates for each cloud provider and validates them
 
@@ -455,6 +455,92 @@ test_common_template_inclusion() {
     done
 }
 
+# Test: Terraform symlinks are created correctly
+test_terraform_symlinks() {
+    echo ""
+    echo "Test: Terraform file symlinks in deployment directory"
+
+    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean")
+    local required_symlinks=("common.tf" "main.tf" "variables.tf" "outputs.tf" "inventory.tftpl")
+
+    for provider in "${providers[@]}"; do
+        local test_dir=$(setup_test_dir)
+        cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+
+        local all_symlinks_valid=true
+
+        for symlink in "${required_symlinks[@]}"; do
+            if [[ -L "$test_dir/$symlink" ]]; then
+                # Check that symlink target exists and is readable
+                if [[ -f "$test_dir/$symlink" ]]; then
+                    continue  # Symlink is valid
+                else
+                    TESTS_TOTAL=$((TESTS_TOTAL + 1))
+                    TESTS_FAILED=$((TESTS_FAILED + 1))
+                    echo -e "${RED}✗${NC} $provider: Symlink broken: $symlink"
+                    all_symlinks_valid=false
+                    break
+                fi
+            else
+                TESTS_TOTAL=$((TESTS_TOTAL + 1))
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                echo -e "${RED}✗${NC} $provider: Symlink not created: $symlink"
+                all_symlinks_valid=false
+                break
+            fi
+        done
+
+        if [[ "$all_symlinks_valid" == true ]]; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} $provider: All Terraform symlinks valid (${#required_symlinks[@]}/${#required_symlinks[@]})"
+        fi
+
+        cleanup_test_dir "$test_dir"
+    done
+}
+
+# Test: Symlinks work with tofu commands from deployment directory
+test_symlinks_with_tofu() {
+    echo ""
+    echo "Test: Terraform commands work from deployment directory"
+
+    if ! command -v tofu >/dev/null 2>&1; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        echo -e "${YELLOW}⊘${NC} Skipping (tofu not available)"
+        return
+    fi
+
+    local test_dir=$(setup_test_dir)
+    cmd_init --cloud-provider aws --deployment-dir "$test_dir" 2>/dev/null
+
+    # Run tofu init from deployment directory (not .templates)
+    cd "$test_dir" || exit 1
+    if tofu init >/dev/null 2>&1; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} tofu init works from deployment directory"
+
+        # Run tofu validate from deployment directory
+        if tofu validate >/dev/null 2>&1; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} tofu validate works from deployment directory"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} tofu validate failed from deployment directory"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 2))
+        TESTS_FAILED=$((TESTS_FAILED + 2))
+        echo -e "${RED}✗${NC} tofu init failed from deployment directory"
+    fi
+
+    cd - >/dev/null
+    cleanup_test_dir "$test_dir"
+}
+
 # Run all tests
 check_tool_availability
 test_aws_template_validation
@@ -465,6 +551,8 @@ test_digitalocean_template_validation
 test_ansible_playbook_validation
 test_ansible_template_validation
 test_common_template_inclusion
+test_terraform_symlinks
+test_symlinks_with_tofu
 
 # Show summary
 test_summary

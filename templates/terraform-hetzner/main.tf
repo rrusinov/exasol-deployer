@@ -193,7 +193,7 @@ resource "hcloud_server" "exasol_node" {
 
   # Cloud-init user-data to create exasol user before Ansible runs
   user_data = <<-EOF
-    #!/bin/bash
+    #!/usr/bin/env bash
     set -euo pipefail
 
     # Create exasol group

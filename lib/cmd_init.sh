@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Init command implementation - Multi-cloud support
 
 # Source dependencies
@@ -522,6 +522,7 @@ create_terraform_files() {
     # Create symbolic links to templates
     local templates_dir="$deploy_dir/.templates"
 
+    ln -sf ".templates/common.tf" "$deploy_dir/common.tf"
     ln -sf ".templates/main.tf" "$deploy_dir/main.tf"
     ln -sf ".templates/variables.tf" "$deploy_dir/variables.tf"
     ln -sf ".templates/outputs.tf" "$deploy_dir/outputs.tf"

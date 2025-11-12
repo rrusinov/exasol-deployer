@@ -1,9 +1,16 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Exasol Cloud Deployer
 # A bash script that simulates the interface of the binary Exasol deployer
 # using OpenTofu and Ansible
 
 set -euo pipefail
+
+# Ensure we are running on Bash >= 4 (macOS ships with Bash 3.x which lacks associative arrays)
+if [[ -z "${BASH_VERSINFO:-}" ]] || [[ ${BASH_VERSINFO[0]} -lt 4 ]]; then
+  echo "This script requires Bash 4.0 or newer. Current version: ${BASH_VERSION:-unknown}" >&2
+  echo "On macOS, consider installing a newer bash via Homebrew (brew install bash) and ensure it's in your PATH." >&2
+  exit 1
+fi
 
 # Script information
 readonly SCRIPT_VERSION="1.0.0"

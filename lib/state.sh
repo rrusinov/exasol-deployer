@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # State management functions
 
 # Include guard

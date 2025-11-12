@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Common functions and utilities for Exasol deployer
 
 # Include guard

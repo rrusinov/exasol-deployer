@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests for lib/cmd_init.sh (multi-cloud support)
 
 # Get script directory
