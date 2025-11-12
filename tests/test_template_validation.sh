@@ -28,9 +28,7 @@ check_tool_availability() {
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "${GREEN}✓${NC} tofu is available"
     else
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} tofu is not available (skipping Terraform validation tests)"
+        echo -e "${YELLOW}⊘${NC} tofu is not available (skipping Terraform validation tests)"
         tools_available=false
     fi
 
@@ -39,9 +37,7 @@ check_tool_availability() {
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "${GREEN}✓${NC} ansible-playbook is available"
     else
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} ansible-playbook is not available (skipping Ansible validation tests)"
+        echo -e "${YELLOW}⊘${NC} ansible-playbook is not available (skipping Ansible validation tests)"
         tools_available=false
     fi
 
