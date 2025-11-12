@@ -1,0 +1,9 @@
+[exasol_nodes]
+%{~ for idx, instance in instances }
+n${idx + 11} ansible_host=${instance.network_interface[0].access_config[0].nat_ip} ansible_user=exasol private_ip=${instance.network_interface[0].network_ip} data_volume_ids='${jsonencode(node_volumes[idx])}'
+%{~ endfor }
+
+[exasol_nodes:vars]
+ansible_user=exasol
+ansible_ssh_private_key_file=${ssh_key}
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

@@ -28,31 +28,13 @@ provider "aws" {
 }
 
 # ==============================================================================
-# SSH Key Pair Generation (NEW SECTION)
-# This creates a new SSH key pair dynamically for this deployment.
+# SSH Key Pair - AWS-specific wrapper
+# Common SSH key generation (tls_private_key, local_file, random_id) is in common.tf
 # ==============================================================================
-
-resource "tls_private_key" "exasol_key" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
 
 resource "aws_key_pair" "exasol_auth" {
   key_name   = "exasol-cluster-key-${random_id.instance.hex}"
   public_key = tls_private_key.exasol_key.public_key_openssh
-}
-
-resource "local_file" "exasol_private_key_pem" {
-  content  = tls_private_key.exasol_key.private_key_pem
-  filename = "${path.module}/exasol-key.pem"
-
-  provisioner "local-exec" {
-    command = "chmod 400 ${self.filename}"
-  }
-}
-
-resource "random_id" "instance" {
-  byte_length = 8
 }
 
 locals {
@@ -252,14 +234,58 @@ resource "aws_instance" "exasol_node" {
   subnet_id              = aws_subnet.exasol_subnet.id
   vpc_security_group_ids = [aws_security_group.exasol_cluster.id]
 
+  # Cloud-init user-data to create exasol user before Ansible runs
+  user_data = <<-EOF
+    #!/bin/bash
+    set -euo pipefail
+
+    # Create exasol group
+    groupadd -f exasol
+
+    # Create exasol user with sudo privileges
+    if ! id -u exasol >/dev/null 2>&1; then
+      useradd -m -g exasol -G sudo -s /bin/bash exasol
+    fi
+
+    # Enable passwordless sudo for exasol user
+    echo "exasol ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/11-exasol-user
+    chmod 0440 /etc/sudoers.d/11-exasol-user
+
+    # Copy SSH authorized_keys from default cloud user to exasol user
+    # This works across different distributions (ubuntu, admin, ec2-user, etc.)
+    for user_home in /home/ubuntu /home/admin /home/ec2-user /home/debian; do
+      if [ -d "$user_home/.ssh" ] && [ -f "$user_home/.ssh/authorized_keys" ]; then
+        mkdir -p /home/exasol/.ssh
+        cp "$user_home/.ssh/authorized_keys" /home/exasol/.ssh/
+        chown -R exasol:exasol /home/exasol/.ssh
+        chmod 700 /home/exasol/.ssh
+        chmod 600 /home/exasol/.ssh/authorized_keys
+        break
+      fi
+    done
+
+    # Ensure original cloud user also has passwordless sudo (for compatibility)
+    for cloud_user in ubuntu admin ec2-user debian; do
+      if id -u "$cloud_user" >/dev/null 2>&1; then
+        echo "$cloud_user ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/10-$cloud_user-user"
+        chmod 0440 "/etc/sudoers.d/10-$cloud_user-user"
+      fi
+    done
+  EOF
+
+  user_data_replace_on_change = true
+
   # Spot Instance configuration
-  #instance_market_options {
-  #  market_type = "spot"
-  #  spot_options {
-  #    spot_instance_type    = "persistent"
-  #    instance_interruption_behavior = "stop" #"hibernate"
-  #  }
-  #}
+  dynamic "instance_market_options" {
+    for_each = var.enable_spot_instances ? [1] : []
+    content {
+      market_type = "spot"
+      spot_options {
+        spot_instance_type             = "persistent"
+        instance_interruption_behavior = "stop"
+      }
+    }
+  }
 
   root_block_device {
     volume_size           = var.root_volume_size
@@ -325,7 +351,7 @@ resource "local_file" "ssh_config" {
     %{for idx, instance in aws_instance.exasol_node~}
     Host n${idx + 11}
         HostName ${instance.public_ip}
-        User ubuntu
+        User exasol
         IdentityFile ${local_file.exasol_private_key_pem.filename}
         StrictHostKeyChecking no
         UserKnownHostsFile=/dev/null

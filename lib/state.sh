@@ -32,6 +32,7 @@ state_init() {
     local deploy_dir="$1"
     local db_version="$2"
     local architecture="$3"
+    local cloud_provider="${4:-aws}"  # Default to aws for backward compatibility
 
     local state_file="$deploy_dir/$STATE_FILE"
 
@@ -46,6 +47,7 @@ state_init() {
   "status": "$STATE_INITIALIZED",
   "db_version": "$db_version",
   "architecture": "$architecture",
+  "cloud_provider": "$cloud_provider",
   "created_at": "$(get_timestamp)",
   "updated_at": "$(get_timestamp)"
 }

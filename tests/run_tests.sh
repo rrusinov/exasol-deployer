@@ -47,6 +47,8 @@ run_test_file() {
 run_test_file "$TEST_DIR/test_common.sh"
 run_test_file "$TEST_DIR/test_versions.sh"
 run_test_file "$TEST_DIR/test_state.sh"
+run_test_file "$TEST_DIR/test_init.sh"
+run_test_file "$TEST_DIR/test_template_validation.sh"
 run_test_file "$TEST_DIR/test_url_availability.sh"
 
 # Overall summary

@@ -1,0 +1,391 @@
+#!/bin/bash
+# Unit tests for lib/cmd_init.sh (multi-cloud support)
+
+# Get script directory
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$TEST_DIR/test_helper.sh"
+
+# Source the libraries we're testing
+LIB_DIR="$TEST_DIR/../lib"
+source "$LIB_DIR/common.sh"
+source "$LIB_DIR/state.sh"
+source "$LIB_DIR/versions.sh"
+source "$LIB_DIR/cmd_init.sh"
+
+echo "Testing cmd_init.sh multi-cloud functions"
+echo "========================================="
+
+# Test: Cloud provider validation
+test_cloud_provider_validation() {
+    echo ""
+    echo "Test: Cloud provider validation"
+
+    local test_dir=$(setup_test_dir)
+
+    # Test with missing cloud provider
+    if cmd_init --deployment-dir "$test_dir" 2>/dev/null; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should fail without cloud provider"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Should fail without cloud provider"
+    fi
+
+    # Test with invalid cloud provider
+    if cmd_init --cloud-provider invalid --deployment-dir "$test_dir" 2>/dev/null; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should fail with invalid cloud provider"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Should fail with invalid cloud provider"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
+# Test: Valid cloud providers
+test_valid_cloud_providers() {
+    echo ""
+    echo "Test: Valid cloud providers"
+
+    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean")
+
+    for provider in "${providers[@]}"; do
+        local test_dir=$(setup_test_dir)
+
+        # Initialize with valid provider
+        if cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Should accept valid provider: $provider"
+
+            # Check that state file contains cloud provider
+            local cloud_from_state
+            cloud_from_state=$(jq -r '.cloud_provider' "$test_dir/.exasol.json")
+            if [[ "$cloud_from_state" == "$provider" ]]; then
+                TESTS_TOTAL=$((TESTS_TOTAL + 1))
+                TESTS_PASSED=$((TESTS_PASSED + 1))
+                echo -e "${GREEN}✓${NC} State file contains correct provider: $provider"
+            else
+                TESTS_TOTAL=$((TESTS_TOTAL + 1))
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                echo -e "${RED}✗${NC} State file should contain provider: $provider (got: $cloud_from_state)"
+            fi
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Should accept valid provider: $provider"
+        fi
+
+        cleanup_test_dir "$test_dir"
+    done
+}
+
+# Test: AWS-specific initialization
+test_aws_initialization() {
+    echo ""
+    echo "Test: AWS-specific initialization"
+
+    local test_dir=$(setup_test_dir)
+
+    # Initialize with AWS and spot instances
+    cmd_init --cloud-provider aws \
+        --deployment-dir "$test_dir" \
+        --aws-region us-west-2 \
+        --aws-spot-instance \
+        2>/dev/null
+
+    if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Should create variables.auto.tfvars"
+
+        # Check for AWS-specific variables
+        if grep -q "aws_region" "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Variables file contains aws_region"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Variables file should contain aws_region"
+        fi
+
+        if grep -q "enable_spot_instances = true" "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Variables file contains enable_spot_instances = true"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Variables file should contain enable_spot_instances = true"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should create variables.auto.tfvars"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
+# Test: Template directory selection
+test_template_directory_selection() {
+    echo ""
+    echo "Test: Template directory selection"
+
+    local test_dir=$(setup_test_dir)
+
+    # Initialize with AWS (uses default templates/terraform/)
+    cmd_init --cloud-provider aws --deployment-dir "$test_dir" 2>/dev/null
+
+    if [[ -f "$test_dir/.templates/main.tf" ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Should copy templates for AWS"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should copy templates for AWS"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
+# Test: Credentials file includes cloud provider
+test_credentials_file() {
+    echo ""
+    echo "Test: Credentials file includes cloud provider"
+
+    local test_dir=$(setup_test_dir)
+
+    cmd_init --cloud-provider azure --deployment-dir "$test_dir" 2>/dev/null
+
+    if [[ -f "$test_dir/.credentials.json" ]]; then
+        local cloud_provider
+        cloud_provider=$(jq -r '.cloud_provider' "$test_dir/.credentials.json")
+
+        if [[ "$cloud_provider" == "azure" ]]; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Credentials file contains cloud_provider"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Credentials file should contain cloud_provider: azure (got: $cloud_provider)"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should create .credentials.json"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
+# Test: README generation includes cloud provider
+test_readme_generation() {
+    echo ""
+    echo "Test: README generation includes cloud provider"
+
+    local test_dir=$(setup_test_dir)
+
+    cmd_init --cloud-provider gcp --deployment-dir "$test_dir" 2>/dev/null
+
+    if [[ -f "$test_dir/README.md" ]]; then
+        if grep -q "Google Cloud Platform" "$test_dir/README.md"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} README contains cloud provider name"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} README should contain cloud provider name"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should create README.md"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
+# Test: Data volumes per node option
+test_data_volumes_per_node() {
+    echo ""
+    echo "Test: Data volumes per node option"
+
+    local test_dir=$(setup_test_dir)
+
+    # Initialize with custom data volumes per node
+    cmd_init --cloud-provider aws \
+        --deployment-dir "$test_dir" \
+        --data-volumes-per-node 3 \
+        2>/dev/null
+
+    if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
+        if grep -q "data_volumes_per_node = 3" "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Variables file contains data_volumes_per_node = 3"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Variables file should contain data_volumes_per_node = 3"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should create variables.auto.tfvars"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
+# Test: Root volume size option
+test_root_volume_size() {
+    echo ""
+    echo "Test: Root volume size option"
+
+    local test_dir=$(setup_test_dir)
+
+    # Initialize with custom root volume size
+    cmd_init --cloud-provider aws \
+        --deployment-dir "$test_dir" \
+        --root-volume-size 100 \
+        2>/dev/null
+
+    if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
+        if grep -q "root_volume_size = 100" "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Variables file contains root_volume_size = 100"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Variables file should contain root_volume_size = 100"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should create variables.auto.tfvars"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
+# Test: Hetzner provider initialization
+test_hetzner_initialization() {
+    echo ""
+    echo "Test: Hetzner provider initialization"
+
+    local test_dir=$(setup_test_dir)
+
+    # Initialize with Hetzner
+    cmd_init --cloud-provider hetzner \
+        --deployment-dir "$test_dir" \
+        --hetzner-location fsn1 \
+        2>/dev/null
+
+    if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Should create variables.auto.tfvars for Hetzner"
+
+        # Check for Hetzner-specific variables
+        if grep -q "hetzner_location" "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Variables file contains hetzner_location"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Variables file should contain hetzner_location"
+        fi
+
+        # Check that Hetzner templates were copied
+        if [[ -f "$test_dir/.templates/main.tf" ]]; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Should copy templates for Hetzner"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Should copy templates for Hetzner"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should create variables.auto.tfvars for Hetzner"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
+# Test: DigitalOcean provider initialization
+test_digitalocean_initialization() {
+    echo ""
+    echo "Test: DigitalOcean provider initialization"
+
+    local test_dir=$(setup_test_dir)
+
+    # Initialize with DigitalOcean
+    cmd_init --cloud-provider digitalocean \
+        --deployment-dir "$test_dir" \
+        --digitalocean-region nyc3 \
+        2>/dev/null
+
+    if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Should create variables.auto.tfvars for DigitalOcean"
+
+        # Check for DigitalOcean-specific variables
+        if grep -q "digitalocean_region" "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Variables file contains digitalocean_region"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Variables file should contain digitalocean_region"
+        fi
+
+        # Check that DigitalOcean templates were copied
+        if [[ -f "$test_dir/.templates/main.tf" ]]; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Should copy templates for DigitalOcean"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Should copy templates for DigitalOcean"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should create variables.auto.tfvars for DigitalOcean"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
+# Run all tests
+test_cloud_provider_validation
+test_valid_cloud_providers
+test_aws_initialization
+test_template_directory_selection
+test_credentials_file
+test_readme_generation
+test_data_volumes_per_node
+test_root_volume_size
+test_hetzner_initialization
+test_digitalocean_initialization
+
+# Show summary
+test_summary
