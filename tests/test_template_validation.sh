@@ -351,9 +351,13 @@ ansible_ssh_private_key_file=/dev/null
 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 EOF
 
+    local ansible_tmp="$test_dir/.ansible-tmp"
+    mkdir -p "$ansible_tmp"
+
     # Run ansible-playbook syntax check with dummy inventory
     cd "$test_dir/.templates" || exit 1
-    if ansible-playbook -i dummy_inventory.ini --syntax-check setup-exasol-cluster.yml >/dev/null 2>&1; then
+    if ANSIBLE_LOCAL_TEMP="$ansible_tmp" ANSIBLE_REMOTE_TEMP="$ansible_tmp" \
+        ansible-playbook -i dummy_inventory.ini --syntax-check setup-exasol-cluster.yml >/dev/null 2>&1; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "${GREEN}✓${NC} Ansible playbook syntax is valid"

@@ -19,6 +19,11 @@ echo "Testing URL Availability in versions.conf"
 echo "========================================="
 echo ""
 
+check_network_connectivity() {
+    local probe_url="${URL_AVAILABILITY_PROBE_URL:-https://example.com}"
+    curl --head --silent --fail --location --max-time 5 "$probe_url" > /dev/null 2>&1
+}
+
 # Function to check if URL is accessible using HTTP HEAD request
 # Returns 0 if accessible, 1 otherwise
 check_url_accessible() {
@@ -84,6 +89,13 @@ main() {
     if [[ ! -f "$VERSIONS_CONF" ]]; then
         echo -e "${RED}ERROR: versions.conf not found at $VERSIONS_CONF${NC}"
         exit 1
+    fi
+
+    if ! check_network_connectivity; then
+        echo ""
+        echo -e "${YELLOW}⊘${NC} Skipping URL availability tests (no outbound network access)"
+        test_summary
+        return
     fi
 
     echo ""

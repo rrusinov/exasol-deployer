@@ -258,18 +258,48 @@ Initialize a new deployment directory with configuration files.
 ```
 
 **Flags:**
-- `--deployment-dir string`: Directory for deployment files (default: current directory)
-- `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., exasol-2025.1.4 (x86_64 is implicit))
-- `--list-versions`: List all available database versions
-- `--cluster-size number`: Number of nodes (default: 1)
-- `--instance-type string`: EC2 instance type (uses version's DEFAULT_INSTANCE_TYPE if not specified)
-- `--data-volume-size number`: Data volume size in GB (default: 100)
-- `--db-password string`: Database password (randomly generated if not specified)
-- `--adminui-password string`: Admin UI password (randomly generated if not specified)
-- `--owner string`: Owner tag for resources (default: "exasol-default")
-- `--aws-region string`: AWS region (default: "us-east-1")
-- `--aws-profile string`: AWS profile to use (default: "default")
-- `--allowed-cidr string`: CIDR block for access (default: "0.0.0.0/0")
+
+**Required Flags**
+- `--cloud-provider string`: Cloud provider to target (`aws`, `azure`, `gcp`, `hetzner`, or `digitalocean`).
+
+**Common Flags**
+- `--deployment-dir string`: Directory for deployment files (default: current directory).
+- `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., `exasol-2025.1.4`; x86_64 is implicit).
+- `--list-versions`: List all available database versions and exit.
+- `--list-providers`: List all supported cloud providers and exit.
+- `--cluster-size number`: Number of nodes (default: 1).
+- `--instance-type string`: Instance/VM type (auto-detected from version if omitted).
+- `--data-volume-size number`: Data volume size in GB (default: 100).
+- `--data-volumes-per-node number`: Number of data volumes per node (default: 1).
+- `--root-volume-size number`: Root volume size in GB (default: 50).
+- `--db-password string`: Database password (random if not specified).
+- `--adminui-password string`: Admin UI password (random if not specified).
+- `--owner string`: Owner tag for resources (default: `exasol-default`).
+- `--allowed-cidr string`: CIDR block that can reach the cluster (default: `0.0.0.0/0`).
+- `-h, --help`: Show inline help for the `init` command and exit.
+
+**AWS-Specific Flags**
+- `--aws-region string`: AWS region (default: `us-east-1`).
+- `--aws-profile string`: AWS CLI profile (default: `default`).
+- `--aws-spot-instance`: Enable AWS spot instances.
+
+**Azure-Specific Flags**
+- `--azure-region string`: Azure region (default: `eastus`).
+- `--azure-subscription string`: Azure subscription ID.
+- `--azure-spot-instance`: Enable Azure spot instances.
+
+**GCP-Specific Flags**
+- `--gcp-region string`: GCP region (default: `us-central1`).
+- `--gcp-project string`: GCP project ID.
+- `--gcp-spot-instance`: Enable GCP spot (preemptible) instances.
+
+**Hetzner-Specific Flags**
+- `--hetzner-location string`: Hetzner location (default: `nbg1`).
+- `--hetzner-token string`: Hetzner API token.
+
+**DigitalOcean-Specific Flags**
+- `--digitalocean-region string`: DigitalOcean region (default: `nyc3`).
+- `--digitalocean-token string`: DigitalOcean API token.
 
 **Configuration Flow:**
 1. Parse command-line arguments

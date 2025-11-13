@@ -150,8 +150,8 @@ calculate_overall_progress() {
     fi
 }
 
-# Emit progress information in JSON format (to stdout) and human-readable (to stderr)
-# Also writes to .exasol-progress.jsonl in deployment directory if available
+# Emit progress information in JSON format (stored in .exasol-progress.jsonl)
+# and human-readable messages (stderr).
 # Usage: progress_emit <stage> <step> <status> <message> [percent]
 progress_emit() {
     local stage="$1"      # e.g., "init", "deploy", "destroy"
@@ -187,20 +187,18 @@ progress_emit() {
         overall_percent=$(calculate_overall_progress "$stage" "$step" "${percent:-0}")
     fi
 
-    # Emit JSON progress to stdout (for UI parsing)
     local json_output
     json_output=$(cat <<EOF
 {"timestamp":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")","stage":"${stage}","step":"${step}","status":"${status}","message":"${message}"${percent:+,"percent":${percent}},"overall_percent":${overall_percent}}
 EOF
     )
-    echo "$json_output"
 
     # Also write to progress file if deployment directory is set
     local progress_file
     progress_file=$(get_progress_file)
     if [[ -n "$progress_file" ]]; then
-        # Write with immediate flush using tee
-        echo "$json_output" | tee -a "$progress_file" > /dev/null
+        mkdir -p "$(dirname "$progress_file")" 2>/dev/null || true
+        echo "$json_output" >> "$progress_file"
     fi
 
     # Also emit human-readable version to stderr based on status
