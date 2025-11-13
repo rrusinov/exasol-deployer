@@ -384,7 +384,8 @@ cmd_init() {
     if [[ -d "$script_root/templates/terraform-common" ]]; then
         cp "$script_root/templates/terraform-common/common.tf" "$templates_dir/" 2>/dev/null || true
         cp "$script_root/templates/terraform-common/common-outputs.tf" "$templates_dir/" 2>/dev/null || true
-        log_debug "Copied common Terraform resources (common.tf, common-outputs.tf)"
+        cp "$script_root/templates/terraform-common/inventory.tftpl" "$templates_dir/" 2>/dev/null || true
+        log_debug "Copied common Terraform resources (common.tf, common-outputs.tf, inventory.tftpl)"
     fi
 
     # Then, copy cloud-provider-specific terraform templates
@@ -452,8 +453,8 @@ EOF
     # Mark initialization as complete
     progress_complete "init" "complete" "Deployment directory initialized successfully"
 
-    # Generate INFO.md file
-    generate_info_md "$deploy_dir"
+    # Generate INFO.txt and INFO.json files
+    generate_info_files "$deploy_dir"
 
     log_info ""
     log_info "✅ Deployment directory initialized successfully!"
@@ -463,7 +464,7 @@ EOF
     log_info "  2. Deploy with: exasol deploy --deployment-dir $deploy_dir"
     log_info ""
     log_info "Credentials saved to: $deploy_dir/.credentials.json"
-    log_info "Deployment info: $deploy_dir/INFO.md"
+    log_info "Deployment info: $deploy_dir/INFO.txt"
 }
 
 # Write provider-specific variables

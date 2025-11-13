@@ -71,46 +71,13 @@ resource "digitalocean_firewall" "exasol_cluster" {
 
   droplet_ids = digitalocean_droplet.exasol_node[*].id
 
-  # SSH access
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "22"
-    source_addresses = [var.allowed_cidr]
-  }
-
-  # Default bucketfs
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "2581"
-    source_addresses = [var.allowed_cidr]
-  }
-
-  # Exasol Admin UI
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "8443"
-    source_addresses = [var.allowed_cidr]
-  }
-
-  # Exasol database connection
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "8563"
-    source_addresses = [var.allowed_cidr]
-  }
-
-  # Exasol container ssh
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "20002"
-    source_addresses = [var.allowed_cidr]
-  }
-
-  # Exasol confd API
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "20003"
-    source_addresses = [var.allowed_cidr]
+  dynamic "inbound_rule" {
+    for_each = local.exasol_firewall_ports
+    content {
+      protocol         = "tcp"
+      port_range       = tostring(inbound_rule.key)
+      source_addresses = [var.allowed_cidr]
+    }
   }
 
   # ICMP for network diagnostics
@@ -230,7 +197,8 @@ resource "digitalocean_volume_attachment" "data_attachment" {
 # Generate Ansible Inventory
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/inventory.tftpl", {
-    instances    = digitalocean_droplet.exasol_node
+    public_ips   = local.node_public_ips
+    private_ips  = local.node_private_ips
     node_volumes = local.node_volumes
     ssh_key      = local_file.exasol_private_key_pem.filename
   })
@@ -241,21 +209,4 @@ resource "local_file" "ansible_inventory" {
 }
 
 # Generate SSH config
-resource "local_file" "ssh_config" {
-  content = <<-EOF
-    # Exasol Cluster SSH Config
-    %{for idx, droplet in digitalocean_droplet.exasol_node~}
-    Host n${idx + 11}
-        HostName ${droplet.ipv4_address}
-        User exasol
-        IdentityFile ${local_file.exasol_private_key_pem.filename}
-        StrictHostKeyChecking no
-        UserKnownHostsFile=/dev/null
-
-    %{endfor~}
-  EOF
-  filename        = "${path.module}/ssh_config"
-  file_permission = "0644"
-
-  depends_on = [digitalocean_droplet.exasol_node]
-}
+# SSH config is generated in common.tf

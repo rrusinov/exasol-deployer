@@ -5,9 +5,10 @@
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TEST_DIR/test_helper.sh"
 
-# Source the library we're testing
+# Source the libraries we're testing
 LIB_DIR="$TEST_DIR/../lib"
 source "$LIB_DIR/common.sh"
+source "$LIB_DIR/state.sh"
 
 echo "Testing common.sh functions"
 echo "========================================="
@@ -177,6 +178,130 @@ EOF
     cleanup_test_dir "$test_dir"
 }
 
+# Test generate_info_files
+test_generate_info_files() {
+    echo ""
+    echo "Test: generate_info_files"
+
+    local test_dir=$(setup_test_dir)
+
+    # Create mock state file
+    cat > "$test_dir/.exasol.json" << 'EOF'
+{
+  "status": "initialized",
+  "db_version": "exasol-2025.1.4",
+  "architecture": "x86_64",
+  "cloud_provider": "aws"
+}
+EOF
+
+    # Create mock variables file
+    cat > "$test_dir/variables.auto.tfvars" << 'EOF'
+instance_type = "m6idn.large"
+node_count = 2
+data_volume_size = 100
+EOF
+
+    # Generate info files
+    generate_info_files "$test_dir"
+
+    # Check if INFO.txt was created
+    if [[ -f "$test_dir/INFO.txt" ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Should create INFO.txt file"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should create INFO.txt file"
+    fi
+
+    # Check if INFO.json was created
+    if [[ -f "$test_dir/INFO.json" ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Should create INFO.json file"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should create INFO.json file"
+    fi
+
+    # Check INFO.txt content
+    if [[ -f "$test_dir/INFO.txt" ]]; then
+        local content
+        content=$(cat "$test_dir/INFO.txt")
+
+        if [[ "$content" == *"Status: initialized"* ]]; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} INFO.txt should contain status"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} INFO.txt should contain status"
+        fi
+
+        if [[ "$content" == *"Configuration Parameters"* ]]; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} INFO.txt should contain configuration section"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} INFO.txt should contain configuration section"
+        fi
+
+        if [[ "$content" == *"Node Count: 2"* ]]; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} INFO.txt should contain node count"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} INFO.txt should contain node count"
+        fi
+    fi
+
+    # Check INFO.json content
+    if [[ -f "$test_dir/INFO.json" ]]; then
+        local json_content
+        json_content=$(cat "$test_dir/INFO.json")
+
+        if [[ "$json_content" == *"\"status\": \"initialized\""* ]]; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} INFO.json should contain status"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} INFO.json should contain status"
+        fi
+
+        if [[ "$json_content" == *"\"node_count\": 2"* ]]; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} INFO.json should contain node count"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} INFO.json should contain node count"
+        fi
+
+        if [[ "$json_content" == *"\"configuration\":"* ]]; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} INFO.json should contain configuration"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} INFO.json should contain configuration"
+        fi
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
 # Run all tests
 test_validate_directory
 test_ensure_directory
@@ -185,6 +310,7 @@ test_get_timestamp
 test_generate_password
 test_parse_config_file
 test_get_config_sections
+test_generate_info_files
 
 # Show summary
 test_summary

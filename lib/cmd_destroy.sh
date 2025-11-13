@@ -81,8 +81,8 @@ cmd_destroy() {
         log_info "Deployment directory preserved: $deploy_dir"
         log_info "If you want to remove it, delete it manually when it's safe to do so."
 
-        # Generate INFO.md file (will show current status)
-        generate_info_md "$deploy_dir"
+        # Generate INFO.txt and INFO.json files (will show current status)
+        generate_info_files "$deploy_dir"
 
         return 0
     fi
@@ -165,8 +165,8 @@ cmd_destroy() {
 
         progress_complete "destroy" "cleanup" "Deployment files cleaned up"
 
-        # Generate INFO.md file (will show destroyed status)
-        generate_info_md "$deploy_dir"
+        # Generate INFO.txt and INFO.json files (will show destroyed status)
+        generate_info_files "$deploy_dir"
 
         progress_complete "destroy" "complete" "All resources destroyed successfully"
     else
@@ -175,8 +175,8 @@ cmd_destroy() {
         log_warn "The deployment directory will NOT be removed automatically."
         log_info "Please investigate the failure and clean up resources/files before deleting the deployment directory: $deploy_dir"
 
-        # Generate INFO.md file (will show current status)
-        generate_info_md "$deploy_dir"
+        # Generate INFO.txt and INFO.json files (will show current status)
+        generate_info_files "$deploy_dir"
     fi
 
 }

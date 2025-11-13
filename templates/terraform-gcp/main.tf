@@ -56,7 +56,7 @@ resource "google_compute_firewall" "exasol_external" {
 
   allow {
     protocol = "tcp"
-    ports    = ["22", "8443", "8563", "2581", "20002", "20003"]
+    ports    = [for port in keys(local.exasol_firewall_ports) : tostring(port)]
   }
 
   allow {
@@ -205,7 +205,8 @@ resource "google_compute_attached_disk" "data_attachment" {
 
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/inventory.tftpl", {
-    instances    = google_compute_instance.exasol_node
+    public_ips   = local.node_public_ips
+    private_ips  = local.node_private_ips
     node_volumes = local.node_volumes
     ssh_key      = local_file.exasol_private_key_pem.filename
   })
@@ -219,21 +220,4 @@ resource "local_file" "ansible_inventory" {
 # Generate SSH Config
 # ==============================================================================
 
-resource "local_file" "ssh_config" {
-  content = <<-EOF
-    # Exasol Cluster SSH Config
-    %{for idx, instance in google_compute_instance.exasol_node~}
-    Host n${idx + 11}
-        HostName ${instance.network_interface[0].access_config[0].nat_ip}
-        User exasol
-        IdentityFile ${local_file.exasol_private_key_pem.filename}
-        StrictHostKeyChecking no
-        UserKnownHostsFile=/dev/null
-
-    %{endfor~}
-  EOF
-  filename        = "${path.module}/ssh_config"
-  file_permission = "0644"
-
-  depends_on = [google_compute_instance.exasol_node]
-}
+# SSH config is generated in common.tf

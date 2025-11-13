@@ -74,76 +74,19 @@ resource "azurerm_network_security_group" "exasol" {
   location            = azurerm_resource_group.exasol.location
   resource_group_name = azurerm_resource_group.exasol.name
 
-  security_rule {
-    name                       = "SSH"
-    priority                   = 100
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "22"
-    source_address_prefix      = var.allowed_cidr
-    destination_address_prefix = "*"
-  }
-
-  security_rule {
-    name                       = "Exasol-Database"
-    priority                   = 110
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "8563"
-    source_address_prefix      = var.allowed_cidr
-    destination_address_prefix = "*"
-  }
-
-  security_rule {
-    name                       = "Exasol-AdminUI"
-    priority                   = 120
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "8443"
-    source_address_prefix      = var.allowed_cidr
-    destination_address_prefix = "*"
-  }
-
-  security_rule {
-    name                       = "Exasol-BucketFS"
-    priority                   = 130
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "2581"
-    source_address_prefix      = var.allowed_cidr
-    destination_address_prefix = "*"
-  }
-
-  security_rule {
-    name                       = "Exasol-ContainerSSH"
-    priority                   = 140
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "20002"
-    source_address_prefix      = var.allowed_cidr
-    destination_address_prefix = "*"
-  }
-
-  security_rule {
-    name                       = "Exasol-ConfdAPI"
-    priority                   = 150
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "20003"
-    source_address_prefix      = var.allowed_cidr
-    destination_address_prefix = "*"
+  dynamic "security_rule" {
+    for_each = local.azure_firewall_rules
+    content {
+      name                       = security_rule.value.name
+      priority                   = security_rule.key
+      direction                  = "Inbound"
+      access                     = "Allow"
+      protocol                   = "Tcp"
+      source_port_range          = "*"
+      destination_port_range     = tostring(security_rule.value.port)
+      source_address_prefix      = var.allowed_cidr
+      destination_address_prefix = "*"
+    }
   }
 
   security_rule {
@@ -309,6 +252,16 @@ locals {
   provider_name = "Azure"
   region_name = var.azure_region
 
+  # Azure firewall rules with priorities
+  azure_firewall_rules = {
+    100 = { port = 22, name = "SSH" }
+    110 = { port = 8563, name = "Exasol-Database" }
+    120 = { port = 8443, name = "Exasol-AdminUI" }
+    130 = { port = 2581, name = "Exasol-BucketFS" }
+    140 = { port = 20002, name = "Exasol-ContainerSSH" }
+    150 = { port = 20003, name = "Exasol-ConfdAPI" }
+  }
+
   # Group volume IDs by node for Ansible inventory
   node_volumes = {
     for node_idx in range(var.node_count) : node_idx => [
@@ -324,11 +277,10 @@ locals {
 
 # ==============================================================================
 # Generate Ansible Inventory
-# ==============================================================================
-
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/inventory.tftpl", {
-    instances    = azurerm_linux_virtual_machine.exasol_node
+    public_ips   = local.node_public_ips
+    private_ips  = local.node_private_ips
     node_volumes = local.node_volumes
     ssh_key      = local_file.exasol_private_key_pem.filename
   })
@@ -338,25 +290,4 @@ resource "local_file" "ansible_inventory" {
   depends_on = [azurerm_linux_virtual_machine.exasol_node, azurerm_virtual_machine_data_disk_attachment.data_attachment]
 }
 
-# ==============================================================================
-# Generate SSH Config
-# ==============================================================================
-
-resource "local_file" "ssh_config" {
-  content = <<-EOF
-    # Exasol Cluster SSH Config
-    %{for idx, instance in azurerm_linux_virtual_machine.exasol_node~}
-    Host n${idx + 11}
-        HostName ${azurerm_public_ip.exasol_node[idx].ip_address}
-        User exasol
-        IdentityFile ${local_file.exasol_private_key_pem.filename}
-        StrictHostKeyChecking no
-        UserKnownHostsFile=/dev/null
-
-    %{endfor~}
-  EOF
-  filename        = "${path.module}/ssh_config"
-  file_permission = "0644"
-
-  depends_on = [azurerm_linux_virtual_machine.exasol_node]
-}
+# SSH config is generated in common.tf

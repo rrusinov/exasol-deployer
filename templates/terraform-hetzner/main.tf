@@ -79,7 +79,7 @@ resource "hcloud_network" "exasol_network" {
 resource "hcloud_network_subnet" "exasol_subnet" {
   network_id   = hcloud_network.exasol_network.id
   type         = "cloud"
-  network_zone = var.hetzner_network_zone
+  network_zone = "eu-central"
   ip_range     = "10.0.1.0/24"
 }
 
@@ -94,52 +94,14 @@ resource "hcloud_firewall" "exasol_cluster" {
     owner = var.owner
   }
 
-  # SSH access
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "22"
-    source_ips = [var.allowed_cidr]
-  }
-
-  # Default bucketfs
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "2581"
-    source_ips = [var.allowed_cidr]
-  }
-
-  # Exasol Admin UI
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "8443"
-    source_ips = [var.allowed_cidr]
-  }
-
-  # Exasol database connection
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "8563"
-    source_ips = [var.allowed_cidr]
-  }
-
-  # Exasol container ssh
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "20002"
-    source_ips = [var.allowed_cidr]
-  }
-
-  # Exasol confd API
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "20003"
-    source_ips = [var.allowed_cidr]
+  dynamic "rule" {
+    for_each = local.exasol_firewall_ports
+    content {
+      direction  = "in"
+      protocol   = "tcp"
+      port       = tostring(rule.key)
+      source_ips = [var.allowed_cidr]
+    }
   }
 
   # ICMP for network diagnostics
@@ -256,7 +218,8 @@ resource "hcloud_volume_attachment" "data_attachment" {
 # Generate Ansible Inventory
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/inventory.tftpl", {
-    instances    = hcloud_server.exasol_node
+    public_ips   = local.node_public_ips
+    private_ips  = local.node_private_ips
     node_volumes = local.node_volumes
     ssh_key      = local_file.exasol_private_key_pem.filename
   })
@@ -267,21 +230,4 @@ resource "local_file" "ansible_inventory" {
 }
 
 # Generate SSH config
-resource "local_file" "ssh_config" {
-  content = <<-EOF
-    # Exasol Cluster SSH Config
-    %{for idx, instance in hcloud_server.exasol_node~}
-    Host n${idx + 11}
-        HostName ${instance.ipv4_address}
-        User exasol
-        IdentityFile ${local_file.exasol_private_key_pem.filename}
-        StrictHostKeyChecking no
-        UserKnownHostsFile=/dev/null
-
-    %{endfor~}
-  EOF
-  filename        = "${path.module}/ssh_config"
-  file_permission = "0644"
-
-  depends_on = [hcloud_server.exasol_node]
-}
+# SSH config is generated in common.tf

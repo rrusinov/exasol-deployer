@@ -137,6 +137,16 @@ cmd_deploy() {
     sleep 60
     progress_complete "deploy" "wait_instances" "Instances ready"
 
+    # Show deployment summary before Ansible configuration
+    if tofu output -json summary >/dev/null 2>&1; then
+        log_info ""
+        log_info "🚀 Deployment Summary (Infrastructure Ready):"
+        tofu output -json summary | jq -r '.'
+        log_info ""
+        log_info "📋 Next: Configuring cluster with Ansible..."
+        log_info ""
+    fi
+
     # Check if Ansible playbook exists
     if [[ ! -f "$deploy_dir/.templates/setup-exasol-cluster.yml" ]]; then
         log_warn "Ansible playbook not found, skipping configuration"
@@ -175,8 +185,8 @@ cmd_deploy() {
     # Display results
     progress_complete "deploy" "complete" "Deployment completed successfully"
 
-    # Generate INFO.md file
-    generate_info_md "$deploy_dir"
+    # Generate INFO.txt and INFO.json files
+    generate_info_files "$deploy_dir"
 
     # Show outputs if available
     if tofu output -json > /dev/null 2>&1; then
@@ -187,5 +197,5 @@ cmd_deploy() {
 
     log_info ""
     log_info "Credentials are stored in: $deploy_dir/.credentials.json"
-    log_info "Deployment info: $deploy_dir/INFO.md"
+    log_info "Deployment info: $deploy_dir/INFO.txt"
 }

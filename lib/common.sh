@@ -515,12 +515,6 @@ generate_password() {
     head -c 100 < /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | head -c "$length"
 }
 
-# JSON escape string
-json_escape() {
-    local string="$1"
-    printf '%s' "$string" | jq -Rs .
-}
-
 # Check if directory is a valid deployment directory
 is_deployment_directory() {
     local dir="$1"
@@ -533,10 +527,11 @@ get_timestamp() {
     date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
-# Generate INFO.md file for deployment directory
-generate_info_md() {
+# Generate INFO.txt and INFO.json files for deployment directory
+generate_info_files() {
     local deploy_dir="$1"
-    local info_file="$deploy_dir/INFO.md"
+    local info_txt_file="$deploy_dir/INFO.txt"
+    local info_json_file="$deploy_dir/INFO.json"
 
     # Get current state
     local status
@@ -548,72 +543,234 @@ generate_info_md() {
     architecture=$(state_read "$deploy_dir" "architecture")
     cloud_provider=$(state_read "$deploy_dir" "cloud_provider")
 
-    # Start building the INFO.md content
-    cat > "$info_file" <<EOF
-# Exasol Deployment Information
+    # Get node count from variables
+    local node_count=1
+    if [[ -f "$deploy_dir/variables.auto.tfvars" ]]; then
+        node_count=$(grep "^node_count" "$deploy_dir/variables.auto.tfvars" | cut -d'=' -f2 | tr -d ' ')
+        node_count=${node_count:-1}
+    fi
 
-**Status**: $status
-**Database Version**: $db_version
-**Architecture**: $architecture
-**Cloud Provider**: $cloud_provider
-**Deployment Directory**: $deploy_dir
-**Last Updated**: $(get_timestamp)
+    # Generate node information
+    local nodes_json="[]"
+    local ssh_commands="[]"
+    local cos_commands="[]"
+    local node_names="[]"
+
+    if [[ "$node_count" -gt 0 ]]; then
+        local nodes_array=""
+        local ssh_array=""
+        local cos_array=""
+        local names_array=""
+
+        for ((i=0; i<node_count; i++)); do
+            local node_num=$((11 + i))
+            local node_name="n${node_num}"
+
+            # Add to names array
+            if [[ -n "$names_array" ]]; then
+                names_array="$names_array,"
+            fi
+            names_array="$names_array\"$node_name\""
+
+            # Add to SSH commands
+            if [[ -n "$ssh_array" ]]; then
+                ssh_array="$ssh_array,"
+            fi
+            ssh_array="$ssh_array\"ssh -F ssh_config $node_name\""
+
+            # Add to COS commands
+            if [[ -n "$cos_array" ]]; then
+                cos_array="$cos_array,"
+            fi
+            cos_array="$cos_array\"ssh -F ssh_config $node_name ssh cos\""
+
+            # Add to nodes array (will be populated with IPs if available)
+            if [[ -n "$nodes_array" ]]; then
+                nodes_array="$nodes_array,"
+            fi
+            nodes_array="$nodes_array{\"name\":\"$node_name\",\"public_ip\":null,\"private_ip\":null}"
+        done
+
+        nodes_json="[$nodes_array]"
+        ssh_commands="[$ssh_array]"
+        cos_commands="[$cos_array]"
+        node_names="[$names_array]"
+    fi
+
+    # Try to get actual IPs from terraform state if available
+    if [[ -f "$deploy_dir/terraform.tfstate" ]] && command -v jq >/dev/null 2>&1; then
+        # Try to extract public IPs from terraform state
+        local public_ips=""
+        public_ips=$(jq -r '.outputs.node_public_ips.value // [] | .[]' "$deploy_dir/terraform.tfstate" 2>/dev/null || echo "")
+
+        if [[ -n "$public_ips" ]]; then
+            # Update nodes_json with actual IPs
+            local ip_array=""
+            local idx=0
+            while IFS= read -r ip; do
+                if [[ -n "$ip" && "$ip" != "null" ]]; then
+                    local node_num=$((11 + idx))
+                    local node_name="n${node_num}"
+                    if [[ -n "$ip_array" ]]; then
+                        ip_array="$ip_array,"
+                    fi
+                    ip_array="$ip_array{\"name\":\"$node_name\",\"public_ip\":\"$ip\",\"private_ip\":null}"
+                fi
+                ((idx++))
+            done <<< "$public_ips"
+
+            if [[ -n "$ip_array" ]]; then
+                nodes_json="[$ip_array]"
+            fi
+        fi
+    fi
+
+    # Read variables.auto.tfvars if it exists
+    local config_json="{}"
+    if [[ -f "$deploy_dir/variables.auto.tfvars" ]]; then
+        # Simple parsing of key=value pairs to JSON (basic implementation)
+        config_json="{"
+        local first=true
+        while IFS='=' read -r key value; do
+            [[ -z "$key" ]] && continue
+            key=$(echo "$key" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+            value=$(echo "$value" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//')
+            if [[ "$first" == true ]]; then
+                first=false
+            else
+                config_json="$config_json,"
+            fi
+            config_json="$config_json \"$key\": \"$value\""
+        done < "$deploy_dir/variables.auto.tfvars"
+        config_json="$config_json }"
+    fi
+
+    # Define open ports (these are standard for Exasol)
+    local open_ports='["SSH (22)", "BucketFS (2581)", "AdminUI HTTPS (8443)", "Exasol Database (8563)", "Container SSH (20002)", "Confd API (20003)"]'
+
+    # Create JSON structure
+    local json_data
+    json_data=$(cat <<EOF
+{
+  "status": "$status",
+  "database_version": "$db_version",
+  "architecture": "$architecture",
+  "cloud_provider": "$cloud_provider",
+  "deployment_directory": "$deploy_dir",
+  "last_updated": "$(get_timestamp)",
+  "node_count": $node_count,
+  "nodes": $nodes_json,
+  "node_names": $node_names,
+  "configuration": $config_json,
+  "connection_info": {
+    "open_ports": $open_ports,
+    "adminui": {
+      "url": "https://<node-ip>:8443",
+      "username": "admin",
+      "password_location": ".credentials.json"
+    },
+    "ssh_access": $ssh_commands,
+    "cos_access": $cos_commands,
+    "detailed_info_command": "cd '$deploy_dir' && tofu output"
+  },
+  "credentials": {
+    "location": ".credentials.json"
+  },
+  "important_files": [
+    ".exasol.json - Deployment state",
+    "variables.auto.tfvars - Terraform variables",
+    ".credentials.json - Passwords (keep secure)",
+    "terraform.tfstate - Terraform state",
+    "ssh_config - SSH configuration",
+    "inventory.ini - Ansible inventory"
+  ],
+  "details": $(case "$status" in
+    "$STATE_INITIALIZED") echo '{"next_steps": ["Review configuration in variables.auto.tfvars", "Run deployment: exasol deploy --deployment-dir '$deploy_dir'", "Check status: exasol status --deployment-dir '$deploy_dir'"]}' ;;
+    "$STATE_DEPLOYMENT_IN_PROGRESS") echo '{"check_progress": "Run: exasol status --deployment-dir '$deploy_dir'"}' ;;
+    "$STATE_DEPLOYMENT_FAILED") echo '{"troubleshooting": ["Check status: exasol status --deployment-dir '$deploy_dir'", "Review Terraform logs in deployment directory", "Fix any issues and retry: exasol deploy --deployment-dir '$deploy_dir'"]}' ;;
+    "$STATE_DATABASE_CONNECTION_FAILED") echo '{"troubleshooting": ["Check Ansible logs in deployment directory", "Verify network connectivity", "Check database logs on nodes"]}' ;;
+    *) echo '{}' ;;
+  esac)
+}
+EOF
+)
+
+    echo "$json_data" > "$info_json_file"
+
+    # Generate TXT from JSON
+    cat > "$info_txt_file" <<EOF
+Exasol Deployment Information
+============================
+
+Status: $status
+Database Version: $db_version
+Architecture: $architecture
+Cloud Provider: $cloud_provider
+Deployment Directory: $deploy_dir
+Node Count: $node_count
+Last Updated: $(get_timestamp)
 
 EOF
+
+    # Add configuration section
+    if [[ -f "$deploy_dir/variables.auto.tfvars" ]]; then
+        cat >> "$info_txt_file" <<EOF
+Configuration Parameters
+------------------------
+$(cat "$deploy_dir/variables.auto.tfvars")
+
+EOF
+    fi
 
     # Add deployment-specific information based on status
     case "$status" in
         "$STATE_INITIALIZED")
-            cat >> "$info_file" <<EOF
-## Status: Initialized
-
+            cat >> "$info_txt_file" <<EOF
+Status Details
+--------------
 The deployment has been initialized but not yet deployed.
 
-### Next Steps
-
-1. Review configuration in \`variables.auto.tfvars\`
-2. Run deployment: \`exasol deploy --deployment-dir $deploy_dir\`
-3. Check status: \`exasol status --deployment-dir $deploy_dir\`
+Next Steps:
+1. Review configuration in variables.auto.tfvars
+2. Run deployment: exasol deploy --deployment-dir $deploy_dir
+3. Check status: exasol status --deployment-dir $deploy_dir
 
 EOF
             ;;
 
         "$STATE_DEPLOYMENT_IN_PROGRESS")
-            cat >> "$info_file" <<EOF
-## Status: Deployment in Progress
-
+            cat >> "$info_txt_file" <<EOF
+Status Details
+--------------
 The deployment is currently running. Please wait for completion.
 
-### Check Progress
-
-Run: \`exasol status --deployment-dir $deploy_dir\`
+Check Progress:
+Run: exasol status --deployment-dir $deploy_dir
 
 EOF
             ;;
 
         "$STATE_DEPLOYMENT_FAILED")
-            cat >> "$info_file" <<EOF
-## Status: Deployment Failed
-
+            cat >> "$info_txt_file" <<EOF
+Status Details
+--------------
 The deployment failed. Check logs and try again.
 
-### Troubleshooting
-
-1. Check status: \`exasol status --deployment-dir $deploy_dir\`
+Troubleshooting:
+1. Check status: exasol status --deployment-dir $deploy_dir
 2. Review Terraform logs in deployment directory
-3. Fix any issues and retry: \`exasol deploy --deployment-dir $deploy_dir\`
+3. Fix any issues and retry: exasol deploy --deployment-dir $deploy_dir
 
 EOF
             ;;
 
         "$STATE_DATABASE_CONNECTION_FAILED")
-            cat >> "$info_file" <<EOF
-## Status: Database Connection Failed
-
+            cat >> "$info_txt_file" <<EOF
+Status Details
+--------------
 Infrastructure deployed but database connection failed.
 
-### Troubleshooting
-
+Troubleshooting:
 1. Check Ansible logs in deployment directory
 2. Verify network connectivity
 3. Check database logs on nodes
@@ -622,66 +779,76 @@ EOF
             ;;
 
         "$STATE_DATABASE_READY")
-            cat >> "$info_file" <<EOF
-## Status: Database Ready
-
+            cat >> "$info_txt_file" <<EOF
+Status Details
+--------------
 The Exasol cluster is deployed and ready to use!
 
-### Connection Information
+Nodes
+-----
+EOF
+            # Add node information
+            for ((i=0; i<node_count; i++)); do
+                local node_num=$((11 + i))
+                cat >> "$info_txt_file" <<EOF
+n${node_num}
+EOF
+            done
 
-#### Open Ports
+            cat >> "$info_txt_file" <<EOF
 
-- **SSH (22)**: Open to allowed CIDR
-- **Exasol Database (8563)**: Open to allowed CIDR
-- **AdminUI HTTPS (4444)**: Open to allowed CIDR
+Connection Information
+---------------------
 
-#### AdminUI Access
+Open Ports: SSH (22), BucketFS (2581), AdminUI HTTPS (8443), Exasol Database (8563), Container SSH (20002), Confd API (20003)
 
-Access the AdminUI via HTTPS:
-- **URL**: https://<node-ip>:4444
-- **Username**: admin
-- **Password**: Stored in \`.credentials.json\`
+AdminUI Access:
+- URL: https://<node-ip>:8443
+- Username: admin
+- Password: Stored in .credentials.json
 
-#### SSH Access to Nodes
+SSH Access to Nodes:
+EOF
+            # Add SSH commands
+            for ((i=0; i<node_count; i++)); do
+                local node_num=$((11 + i))
+                cat >> "$info_txt_file" <<EOF
+ssh -F ssh_config n${node_num}
+EOF
+            done
 
-SSH config file: \`ssh_config\` (generated after deployment)
+            cat >> "$info_txt_file" <<EOF
 
-Connect to nodes:
-- \`ssh -F ssh_config n11\` (first node)
-- \`ssh -F ssh_config n12\` (second node)
-- etc.
+COS Access:
+EOF
+            # Add COS commands
+            for ((i=0; i<node_count; i++)); do
+                local node_num=$((11 + i))
+                cat >> "$info_txt_file" <<EOF
+ssh -F ssh_config n${node_num} ssh cos
+EOF
+            done
 
-#### COS (Container Operating System) Access
+            cat >> "$info_txt_file" <<EOF
 
-COS is the container runtime environment. Access it via SSH through nodes:
-- \`ssh -F ssh_config n11 ssh cos\` (first node)
-- \`ssh -F ssh_config n12 ssh cos\` (second node)
-- etc.
+Detailed Connection Info:
+Run 'cd $deploy_dir && tofu output' for actual IP addresses
 
-### Detailed Connection Info
+Credentials:
+Database and AdminUI passwords are stored in .credentials.json
 
-For detailed connection information including actual IP addresses, run:
-\`\`\`bash
-cd $deploy_dir
-tofu output
-\`\`\`
-
-### Credentials
-
-Database and AdminUI passwords are stored in \`.credentials.json\`.
-
-### Important Files
-
-- \`.exasol.json\` - Deployment state
-- \`variables.auto.tfvars\` - Terraform variables
-- \`.credentials.json\` - Passwords (keep secure)
-- \`terraform.tfstate\` - Terraform state
-- \`ssh_config\` - SSH configuration
-- \`inventory.ini\` - Ansible inventory
+Important Files:
+- .exasol.json - Deployment state
+- variables.auto.tfvars - Terraform variables
+- .credentials.json - Passwords (keep secure)
+- terraform.tfstate - Terraform state
+- ssh_config - SSH configuration
+- inventory.ini - Ansible inventory
 
 EOF
             ;;
     esac
 
-    log_debug "Generated INFO.md file: $info_file"
+    log_debug "Generated INFO.txt file: $info_txt_file"
+    log_debug "Generated INFO.json file: $info_json_file"
 }
