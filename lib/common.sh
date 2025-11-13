@@ -532,3 +532,156 @@ is_deployment_directory() {
 get_timestamp() {
     date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
+
+# Generate INFO.md file for deployment directory
+generate_info_md() {
+    local deploy_dir="$1"
+    local info_file="$deploy_dir/INFO.md"
+
+    # Get current state
+    local status
+    status=$(state_read "$deploy_dir" "status")
+
+    # Get basic deployment info
+    local db_version architecture cloud_provider
+    db_version=$(state_read "$deploy_dir" "db_version")
+    architecture=$(state_read "$deploy_dir" "architecture")
+    cloud_provider=$(state_read "$deploy_dir" "cloud_provider")
+
+    # Start building the INFO.md content
+    cat > "$info_file" <<EOF
+# Exasol Deployment Information
+
+**Status**: $status
+**Database Version**: $db_version
+**Architecture**: $architecture
+**Cloud Provider**: $cloud_provider
+**Deployment Directory**: $deploy_dir
+**Last Updated**: $(get_timestamp)
+
+EOF
+
+    # Add deployment-specific information based on status
+    case "$status" in
+        "$STATE_INITIALIZED")
+            cat >> "$info_file" <<EOF
+## Status: Initialized
+
+The deployment has been initialized but not yet deployed.
+
+### Next Steps
+
+1. Review configuration in \`variables.auto.tfvars\`
+2. Run deployment: \`exasol deploy --deployment-dir $deploy_dir\`
+3. Check status: \`exasol status --deployment-dir $deploy_dir\`
+
+EOF
+            ;;
+
+        "$STATE_DEPLOYMENT_IN_PROGRESS")
+            cat >> "$info_file" <<EOF
+## Status: Deployment in Progress
+
+The deployment is currently running. Please wait for completion.
+
+### Check Progress
+
+Run: \`exasol status --deployment-dir $deploy_dir\`
+
+EOF
+            ;;
+
+        "$STATE_DEPLOYMENT_FAILED")
+            cat >> "$info_file" <<EOF
+## Status: Deployment Failed
+
+The deployment failed. Check logs and try again.
+
+### Troubleshooting
+
+1. Check status: \`exasol status --deployment-dir $deploy_dir\`
+2. Review Terraform logs in deployment directory
+3. Fix any issues and retry: \`exasol deploy --deployment-dir $deploy_dir\`
+
+EOF
+            ;;
+
+        "$STATE_DATABASE_CONNECTION_FAILED")
+            cat >> "$info_file" <<EOF
+## Status: Database Connection Failed
+
+Infrastructure deployed but database connection failed.
+
+### Troubleshooting
+
+1. Check Ansible logs in deployment directory
+2. Verify network connectivity
+3. Check database logs on nodes
+
+EOF
+            ;;
+
+        "$STATE_DATABASE_READY")
+            cat >> "$info_file" <<EOF
+## Status: Database Ready
+
+The Exasol cluster is deployed and ready to use!
+
+### Connection Information
+
+#### Open Ports
+
+- **SSH (22)**: Open to allowed CIDR
+- **Exasol Database (8563)**: Open to allowed CIDR
+- **AdminUI HTTPS (4444)**: Open to allowed CIDR
+
+#### AdminUI Access
+
+Access the AdminUI via HTTPS:
+- **URL**: https://<node-ip>:4444
+- **Username**: admin
+- **Password**: Stored in \`.credentials.json\`
+
+#### SSH Access to Nodes
+
+SSH config file: \`ssh_config\` (generated after deployment)
+
+Connect to nodes:
+- \`ssh -F ssh_config n11\` (first node)
+- \`ssh -F ssh_config n12\` (second node)
+- etc.
+
+#### COS (Container Operating System) Access
+
+COS is the container runtime environment. Access it via SSH through nodes:
+- \`ssh -F ssh_config n11 ssh cos\` (first node)
+- \`ssh -F ssh_config n12 ssh cos\` (second node)
+- etc.
+
+### Detailed Connection Info
+
+For detailed connection information including actual IP addresses, run:
+\`\`\`bash
+cd $deploy_dir
+tofu output
+\`\`\`
+
+### Credentials
+
+Database and AdminUI passwords are stored in \`.credentials.json\`.
+
+### Important Files
+
+- \`.exasol.json\` - Deployment state
+- \`variables.auto.tfvars\` - Terraform variables
+- \`.credentials.json\` - Passwords (keep secure)
+- \`terraform.tfstate\` - Terraform state
+- \`ssh_config\` - SSH configuration
+- \`inventory.ini\` - Ansible inventory
+
+EOF
+            ;;
+    esac
+
+    log_debug "Generated INFO.md file: $info_file"
+}

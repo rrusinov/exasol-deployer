@@ -452,6 +452,9 @@ EOF
     # Mark initialization as complete
     progress_complete "init" "complete" "Deployment directory initialized successfully"
 
+    # Generate INFO.md file
+    generate_info_md "$deploy_dir"
+
     log_info ""
     log_info "✅ Deployment directory initialized successfully!"
     log_info ""
@@ -460,6 +463,7 @@ EOF
     log_info "  2. Deploy with: exasol deploy --deployment-dir $deploy_dir"
     log_info ""
     log_info "Credentials saved to: $deploy_dir/.credentials.json"
+    log_info "Deployment info: $deploy_dir/INFO.md"
 }
 
 # Write provider-specific variables

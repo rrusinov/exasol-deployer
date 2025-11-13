@@ -175,6 +175,9 @@ cmd_deploy() {
     # Display results
     progress_complete "deploy" "complete" "Deployment completed successfully"
 
+    # Generate INFO.md file
+    generate_info_md "$deploy_dir"
+
     # Show outputs if available
     if tofu output -json > /dev/null 2>&1; then
         log_info ""
@@ -184,4 +187,5 @@ cmd_deploy() {
 
     log_info ""
     log_info "Credentials are stored in: $deploy_dir/.credentials.json"
+    log_info "Deployment info: $deploy_dir/INFO.md"
 }
