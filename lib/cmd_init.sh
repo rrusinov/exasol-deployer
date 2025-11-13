@@ -16,6 +16,77 @@ declare -A SUPPORTED_PROVIDERS=(
     [digitalocean]="DigitalOcean"
 )
 
+# Show help for init command
+show_init_help() {
+    cat <<'EOF'
+Initialize a new deployment directory.
+
+Usage:
+  exasol init --cloud-provider <provider> [flags]
+
+Required Flags:
+  --cloud-provider <string>      Cloud provider: aws, azure, gcp, hetzner, digitalocean
+
+Common Flags:
+  --deployment-dir <path>        Directory to store deployment files (default: ".")
+  --db-version <version>         Database version (format: X.Y.Z-ARCH)
+  --list-versions                List all available database versions
+  --list-providers               List all supported cloud providers
+  --cluster-size <n>             Number of nodes in the cluster (default: 1)
+  --instance-type <type>         Instance/VM type (auto-detected if not specified)
+  --data-volume-size <gb>        Data volume size in GB (default: 100)
+  --data-volumes-per-node <n>    Data volumes per node (default: 1)
+  --root-volume-size <gb>        Root volume size in GB (default: 50)
+  --db-password <password>       Database password (random if not specified)
+  --adminui-password <password>  Admin UI password (random if not specified)
+  --owner <tag>                  Owner tag for resources (default: "exasol-default")
+  --allowed-cidr <cidr>          CIDR allowed to access cluster (default: "0.0.0.0/0")
+  -h, --help                     Show help
+
+AWS-Specific Flags:
+  --aws-region <region>          AWS region (default: "us-east-1")
+  --aws-profile <profile>        AWS profile to use (default: "default")
+  --aws-spot-instance            Enable spot instances for cost savings
+
+Azure-Specific Flags:
+  --azure-region <region>        Azure region (default: "eastus")
+  --azure-subscription <id>      Azure subscription ID
+  --azure-spot-instance          Enable spot instances
+
+GCP-Specific Flags:
+  --gcp-region <region>          GCP region (default: "us-central1")
+  --gcp-project <project>        GCP project ID
+  --gcp-spot-instance            Enable spot (preemptible) instances
+
+Hetzner-Specific Flags:
+  --hetzner-location <loc>       Hetzner location (default: "nbg1")
+  --hetzner-token <token>        Hetzner API token
+
+DigitalOcean-Specific Flags:
+  --digitalocean-region <region> DigitalOcean region (default: "nyc3")
+  --digitalocean-token <token>   DigitalOcean API token
+
+Examples:
+  # List available providers
+  exasol init --list-providers
+
+  # List available versions
+  exasol init --list-versions
+
+  # Initialize AWS deployment with default version
+  exasol init --cloud-provider aws --deployment-dir ./my-deployment
+
+  # Initialize AWS with specific version, 4-node cluster, and spot instances
+  exasol init --cloud-provider aws --db-version 8.0.0-x86_64 --cluster-size 4 --aws-spot-instance
+
+  # Initialize Azure deployment
+  exasol init --cloud-provider azure --azure-region westus2 --azure-subscription <sub-id>
+
+  # Initialize GCP deployment with spot instances
+  exasol init --cloud-provider gcp --gcp-project my-project --gcp-spot-instance
+EOF
+}
+
 # Init command
 cmd_init() {
     local deploy_dir=""
@@ -57,6 +128,10 @@ cmd_init() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -h|--help)
+                show_init_help
+                return 0
+                ;;
             --deployment-dir)
                 deploy_dir="$2"
                 shift 2

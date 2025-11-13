@@ -7,6 +7,26 @@ source "$LIB_DIR/common.sh"
 source "$LIB_DIR/state.sh"
 source "$LIB_DIR/versions.sh"
 
+# Show help for deploy command
+show_deploy_help() {
+    cat <<'EOF'
+Deploy using an existing deployment directory.
+
+Once a deployment is complete, state files will be stored in the deployment directory.
+Do not delete the deployment directory until the 'destroy' command has been executed.
+
+Usage:
+  exasol deploy [flags]
+
+Flags:
+  --deployment-dir <path>        Directory with deployment files (default: ".")
+  -h, --help                     Show help
+
+Example:
+  exasol deploy --deployment-dir ./my-deployment
+EOF
+}
+
 # Deploy command
 cmd_deploy() {
     local deploy_dir=""
@@ -14,6 +34,10 @@ cmd_deploy() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -h|--help)
+                show_deploy_help
+                return 0
+                ;;
             --deployment-dir)
                 deploy_dir="$2"
                 shift 2

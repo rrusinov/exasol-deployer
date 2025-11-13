@@ -6,6 +6,28 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$LIB_DIR/common.sh"
 source "$LIB_DIR/state.sh"
 
+# Show help for destroy command
+show_destroy_help() {
+    cat <<'EOF'
+Destroy an active deployment using its deployment directory.
+
+Destroying a deployment releases all resources - including all data storage.
+If you want to retain any data, ensure you've created and moved backups to another safe location.
+
+Usage:
+  exasol destroy [flags]
+
+Flags:
+  --deployment-dir <path>        Directory with deployment files (default: ".")
+  --auto-approve                 Skip confirmation prompt
+  -h, --help                     Show help
+
+Examples:
+  exasol destroy --deployment-dir ./my-deployment
+  exasol destroy --deployment-dir ./my-deployment --auto-approve
+EOF
+}
+
 # Destroy command
 cmd_destroy() {
     local deploy_dir=""
@@ -14,6 +36,10 @@ cmd_destroy() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -h|--help)
+                show_destroy_help
+                return 0
+                ;;
             --deployment-dir)
                 deploy_dir="$2"
                 shift 2

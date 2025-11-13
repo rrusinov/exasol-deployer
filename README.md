@@ -23,9 +23,9 @@ Before using this deployer, ensure you have the following installed:
 - **Ansible** (>= 2.9)
 - **jq** (for JSON processing)
 - **bash** (>= 4.0)
-- **AWS credentials** configured (see below)
+- **Cloud provider credentials** configured (see [Cloud Setup Guide](docs/CLOUD_SETUP.md))
 
-**Note:** AWS CLI is **not required**. The tool uses OpenTofu's AWS provider which reads credentials directly from `~/.aws/credentials` and `~/.aws/config`.
+**Note:** Cloud provider CLI tools (aws, az, gcloud) are **not required** for deployment. OpenTofu reads credentials from standard configuration files or environment variables.
 
 ### Installation on macOS
 
@@ -54,40 +54,49 @@ sudo apt-get install -y ansible
 sudo apt-get install -y jq
 ```
 
-### AWS Credentials Setup
+## Cloud Provider Setup
 
-You need to configure AWS credentials. You can do this in two ways:
+Before deploying, you need to set up credentials for your chosen cloud provider. We support:
 
-**Option 1: Using AWS CLI (convenient but not required)**
+- **[AWS (Amazon Web Services)](docs/CLOUD_SETUP_AWS.md)** - Most feature-complete
+- **[Azure (Microsoft Azure)](docs/CLOUD_SETUP_AZURE.md)** - Full support with spot instances
+- **[GCP (Google Cloud Platform)](docs/CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
+- **[Hetzner Cloud](docs/CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
+- **[DigitalOcean](docs/CLOUD_SETUP_DIGITALOCEAN.md)** - Simple and affordable
+
+**See the [Cloud Provider Setup Guide](docs/CLOUD_SETUP.md) for detailed instructions.**
+
+### Quick Setup Examples
+
+**AWS** (Manual setup, no AWS CLI needed):
 ```bash
-# Install AWS CLI if you want to use it for credential setup
-aws configure --profile default
-```
-
-**Option 2: Manual setup (no AWS CLI needed)**
-```bash
-# Create credentials file manually
 mkdir -p ~/.aws
 cat > ~/.aws/credentials <<EOF
 [default]
 aws_access_key_id = YOUR_ACCESS_KEY_ID
 aws_secret_access_key = YOUR_SECRET_ACCESS_KEY
 EOF
-
-# Create config file (optional)
-cat > ~/.aws/config <<EOF
-[default]
-region = us-east-1
-EOF
-
-# Set proper permissions
 chmod 600 ~/.aws/credentials
-chmod 600 ~/.aws/config
 ```
+
+**Azure**:
+```bash
+az login
+az account show --query id -o tsv  # Get subscription ID
+```
+
+**GCP**:
+```bash
+gcloud auth application-default login
+gcloud config get-value project  # Get project ID
+```
+
+**Hetzner** / **DigitalOcean**:
+Get API token from provider console and use with `--hetzner-token` or `--digitalocean-token` flag.
 
 ## Quick Start
 
-### 1. List Available Options
+### 1. Choose Cloud Provider and List Options
 
 ```bash
 # List supported cloud providers
@@ -97,18 +106,12 @@ chmod 600 ~/.aws/config
 ./exasol init --list-versions
 ```
 
-Output:
-```
-Supported cloud providers:
-  - aws: Amazon Web Services
-  - azure: Microsoft Azure
-  - gcp: Google Cloud Platform
-  - hetzner: Hetzner Cloud
-  - digitalocean: DigitalOcean
-
-Available database versions:
-exasol-2025.1.4
-```
+**For detailed cloud provider setup, see:**
+- [AWS Setup Guide](docs/CLOUD_SETUP_AWS.md)
+- [Azure Setup Guide](docs/CLOUD_SETUP_AZURE.md)
+- [GCP Setup Guide](docs/CLOUD_SETUP_GCP.md)
+- [Hetzner Setup Guide](docs/CLOUD_SETUP_HETZNER.md)
+- [DigitalOcean Setup Guide](docs/CLOUD_SETUP_DIGITALOCEAN.md)
 
 ### 2. Initialize a Deployment
 
@@ -720,9 +723,30 @@ For issues or questions:
 3. Check Terraform state and Ansible output
 4. Run unit tests to verify system integrity
 
+## Documentation
+
+### Cloud Provider Setup
+
+Comprehensive setup guides for each supported cloud provider:
+- [Cloud Setup Overview](docs/CLOUD_SETUP.md) - Compare all providers
+- [AWS Setup Guide](docs/CLOUD_SETUP_AWS.md) - Amazon Web Services
+- [Azure Setup Guide](docs/CLOUD_SETUP_AZURE.md) - Microsoft Azure
+- [GCP Setup Guide](docs/CLOUD_SETUP_GCP.md) - Google Cloud Platform
+- [Hetzner Setup Guide](docs/CLOUD_SETUP_HETZNER.md) - Hetzner Cloud
+- [DigitalOcean Setup Guide](docs/CLOUD_SETUP_DIGITALOCEAN.md) - DigitalOcean
+
+Each guide includes:
+- Account setup instructions
+- Credential configuration
+- Region/location selection
+- Instance type recommendations
+- Cost optimization tips
+- Security best practices
+- Troubleshooting
+
 ## Related Resources
 
 - [OpenTofu Documentation](https://opentofu.org/docs/)
 - [Ansible Documentation](https://docs.ansible.com/)
 - [Exasol Documentation](https://docs.exasol.com/)
-- [AWS EC2 Instance Types](https://aws.amazon.com/ec2/instance-types/)
+- [Cloud Provider Pricing Calculators](docs/CLOUD_SETUP.md#cost-optimization)
