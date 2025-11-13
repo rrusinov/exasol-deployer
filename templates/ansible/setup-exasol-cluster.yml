@@ -389,13 +389,8 @@
 
         - name: Display deployment completion message
           ansible.builtin.debug:
-            msg: |
-              ========================================
-              Exasol cluster deployment completed!
-              ========================================
-              To access the database container:
-                ssh cos
-
-              Database credentials:
-                Admin Password: {{ exa_admin_password }}
-                DB Password: {{ exa_db_password }}
+            msg:
+              - "========================================"
+              - "Exasol cluster deployment completed!"
+              - "========================================"
+              - "Review connection details in INFO.txt / INFO.json within the deployment directory."

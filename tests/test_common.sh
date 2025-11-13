@@ -232,71 +232,74 @@ EOF
         local content
         content=$(cat "$test_dir/INFO.txt")
 
-        if [[ "$content" == *"Status: initialized"* ]]; then
+        if [[ "$content" == *"Exasol Deployment Entry Point"* ]]; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
-            echo -e "${GREEN}✓${NC} INFO.txt should contain status"
+            echo -e "${GREEN}✓${NC} INFO.txt should mention entry point"
         else
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_FAILED=$((TESTS_FAILED + 1))
-            echo -e "${RED}✗${NC} INFO.txt should contain status"
+            echo -e "${RED}✗${NC} INFO.txt should mention entry point"
         fi
 
-        if [[ "$content" == *"Configuration Parameters"* ]]; then
+        local status_cmd="exasol status --deployment-dir $test_dir"
+        if [[ "$content" == *"$status_cmd"* ]]; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
-            echo -e "${GREEN}✓${NC} INFO.txt should contain configuration section"
+            echo -e "${GREEN}✓${NC} INFO.txt should reference status command"
         else
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_FAILED=$((TESTS_FAILED + 1))
-            echo -e "${RED}✗${NC} INFO.txt should contain configuration section"
+            echo -e "${RED}✗${NC} INFO.txt should reference status command"
         fi
 
-        if [[ "$content" == *"Node Count: 2"* ]]; then
+        local tofu_cmd="tofu -chdir='$test_dir' output"
+        if [[ "$content" == *"$tofu_cmd"* ]]; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
-            echo -e "${GREEN}✓${NC} INFO.txt should contain node count"
+            echo -e "${GREEN}✓${NC} INFO.txt should reference terraform outputs command"
         else
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_FAILED=$((TESTS_FAILED + 1))
-            echo -e "${RED}✗${NC} INFO.txt should contain node count"
+            echo -e "${RED}✗${NC} INFO.txt should reference terraform outputs command"
+        fi
+
+        if [[ "$content" == *".credentials.json"* ]]; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} INFO.txt should mention credentials file"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} INFO.txt should mention credentials file"
         fi
     fi
 
     # Check INFO.json content
     if [[ -f "$test_dir/INFO.json" ]]; then
-        local json_content
-        json_content=$(cat "$test_dir/INFO.json")
-
-        if [[ "$json_content" == *"\"status\": \"initialized\""* ]]; then
+        local status_cmd_json
+        status_cmd_json=$(jq -r '.commands.status' "$test_dir/INFO.json")
+        if [[ "$status_cmd_json" == "exasol status --deployment-dir $test_dir" ]]; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
-            echo -e "${GREEN}✓${NC} INFO.json should contain status"
+            echo -e "${GREEN}✓${NC} INFO.json should expose status command"
         else
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_FAILED=$((TESTS_FAILED + 1))
-            echo -e "${RED}✗${NC} INFO.json should contain status"
+            echo -e "${RED}✗${NC} INFO.json should expose status command"
         fi
 
-        if [[ "$json_content" == *"\"node_count\": 2"* ]]; then
+        local creds_file
+        creds_file=$(jq -r '.files.credentials' "$test_dir/INFO.json")
+        if [[ "$creds_file" == ".credentials.json" ]]; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
-            echo -e "${GREEN}✓${NC} INFO.json should contain node count"
+            echo -e "${GREEN}✓${NC} INFO.json should list credentials file"
         else
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_FAILED=$((TESTS_FAILED + 1))
-            echo -e "${RED}✗${NC} INFO.json should contain node count"
-        fi
-
-        if [[ "$json_content" == *"\"configuration\":"* ]]; then
-            TESTS_TOTAL=$((TESTS_TOTAL + 1))
-            TESTS_PASSED=$((TESTS_PASSED + 1))
-            echo -e "${GREEN}✓${NC} INFO.json should contain configuration"
-        else
-            TESTS_TOTAL=$((TESTS_TOTAL + 1))
-            TESTS_FAILED=$((TESTS_FAILED + 1))
-            echo -e "${RED}✗${NC} INFO.json should contain configuration"
-        fi
+            echo -e "${RED}✗${NC} INFO.json should list credentials file"
+       	fi
     fi
 
     cleanup_test_dir "$test_dir"

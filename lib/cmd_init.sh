@@ -16,6 +16,23 @@ declare -A SUPPORTED_PROVIDERS=(
     [digitalocean]="DigitalOcean"
 )
 
+# Normalize checksum values (strip algorithm prefix like "sha256:")
+normalize_checksum_value() {
+    local value="${1:-}"
+
+    if [[ -z "$value" ]]; then
+        echo ""
+        return
+    fi
+
+    local normalized="${value#*:}"
+    if [[ "${value,,}" == sha256:* ]]; then
+        echo "$normalized"
+    else
+        echo "$value"
+    fi
+}
+
 # Show help for init command
 show_init_help() {
     cat <<'EOF'
@@ -426,11 +443,14 @@ cmd_init() {
 
     # Get download URLs and checksums from version config
     local db_url c4_url db_working_copy db_checksum c4_checksum
+    local raw_db_checksum raw_c4_checksum
     db_url=$(get_version_config "$db_version" "DB_DOWNLOAD_URL")
     c4_url=$(get_version_config "$db_version" "C4_DOWNLOAD_URL")
     db_working_copy=$(get_version_config "$db_version" "DB_VERSION")
-    db_checksum=$(get_version_config "$db_version" "DB_CHECKSUM")
-    c4_checksum=$(get_version_config "$db_version" "C4_CHECKSUM")
+    raw_db_checksum=$(get_version_config "$db_version" "DB_CHECKSUM")
+    raw_c4_checksum=$(get_version_config "$db_version" "C4_CHECKSUM")
+    db_checksum=$(normalize_checksum_value "$raw_db_checksum")
+    c4_checksum=$(normalize_checksum_value "$raw_c4_checksum")
 
     cat > "$credentials_file" <<EOF
 {

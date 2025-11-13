@@ -138,6 +138,45 @@ test_lock_operations() {
     cleanup_test_dir "$test_dir"
 }
 
+test_stale_lock_cleanup() {
+    echo ""
+    echo "Test: stale lock cleanup"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+    state_init "$test_dir" "exasol-2025.1.4" "x86_64"
+    state_set_status "$test_dir" "database_ready"
+
+    local pid_max
+    pid_max=$(cat /proc/sys/kernel/pid_max 2>/dev/null || echo 4194304)
+    local fake_pid=$((pid_max + 1000))
+
+    cat > "$test_dir/.exasolLock.json" <<EOF
+{
+  "operation": "deploy",
+  "pid": $fake_pid,
+  "started_at": "$(get_timestamp)",
+  "hostname": "test-host"
+}
+EOF
+
+    local status
+    status=$(get_deployment_status "$test_dir")
+    assert_equals "database_ready" "$status" "Should ignore stale lock and return actual status"
+
+    if ! lock_exists "$test_dir"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Should remove stale lock file"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should remove stale lock file"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
 # Test write_variables_file
 test_write_variables_file() {
     echo ""
@@ -165,6 +204,7 @@ test_state_init
 test_is_deployment_directory
 test_state_set_status
 test_lock_operations
+test_stale_lock_cleanup
 test_write_variables_file
 
 # Show summary

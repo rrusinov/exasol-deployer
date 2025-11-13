@@ -103,10 +103,10 @@ resource "local_file" "ssh_config" {
         UserKnownHostsFile=/dev/null
 
     Host n${idx + 11}-cos
-        HostName localhost
+        HostName ${ip}
         User root
         Port 20002
-        ProxyJump n${idx + 11}
+        IdentityFile ${local_file.exasol_private_key_pem.filename}
         StrictHostKeyChecking no
         UserKnownHostsFile=/dev/null
 

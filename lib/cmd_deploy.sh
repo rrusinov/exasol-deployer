@@ -185,9 +185,6 @@ cmd_deploy() {
     # Display results
     progress_complete "deploy" "complete" "Deployment completed successfully"
 
-    # Generate INFO.txt and INFO.json files
-    generate_info_files "$deploy_dir"
-
     # Show outputs if available
     if tofu output -json > /dev/null 2>&1; then
         log_info ""

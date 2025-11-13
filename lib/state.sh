@@ -153,6 +153,30 @@ lock_remove() {
     fi
 }
 
+# Remove lock if PID is no longer running
+cleanup_stale_lock() {
+    local deploy_dir="$1"
+    local lock_file="$deploy_dir/$LOCK_FILE"
+
+    if [[ ! -f "$lock_file" ]]; then
+        return 0
+    fi
+
+    local pid
+    pid=$(jq -r '.pid // empty' "$lock_file" 2>/dev/null || echo "")
+
+    if [[ -z "$pid" ]]; then
+        log_warn "Removing stale lock without PID information: $lock_file"
+        rm -f "$lock_file"
+        return 0
+    fi
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+        log_warn "Removing stale lock (PID $pid no longer running)"
+        rm -f "$lock_file"
+    fi
+}
+
 # Get lock info
 lock_info() {
     local deploy_dir="$1"
@@ -200,6 +224,8 @@ get_deployment_status() {
         echo "error: not a deployment directory"
         return 1
     fi
+
+    cleanup_stale_lock "$deploy_dir"
 
     # If lock exists, operation is in progress
     if lock_exists "$deploy_dir"; then
