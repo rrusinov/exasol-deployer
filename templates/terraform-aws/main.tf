@@ -42,7 +42,11 @@ resource "aws_key_pair" "exasol_auth" {
 }
 
 locals {
-  # Map the architecture variable to the string used in the AMI name filter.
+  # Provider-specific info for common outputs
+  provider_name = "AWS"
+  region_name = var.aws_region
+
+  # Map architecture variable to string used in AMI name filter.
   # AWS and Ubuntu AMIs often use 'amd64' in the name for 'x86_64' architecture.
   ami_name_arch = var.instance_architecture == "x86_64" ? "amd64" : "arm64"
 
@@ -54,6 +58,11 @@ locals {
       aws_ebs_volume.data_volume[node_idx * var.data_volumes_per_node + vol_idx].id
     ]
   }
+
+  # Node public IPs for common outputs
+  node_public_ips = [for instance in aws_instance.exasol_node : instance.public_ip]
+  node_private_ips = [for instance in aws_instance.exasol_node : instance.private_ip]
+}
 }
 
 data "aws_availability_zones" "available" {

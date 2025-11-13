@@ -35,6 +35,10 @@ resource "digitalocean_ssh_key" "exasol_auth" {
 }
 
 locals {
+  # Provider-specific info for common outputs
+  provider_name = "DigitalOcean"
+  region_name = var.digitalocean_region
+
   # Group volume IDs by node for Ansible inventory
   node_volumes = {
     for node_idx in range(var.node_count) : node_idx => [

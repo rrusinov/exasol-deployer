@@ -39,6 +39,10 @@ resource "hcloud_ssh_key" "exasol_auth" {
 }
 
 locals {
+  # Provider-specific info for common outputs
+  provider_name = "Hetzner Cloud"
+  region_name = var.hetzner_location
+
   # Map architecture to Hetzner server type prefix
   # Hetzner uses different naming: cx, cpx, ccx series for x86_64, cax for arm64
   server_type_prefix = var.instance_architecture == "arm64" ? "cax" : "cpx"

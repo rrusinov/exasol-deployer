@@ -305,6 +305,10 @@ resource "azurerm_virtual_machine_data_disk_attachment" "data_attachment" {
 # ==============================================================================
 
 locals {
+  # Provider-specific info for common outputs
+  provider_name = "Azure"
+  region_name = var.azure_region
+
   # Group volume IDs by node for Ansible inventory
   node_volumes = {
     for node_idx in range(var.node_count) : node_idx => [
@@ -312,6 +316,10 @@ locals {
       azurerm_managed_disk.data_volume[node_idx * var.data_volumes_per_node + vol_idx].id
     ]
   }
+
+  # Node IPs for common outputs
+  node_public_ips = azurerm_public_ip.exasol_node[*].ip_address
+  node_private_ips = azurerm_network_interface.exasol_node[*].private_ip_address
 }
 
 # ==============================================================================

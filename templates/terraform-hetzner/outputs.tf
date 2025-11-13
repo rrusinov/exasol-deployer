@@ -1,10 +1,17 @@
-# ==============================================================================
-# HETZNER CLOUD OUTPUTS
-# ==============================================================================
+# Hetzner-specific outputs in addition to common outputs
+output "network_id" {
+  description = "Hetzner Network ID"
+  value       = hcloud_network.exasol_network.id
+}
 
-output "cluster_id" {
-  description = "Unique identifier for this cluster deployment"
-  value       = random_id.instance.hex
+output "firewall_id" {
+  description = "Hetzner Firewall ID"
+  value       = hcloud_firewall.exasol_cluster.id
+}
+
+output "data_volume_ids" {
+  description = "IDs of all data volumes"
+  value       = [for vol in hcloud_volume.data_volume : vol.id]
 }
 
 output "ssh_key_path" {
