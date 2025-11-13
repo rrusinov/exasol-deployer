@@ -50,6 +50,8 @@ run_test_file "$TEST_DIR/test_state.sh"
 run_test_file "$TEST_DIR/test_init.sh"
 run_test_file "$TEST_DIR/test_template_validation.sh"
 run_test_file "$TEST_DIR/test_url_availability.sh"
+run_test_file "$TEST_DIR/test_documentation.sh"
+run_test_file "$TEST_DIR/test_help_options.sh"
 
 # Overall summary
 echo -e "${BLUE}=========================================${NC}"

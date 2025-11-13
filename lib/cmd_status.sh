@@ -6,8 +6,33 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$LIB_DIR/common.sh"
 source "$LIB_DIR/state.sh"
 
+# Show help for status command
+show_status_help() {
+    cat <<'EOF'
+Show the status of a deployment.
+
+Returns JSON output with deployment status information.
+
+Usage:
+  exasol status [deployment-dir]
+
+Flags:
+  -h, --help                     Show help
+
+Examples:
+  exasol status ./my-deployment
+  exasol status
+EOF
+}
+
 # Status command
 cmd_status() {
+    # Check for help flag first
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        show_status_help
+        return 0
+    fi
+
     local deploy_dir="$1"
 
     # Validate deployment directory

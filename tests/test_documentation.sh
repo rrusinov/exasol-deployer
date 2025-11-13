@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# Validate that human-readable documentation stays in sync with the codebase.
+
+# Resolve directories
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_ROOT="$(cd "$TEST_DIR/.." && pwd)"
+
+source "$TEST_DIR/test_helper.sh"
+source "$SCRIPT_ROOT/lib/cmd_init.sh"
+
+README_FILE="$SCRIPT_ROOT/README.md"
+CLOUD_OVERVIEW_DOC="$SCRIPT_ROOT/docs/CLOUD_SETUP.md"
+README_CONTENT="$(cat "$README_FILE")"
+
+echo "Documentation validation"
+echo "========================"
+
+# Extract the list of init flags documented in the README (between **Flags:** and **Configuration Flow**)
+extract_readme_init_flags() {
+    local readme_path="$1"
+
+    python3 - "$readme_path" <<'PY' || return 1
+import re
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as f:
+    text = f.read()
+
+section_match = re.search(r'### `init`(.*?)### `deploy`', text, re.DOTALL)
+if not section_match:
+    sys.stderr.write("Could not locate init section in README\n")
+    sys.exit(1)
+
+section = section_match.group(1)
+flags_anchor = section.find("**Flags:**")
+if flags_anchor == -1:
+    sys.stderr.write("Could not locate **Flags:** block in README init section\n")
+    sys.exit(1)
+
+config_anchor = section.find("**Configuration Flow")
+if config_anchor == -1:
+    config_anchor = len(section)
+
+flags_block = section[flags_anchor:config_anchor]
+flags = set()
+for snippet in re.findall(r'`([^`]+)`', flags_block):
+    for flag in re.findall(r'--[a-z0-9-]+', snippet, re.IGNORECASE):
+        flags.add(flag.lower())
+flags = sorted(flags)
+if not flags:
+    sys.stderr.write("No flags extracted from README init section\n")
+    sys.exit(1)
+
+for flag in flags:
+    print(flag)
+PY
+}
+
+test_cloud_provider_docs_linked() {
+    echo ""
+    echo "Test: Cloud provider documentation linked from README"
+
+    local overview_content=""
+    if [[ -f "$CLOUD_OVERVIEW_DOC" ]]; then
+        overview_content="$(cat "$CLOUD_OVERVIEW_DOC")"
+    fi
+
+    for provider in "${!SUPPORTED_PROVIDERS[@]}"; do
+        local upper_provider="${provider^^}"
+        local doc_name="CLOUD_SETUP_${upper_provider}.md"
+        local doc_rel_path="docs/$doc_name"
+        local doc_abs_path="$SCRIPT_ROOT/$doc_rel_path"
+
+        assert_file_exists "$doc_abs_path" "Doc exists for provider $provider"
+        assert_contains "$README_CONTENT" "$doc_rel_path" "README links to $provider doc"
+
+        if [[ -n "$overview_content" ]]; then
+            assert_contains "$overview_content" "$doc_name" "Overview links to $provider doc"
+        fi
+    done
+}
+
+test_commands_documented_in_readme() {
+    echo ""
+    echo "Test: README documents every command listed in --help"
+
+    local commands=()
+    if ! mapfile -t commands < <("$SCRIPT_ROOT/exasol" --help 2>/dev/null | awk '
+        /Available Commands:/ {capture=1; next}
+        capture {
+            if ($0 ~ /^[[:space:]]*$/) { exit }
+            sub(/^[[:space:]]+/, "", $0)
+            print $1
+        }'); then
+        echo "Failed to parse exasol --help output" >&2
+        exit 1
+    fi
+
+    for cmd in "${commands[@]}"; do
+        assert_contains "$README_CONTENT" "### \`$cmd\`" "README contains section for '$cmd'"
+    done
+}
+
+test_init_flags_documented() {
+    echo ""
+    echo "Test: README init flags match cmd_init options"
+
+    local readme_flags=()
+    if ! mapfile -t readme_flags < <(extract_readme_init_flags "$README_FILE"); then
+        echo "Failed to extract init flags from README" >&2
+        exit 1
+    fi
+
+    local code_flags=()
+    if ! mapfile -t code_flags < <(extract_command_options "$SCRIPT_ROOT/lib/cmd_init.sh" "cmd_init"); then
+        echo "Failed to extract init flags from cmd_init" >&2
+        exit 1
+    fi
+
+    local readme_flag_string=" ${readme_flags[*]} "
+    local code_flag_string=" ${code_flags[*]} "
+
+    for flag in "${code_flags[@]}"; do
+        assert_contains "$readme_flag_string" " $flag " "README documents flag: $flag"
+    done
+
+    for flag in "${readme_flags[@]}"; do
+        assert_contains "$code_flag_string" " $flag " "Flag $flag exists in cmd_init"
+    done
+}
+
+# Execute tests
+test_cloud_provider_docs_linked
+test_commands_documented_in_readme
+test_init_flags_documented
+
+test_summary

@@ -23,9 +23,9 @@ Before using this deployer, ensure you have the following installed:
 - **Ansible** (>= 2.9)
 - **jq** (for JSON processing)
 - **bash** (>= 4.0)
-- **AWS credentials** configured (see below)
+- **Cloud provider credentials** configured (see [Cloud Setup Guide](docs/CLOUD_SETUP.md))
 
-**Note:** AWS CLI is **not required**. The tool uses OpenTofu's AWS provider which reads credentials directly from `~/.aws/credentials` and `~/.aws/config`.
+**Note:** Cloud provider CLI tools (aws, az, gcloud) are **not required** for deployment. OpenTofu reads credentials from standard configuration files or environment variables.
 
 ### Installation on macOS
 
@@ -54,40 +54,49 @@ sudo apt-get install -y ansible
 sudo apt-get install -y jq
 ```
 
-### AWS Credentials Setup
+## Cloud Provider Setup
 
-You need to configure AWS credentials. You can do this in two ways:
+Before deploying, you need to set up credentials for your chosen cloud provider. We support:
 
-**Option 1: Using AWS CLI (convenient but not required)**
+- **[AWS (Amazon Web Services)](docs/CLOUD_SETUP_AWS.md)** - Most feature-complete
+- **[Azure (Microsoft Azure)](docs/CLOUD_SETUP_AZURE.md)** - Full support with spot instances
+- **[GCP (Google Cloud Platform)](docs/CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
+- **[Hetzner Cloud](docs/CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
+- **[DigitalOcean](docs/CLOUD_SETUP_DIGITALOCEAN.md)** - Simple and affordable
+
+**See the [Cloud Provider Setup Guide](docs/CLOUD_SETUP.md) for detailed instructions.**
+
+### Quick Setup Examples
+
+**AWS** (Manual setup, no AWS CLI needed):
 ```bash
-# Install AWS CLI if you want to use it for credential setup
-aws configure --profile default
-```
-
-**Option 2: Manual setup (no AWS CLI needed)**
-```bash
-# Create credentials file manually
 mkdir -p ~/.aws
 cat > ~/.aws/credentials <<EOF
 [default]
 aws_access_key_id = YOUR_ACCESS_KEY_ID
 aws_secret_access_key = YOUR_SECRET_ACCESS_KEY
 EOF
-
-# Create config file (optional)
-cat > ~/.aws/config <<EOF
-[default]
-region = us-east-1
-EOF
-
-# Set proper permissions
 chmod 600 ~/.aws/credentials
-chmod 600 ~/.aws/config
 ```
+
+**Azure**:
+```bash
+az login
+az account show --query id -o tsv  # Get subscription ID
+```
+
+**GCP**:
+```bash
+gcloud auth application-default login
+gcloud config get-value project  # Get project ID
+```
+
+**Hetzner** / **DigitalOcean**:
+Get API token from provider console and use with `--hetzner-token` or `--digitalocean-token` flag.
 
 ## Quick Start
 
-### 1. List Available Options
+### 1. Choose Cloud Provider and List Options
 
 ```bash
 # List supported cloud providers
@@ -97,18 +106,12 @@ chmod 600 ~/.aws/config
 ./exasol init --list-versions
 ```
 
-Output:
-```
-Supported cloud providers:
-  - aws: Amazon Web Services
-  - azure: Microsoft Azure
-  - gcp: Google Cloud Platform
-  - hetzner: Hetzner Cloud
-  - digitalocean: DigitalOcean
-
-Available database versions:
-exasol-2025.1.4
-```
+**For detailed cloud provider setup, see:**
+- [AWS Setup Guide](docs/CLOUD_SETUP_AWS.md)
+- [Azure Setup Guide](docs/CLOUD_SETUP_AZURE.md)
+- [GCP Setup Guide](docs/CLOUD_SETUP_GCP.md)
+- [Hetzner Setup Guide](docs/CLOUD_SETUP_HETZNER.md)
+- [DigitalOcean Setup Guide](docs/CLOUD_SETUP_DIGITALOCEAN.md)
 
 ### 2. Initialize a Deployment
 
@@ -255,18 +258,48 @@ Initialize a new deployment directory with configuration files.
 ```
 
 **Flags:**
-- `--deployment-dir string`: Directory for deployment files (default: current directory)
-- `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., exasol-2025.1.4 (x86_64 is implicit))
-- `--list-versions`: List all available database versions
-- `--cluster-size number`: Number of nodes (default: 1)
-- `--instance-type string`: EC2 instance type (uses version's DEFAULT_INSTANCE_TYPE if not specified)
-- `--data-volume-size number`: Data volume size in GB (default: 100)
-- `--db-password string`: Database password (randomly generated if not specified)
-- `--adminui-password string`: Admin UI password (randomly generated if not specified)
-- `--owner string`: Owner tag for resources (default: "exasol-default")
-- `--aws-region string`: AWS region (default: "us-east-1")
-- `--aws-profile string`: AWS profile to use (default: "default")
-- `--allowed-cidr string`: CIDR block for access (default: "0.0.0.0/0")
+
+**Required Flags**
+- `--cloud-provider string`: Cloud provider to target (`aws`, `azure`, `gcp`, `hetzner`, or `digitalocean`).
+
+**Common Flags**
+- `--deployment-dir string`: Directory for deployment files (default: current directory).
+- `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., `exasol-2025.1.4`; x86_64 is implicit).
+- `--list-versions`: List all available database versions and exit.
+- `--list-providers`: List all supported cloud providers and exit.
+- `--cluster-size number`: Number of nodes (default: 1).
+- `--instance-type string`: Instance/VM type (auto-detected from version if omitted).
+- `--data-volume-size number`: Data volume size in GB (default: 100).
+- `--data-volumes-per-node number`: Number of data volumes per node (default: 1).
+- `--root-volume-size number`: Root volume size in GB (default: 50).
+- `--db-password string`: Database password (random if not specified).
+- `--adminui-password string`: Admin UI password (random if not specified).
+- `--owner string`: Owner tag for resources (default: `exasol-default`).
+- `--allowed-cidr string`: CIDR block that can reach the cluster (default: `0.0.0.0/0`).
+- `-h, --help`: Show inline help for the `init` command and exit.
+
+**AWS-Specific Flags**
+- `--aws-region string`: AWS region (default: `us-east-1`).
+- `--aws-profile string`: AWS CLI profile (default: `default`).
+- `--aws-spot-instance`: Enable AWS spot instances.
+
+**Azure-Specific Flags**
+- `--azure-region string`: Azure region (default: `eastus`).
+- `--azure-subscription string`: Azure subscription ID.
+- `--azure-spot-instance`: Enable Azure spot instances.
+
+**GCP-Specific Flags**
+- `--gcp-region string`: GCP region (default: `us-central1`).
+- `--gcp-project string`: GCP project ID.
+- `--gcp-spot-instance`: Enable GCP spot (preemptible) instances.
+
+**Hetzner-Specific Flags**
+- `--hetzner-location string`: Hetzner location (default: `nbg1`).
+- `--hetzner-token string`: Hetzner API token.
+
+**DigitalOcean-Specific Flags**
+- `--digitalocean-region string`: DigitalOcean region (default: `nyc3`).
+- `--digitalocean-token string`: DigitalOcean API token.
 
 **Configuration Flow:**
 1. Parse command-line arguments
@@ -720,9 +753,30 @@ For issues or questions:
 3. Check Terraform state and Ansible output
 4. Run unit tests to verify system integrity
 
+## Documentation
+
+### Cloud Provider Setup
+
+Comprehensive setup guides for each supported cloud provider:
+- [Cloud Setup Overview](docs/CLOUD_SETUP.md) - Compare all providers
+- [AWS Setup Guide](docs/CLOUD_SETUP_AWS.md) - Amazon Web Services
+- [Azure Setup Guide](docs/CLOUD_SETUP_AZURE.md) - Microsoft Azure
+- [GCP Setup Guide](docs/CLOUD_SETUP_GCP.md) - Google Cloud Platform
+- [Hetzner Setup Guide](docs/CLOUD_SETUP_HETZNER.md) - Hetzner Cloud
+- [DigitalOcean Setup Guide](docs/CLOUD_SETUP_DIGITALOCEAN.md) - DigitalOcean
+
+Each guide includes:
+- Account setup instructions
+- Credential configuration
+- Region/location selection
+- Instance type recommendations
+- Cost optimization tips
+- Security best practices
+- Troubleshooting
+
 ## Related Resources
 
 - [OpenTofu Documentation](https://opentofu.org/docs/)
 - [Ansible Documentation](https://docs.ansible.com/)
 - [Exasol Documentation](https://docs.exasol.com/)
-- [AWS EC2 Instance Types](https://aws.amazon.com/ec2/instance-types/)
+- [Cloud Provider Pricing Calculators](docs/CLOUD_SETUP.md#cost-optimization)

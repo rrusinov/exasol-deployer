@@ -16,6 +16,77 @@ declare -A SUPPORTED_PROVIDERS=(
     [digitalocean]="DigitalOcean"
 )
 
+# Show help for init command
+show_init_help() {
+    cat <<'EOF'
+Initialize a new deployment directory.
+
+Usage:
+  exasol init --cloud-provider <provider> [flags]
+
+Required Flags:
+  --cloud-provider <string>      Cloud provider: aws, azure, gcp, hetzner, digitalocean
+
+Common Flags:
+  --deployment-dir <path>        Directory to store deployment files (default: ".")
+  --db-version <version>         Database version (format: X.Y.Z-ARCH)
+  --list-versions                List all available database versions
+  --list-providers               List all supported cloud providers
+  --cluster-size <n>             Number of nodes in the cluster (default: 1)
+  --instance-type <type>         Instance/VM type (auto-detected if not specified)
+  --data-volume-size <gb>        Data volume size in GB (default: 100)
+  --data-volumes-per-node <n>    Data volumes per node (default: 1)
+  --root-volume-size <gb>        Root volume size in GB (default: 50)
+  --db-password <password>       Database password (random if not specified)
+  --adminui-password <password>  Admin UI password (random if not specified)
+  --owner <tag>                  Owner tag for resources (default: "exasol-default")
+  --allowed-cidr <cidr>          CIDR allowed to access cluster (default: "0.0.0.0/0")
+  -h, --help                     Show help
+
+AWS-Specific Flags:
+  --aws-region <region>          AWS region (default: "us-east-1")
+  --aws-profile <profile>        AWS profile to use (default: "default")
+  --aws-spot-instance            Enable spot instances for cost savings
+
+Azure-Specific Flags:
+  --azure-region <region>        Azure region (default: "eastus")
+  --azure-subscription <id>      Azure subscription ID
+  --azure-spot-instance          Enable spot instances
+
+GCP-Specific Flags:
+  --gcp-region <region>          GCP region (default: "us-central1")
+  --gcp-project <project>        GCP project ID
+  --gcp-spot-instance            Enable spot (preemptible) instances
+
+Hetzner-Specific Flags:
+  --hetzner-location <loc>       Hetzner location (default: "nbg1")
+  --hetzner-token <token>        Hetzner API token
+
+DigitalOcean-Specific Flags:
+  --digitalocean-region <region> DigitalOcean region (default: "nyc3")
+  --digitalocean-token <token>   DigitalOcean API token
+
+Examples:
+  # List available providers
+  exasol init --list-providers
+
+  # List available versions
+  exasol init --list-versions
+
+  # Initialize AWS deployment with default version
+  exasol init --cloud-provider aws --deployment-dir ./my-deployment
+
+  # Initialize AWS with specific version, 4-node cluster, and spot instances
+  exasol init --cloud-provider aws --db-version 8.0.0-x86_64 --cluster-size 4 --aws-spot-instance
+
+  # Initialize Azure deployment
+  exasol init --cloud-provider azure --azure-region westus2 --azure-subscription <sub-id>
+
+  # Initialize GCP deployment with spot instances
+  exasol init --cloud-provider gcp --gcp-project my-project --gcp-spot-instance
+EOF
+}
+
 # Init command
 cmd_init() {
     local deploy_dir=""
@@ -57,6 +128,10 @@ cmd_init() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -h|--help)
+                show_init_help
+                return 0
+                ;;
             --deployment-dir)
                 deploy_dir="$2"
                 shift 2
@@ -202,6 +277,9 @@ cmd_init() {
     fi
     deploy_dir=$(validate_directory "$deploy_dir")
 
+    # Set deployment directory for progress tracking
+    export EXASOL_DEPLOY_DIR="$deploy_dir"
+
     if [[ -z "$db_version" ]]; then
         db_version=$(get_default_version)
         log_info "Using default version: $db_version"
@@ -245,6 +323,9 @@ cmd_init() {
         log_info "Generated random AdminUI password"
     fi
 
+    # Emit progress: initialization started
+    progress_start "init" "validate_config" "Initializing deployment directory: $deploy_dir"
+
     log_info "Initializing deployment directory: $deploy_dir"
     log_info "  Cloud Provider: ${SUPPORTED_PROVIDERS[$cloud_provider]}"
     log_info "  Database version: $db_version"
@@ -275,13 +356,20 @@ cmd_init() {
             ;;
     esac
 
+    progress_complete "init" "validate_config" "Configuration validated"
+
     # Create deployment directory
+    progress_start "init" "create_directories" "Creating deployment directories"
     ensure_directory "$deploy_dir"
+    progress_complete "init" "create_directories" "Deployment directories created"
 
     # Initialize state file with cloud provider
+    progress_start "init" "initialize_state" "Initializing deployment state"
     state_init "$deploy_dir" "$db_version" "$architecture" "$cloud_provider" || die "Failed to initialize state"
+    progress_complete "init" "initialize_state" "Deployment state initialized"
 
     # Create templates directory
+    progress_start "init" "copy_templates" "Copying deployment templates for $cloud_provider"
     local templates_dir="$deploy_dir/.templates"
     ensure_directory "$templates_dir"
 
@@ -304,6 +392,7 @@ cmd_init() {
         log_debug "Copied cloud-specific templates for $cloud_provider"
     else
         log_error "No templates found for cloud provider: $cloud_provider"
+        progress_fail "init" "copy_templates" "Templates not found for $cloud_provider"
         die "Templates directory templates/terraform-$cloud_provider does not exist"
     fi
 
@@ -313,8 +402,10 @@ cmd_init() {
 
     # Create Terraform files in deployment directory
     create_terraform_files "$deploy_dir" "$architecture" "$cloud_provider"
+    progress_complete "init" "copy_templates" "Templates copied successfully"
 
     # Write variables file based on cloud provider
+    progress_start "init" "generate_variables" "Creating Terraform variables file"
     log_info "Creating variables file..."
     write_provider_variables "$deploy_dir" "$cloud_provider" \
         "$aws_region" "$aws_profile" "$aws_spot_instance" \
@@ -325,8 +416,10 @@ cmd_init() {
         "$instance_type" "$architecture" "$cluster_size" \
         "$data_volume_size" "$data_volumes_per_node" "$root_volume_size" \
         "$allowed_cidr" "$owner"
+    progress_complete "init" "generate_variables" "Variables file created"
 
     # Store passwords and deployment metadata securely
+    progress_start "init" "store_credentials" "Storing deployment credentials"
     local credentials_file="$deploy_dir/.credentials.json"
 
     # Get download URLs from version config
@@ -347,10 +440,16 @@ cmd_init() {
 }
 EOF
     chmod 600 "$credentials_file"
+    progress_complete "init" "store_credentials" "Credentials stored securely"
 
     # Create README
+    progress_start "init" "generate_readme" "Generating deployment README"
     create_readme "$deploy_dir" "$cloud_provider" "$db_version" "$architecture" \
         "$cluster_size" "$instance_type" "$aws_region" "$azure_region" "$gcp_region"
+    progress_complete "init" "generate_readme" "README generated"
+
+    # Mark initialization as complete
+    progress_complete "init" "complete" "Deployment directory initialized successfully"
 
     log_info ""
     log_info "✅ Deployment directory initialized successfully!"
