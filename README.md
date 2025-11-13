@@ -274,7 +274,7 @@ Initialize a new deployment directory with configuration files.
 - `--root-volume-size number`: Root volume size in GB (default: 50).
 - `--db-password string`: Database password (random if not specified).
 - `--adminui-password string`: Admin UI password (random if not specified).
-- `--owner string`: Owner tag for resources (default: `exasol-default`).
+- `--owner string`: Owner tag for resources (default: `exasol-deployer`).
 - `--allowed-cidr string`: CIDR block that can reach the cluster (default: `0.0.0.0/0`).
 - `-h, --help`: Show inline help for the `init` command and exit.
 
@@ -405,7 +405,7 @@ instance_architecture = "x86_64"       # From version config
 node_count = 1                         # From --cluster-size
 data_volume_size = 100                 # From --data-volume-size
 allowed_cidr = "0.0.0.0/0"            # From --allowed-cidr
-owner = "exasol-default"               # From --owner
+owner = "exasol-deployer"               # From --owner
 ```
 
 ### Deployment Directory Structure
