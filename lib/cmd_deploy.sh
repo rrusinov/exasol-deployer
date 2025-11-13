@@ -138,10 +138,10 @@ cmd_deploy() {
     progress_complete "deploy" "wait_instances" "Instances ready"
 
     # Show deployment summary before Ansible configuration
-    if tofu output -json summary >/dev/null 2>&1; then
+    if tofu output summary >/dev/null 2>&1; then
         log_info ""
         log_info "🚀 Deployment Summary (Infrastructure Ready):"
-        tofu output -json summary | jq -r '.'
+        tofu output summary
         log_info ""
         log_info "📋 Next: Configuring cluster with Ansible..."
         log_info ""

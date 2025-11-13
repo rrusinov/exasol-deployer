@@ -102,6 +102,14 @@ resource "local_file" "ssh_config" {
         StrictHostKeyChecking no
         UserKnownHostsFile=/dev/null
 
+    Host n${idx + 11}-cos
+        HostName localhost
+        User root
+        Port 20002
+        ProxyJump n${idx + 11}
+        StrictHostKeyChecking no
+        UserKnownHostsFile=/dev/null
+
     %{endfor~}
   EOF
   filename        = "${path.module}/ssh_config"

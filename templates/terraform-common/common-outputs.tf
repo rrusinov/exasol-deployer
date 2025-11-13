@@ -91,3 +91,8 @@ output "ansible_command" {
   description = "The command to run the Ansible playbook"
   value       = "ansible-playbook -i ${local_file.ansible_inventory.filename} setup-exasol-cluster.yml"
 }
+
+output "open_ports" {
+  description = "Open ports for the Exasol cluster"
+  value       = [for port, desc in local.exasol_firewall_ports : { port = port, name = desc }]
+}

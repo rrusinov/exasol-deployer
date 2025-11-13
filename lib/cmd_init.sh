@@ -424,11 +424,13 @@ cmd_init() {
     progress_start "init" "store_credentials" "Storing deployment credentials"
     local credentials_file="$deploy_dir/.credentials.json"
 
-    # Get download URLs from version config
-    local db_url c4_url db_working_copy
+    # Get download URLs and checksums from version config
+    local db_url c4_url db_working_copy db_checksum c4_checksum
     db_url=$(get_version_config "$db_version" "DB_DOWNLOAD_URL")
     c4_url=$(get_version_config "$db_version" "C4_DOWNLOAD_URL")
     db_working_copy=$(get_version_config "$db_version" "DB_VERSION")
+    db_checksum=$(get_version_config "$db_version" "DB_CHECKSUM")
+    c4_checksum=$(get_version_config "$db_version" "C4_CHECKSUM")
 
     cat > "$credentials_file" <<EOF
 {
@@ -437,6 +439,8 @@ cmd_init() {
   "db_download_url": "$db_url",
   "c4_download_url": "$c4_url",
   "db_working_copy": "$db_working_copy",
+  "db_checksum": "$db_checksum",
+  "c4_checksum": "$c4_checksum",
   "cloud_provider": "$cloud_provider",
   "created_at": "$(get_timestamp)"
 }
@@ -628,6 +632,7 @@ create_terraform_files() {
     local templates_dir="$deploy_dir/.templates"
 
     ln -sf ".templates/common.tf" "$deploy_dir/common.tf"
+    ln -sf ".templates/common-outputs.tf" "$deploy_dir/common-outputs.tf"
     ln -sf ".templates/main.tf" "$deploy_dir/main.tf"
     ln -sf ".templates/variables.tf" "$deploy_dir/variables.tf"
     ln -sf ".templates/outputs.tf" "$deploy_dir/outputs.tf"

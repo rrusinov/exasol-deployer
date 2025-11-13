@@ -582,7 +582,7 @@ generate_info_files() {
             if [[ -n "$cos_array" ]]; then
                 cos_array="$cos_array,"
             fi
-            cos_array="$cos_array\"ssh -F ssh_config $node_name ssh cos\""
+            cos_array="$cos_array\"ssh -F ssh_config ${node_name}-cos\""
 
             # Add to nodes array (will be populated with IPs if available)
             if [[ -n "$nodes_array" ]]; then
@@ -645,8 +645,16 @@ generate_info_files() {
         config_json="$config_json }"
     fi
 
-    # Define open ports (these are standard for Exasol)
-    local open_ports='["SSH (22)", "BucketFS (2581)", "AdminUI HTTPS (8443)", "Exasol Database (8563)", "Container SSH (20002)", "Confd API (20003)"]'
+    # Get open ports from terraform state if available, otherwise use defaults
+    local open_ports
+    if [[ -f "$deploy_dir/terraform.tfstate" ]] && command -v jq >/dev/null 2>&1; then
+        open_ports=$(jq -r '.outputs.open_ports.value // []' "$deploy_dir/terraform.tfstate" 2>/dev/null || echo "")
+        if [[ -z "$open_ports" || "$open_ports" == "[]" ]]; then
+            open_ports='[{"port": 22, "name": "SSH access"}, {"port": 2581, "name": "Default bucketfs"}, {"port": 8443, "name": "Exasol Admin UI"}, {"port": 8563, "name": "Default Exasol database connection"}, {"port": 20002, "name": "Exasol container ssh"}, {"port": 20003, "name": "Exasol confd API"}]'
+        fi
+    else
+        open_ports='[{"port": 22, "name": "SSH access"}, {"port": 2581, "name": "Default bucketfs"}, {"port": 8443, "name": "Exasol Admin UI"}, {"port": 8563, "name": "Default Exasol database connection"}, {"port": 20002, "name": "Exasol container ssh"}, {"port": 20003, "name": "Exasol confd API"}]'
+    fi
 
     # Create JSON structure
     local json_data
@@ -656,11 +664,9 @@ generate_info_files() {
   "database_version": "$db_version",
   "architecture": "$architecture",
   "cloud_provider": "$cloud_provider",
-  "deployment_directory": "$deploy_dir",
+  "deployment_directory": "$(echo "$deploy_dir" | sed 's|/$||')",
   "last_updated": "$(get_timestamp)",
   "node_count": $node_count,
-  "nodes": $nodes_json,
-  "node_names": $node_names,
   "configuration": $config_json,
   "connection_info": {
     "open_ports": $open_ports,
@@ -669,9 +675,8 @@ generate_info_files() {
       "username": "admin",
       "password_location": ".credentials.json"
     },
-    "ssh_access": $ssh_commands,
     "cos_access": $cos_commands,
-    "detailed_info_command": "cd '$deploy_dir' && tofu output"
+    "detailed_info_command": "tofu -chdir='$deploy_dir' output"
   },
   "credentials": {
     "location": ".credentials.json"
@@ -800,7 +805,13 @@ EOF
 Connection Information
 ---------------------
 
-Open Ports: SSH (22), BucketFS (2581), AdminUI HTTPS (8443), Exasol Database (8563), Container SSH (20002), Confd API (20003)
+Open Ports:
+- SSH access (22)
+- Default bucketfs (2581)
+- Exasol Admin UI (8443)
+- Default Exasol database connection (8563)
+- Exasol container ssh (20002)
+- Exasol confd API (20003)
 
 AdminUI Access:
 - URL: https://<node-ip>:8443
@@ -825,14 +836,14 @@ EOF
             for ((i=0; i<node_count; i++)); do
                 local node_num=$((11 + i))
                 cat >> "$info_txt_file" <<EOF
-ssh -F ssh_config n${node_num} ssh cos
+ssh -F ssh_config n${node_num}-cos
 EOF
             done
 
             cat >> "$info_txt_file" <<EOF
 
 Detailed Connection Info:
-Run 'cd $deploy_dir && tofu output' for actual IP addresses
+Run 'tofu -chdir=$deploy_dir output' for actual IP addresses
 
 Credentials:
 Database and AdminUI passwords are stored in .credentials.json

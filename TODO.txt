@@ -1,12 +1,15 @@
 1. Extract built-in python code in the shell script into extra helper functions lib/python/ directory. Add info to the build dependencies about the needed python packages to run the scripts.
 
-2. Check for all clouds what options do we have to have public available hostname with valid certificate, eventually having a load balancer to he open ports.
+2. Check for all clouds what options do we have to implement public available hostname with valid certificates (which can be used for the admin ui and database port), eventually having a load balancer to the open ports.
 
 3. Check all terraform templates for errors, incosistency, code duplication. Check if the inventory exported by the terraform can be used for all providers by the ansible script. Check if cmd_init.sh and README and help has all available options from the terraform providers (eg. hetzer network zone) and add these options if missung. Check if the templates are correct implemented for every cloud provider, also that all options in the corresponding terraform provider is supported in the cloud. Find template code which is common and can be moved to the common template.
 
 4. The public signed certificate can be be installed (and needs to be installed) on all machines with: ssh cos confd_client cert_update ca: '"{< /root/tls_ca}"' cert: '"{< /root/tls_cert}"' key: '"{< /root/tls_key}"' || true
 
-5. Add way to see the needed permissions in order to deploy the infrastructure to the specific cloud. (eg. exasol permissions [--deployment-dir])
+5. Check the progress logs of this 1, 2, 4, 8 node deployments and adjust the overall percent based on timings.
+ logs: tmp/1_node.
+
+6. Add way to see the needed permissions in order to deploy the infrastructure to the specific cloud. (eg. exasol permissions [--deployment-dir])
 For example this tool:  https://github.com/JamesWoolfenden/pike which can be run locally in docker or podman (fallback) can be used to find the information I need. You can print json output like this:
 
 cloud specic permissions: 
@@ -25,3 +28,7 @@ REQUIRED_PERMISSIONS = {
     ],
     ...
 }
+
+7. Create one-line "curl https://... | bash" command which installs exasol somewhere in user home (suitable location), works with different shells (bash, zsh, fish, etc..), also on different linux OS distros and also on MacOS (terminal), WSL etc.. If current installation already exist, ask the user if update is desired.
+
+
