@@ -63,7 +63,6 @@ locals {
   node_public_ips = [for instance in aws_instance.exasol_node : instance.public_ip]
   node_private_ips = [for instance in aws_instance.exasol_node : instance.private_ip]
 }
-}
 
 data "aws_availability_zones" "available" {
   state = "available"
@@ -107,18 +106,11 @@ data "aws_ec2_instance_type_offerings" "supported" {
 }
 
 locals {
-  # Prioritize user-supplied AZs, otherwise iterate over everything available in the region.
-  preferred_azs = length(var.preferred_availability_zones) > 0 ? var.preferred_availability_zones : data.aws_availability_zones.available.names
-
   # Only keep AZs that actually support the chosen instance type.
   supported_azs = distinct(tolist(data.aws_ec2_instance_type_offerings.supported.locations))
 
-  prioritized_supported_azs = [
-    for az in local.preferred_azs : az
-    if contains(local.supported_azs, az)
-  ]
-
-  selected_az = try(local.prioritized_supported_azs[0], null)
+  # Select the first available AZ that supports the instance type
+  selected_az = try(local.supported_azs[0], null)
 }
 
 # Create a new VPC
@@ -146,7 +138,7 @@ resource "aws_subnet" "exasol_subnet" {
   lifecycle {
     precondition {
       condition     = local.selected_az != null
-      error_message = "Instance type ${var.instance_type} is not available in any AZ within region ${var.aws_region}. Select a different instance type/region or expand preferred_availability_zones."
+      error_message = "Instance type ${var.instance_type} is not available in any AZ within region ${var.aws_region}. Select a different instance type or region."
     }
   }
 }
@@ -248,43 +240,7 @@ resource "aws_instance" "exasol_node" {
   vpc_security_group_ids = [aws_security_group.exasol_cluster.id]
 
   # Cloud-init user-data to create exasol user before Ansible runs
-  user_data = <<-EOF
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    # Create exasol group
-    groupadd -f exasol
-
-    # Create exasol user with sudo privileges
-    if ! id -u exasol >/dev/null 2>&1; then
-      useradd -m -g exasol -G sudo -s /bin/bash exasol
-    fi
-
-    # Enable passwordless sudo for exasol user
-    echo "exasol ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/11-exasol-user
-    chmod 0440 /etc/sudoers.d/11-exasol-user
-
-    # Copy SSH authorized_keys from default cloud user to exasol user
-    # This works across different distributions (ubuntu, admin, ec2-user, etc.)
-    for user_home in /home/ubuntu /home/admin /home/ec2-user /home/debian; do
-      if [ -d "$user_home/.ssh" ] && [ -f "$user_home/.ssh/authorized_keys" ]; then
-        mkdir -p /home/exasol/.ssh
-        cp "$user_home/.ssh/authorized_keys" /home/exasol/.ssh/
-        chown -R exasol:exasol /home/exasol/.ssh
-        chmod 700 /home/exasol/.ssh
-        chmod 600 /home/exasol/.ssh/authorized_keys
-        break
-      fi
-    done
-
-    # Ensure original cloud user also has passwordless sudo (for compatibility)
-    for cloud_user in ubuntu admin ec2-user debian; do
-      if id -u "$cloud_user" >/dev/null 2>&1; then
-        echo "$cloud_user ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/10-$cloud_user-user"
-        chmod 0440 "/etc/sudoers.d/10-$cloud_user-user"
-      fi
-    done
-  EOF
+  user_data = local.cloud_init_script
 
   user_data_replace_on_change = true
 

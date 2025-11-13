@@ -4,7 +4,4 @@ output "resource_group_name" {
   value       = azurerm_resource_group.exasol.name
 }
 
-output "node_names" {
-  description = "Names of all nodes"
-  value       = azurerm_linux_virtual_machine.exasol_node[*].name
-}
+

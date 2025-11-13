@@ -4,7 +4,4 @@ output "project_id" {
   value       = var.gcp_project
 }
 
-output "node_names" {
-  description = "Names of all nodes"
-  value       = google_compute_instance.exasol_node[*].name
-}
+

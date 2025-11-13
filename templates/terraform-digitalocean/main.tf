@@ -46,6 +46,10 @@ locals {
       digitalocean_volume.data_volume[node_idx * var.data_volumes_per_node + vol_idx].id
     ]
   }
+
+  # Node IPs for common outputs
+  node_public_ips = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address]
+  node_private_ips = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address_private]
 }
 
 # ==============================================================================
@@ -179,43 +183,7 @@ resource "digitalocean_droplet" "exasol_node" {
   ]
 
   # Cloud-init user-data to create exasol user before Ansible runs
-  user_data = <<-EOF
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    # Create exasol group
-    groupadd -f exasol
-
-    # Create exasol user with sudo privileges
-    if ! id -u exasol >/dev/null 2>&1; then
-      useradd -m -g exasol -G sudo -s /bin/bash exasol
-    fi
-
-    # Enable passwordless sudo for exasol user
-    echo "exasol ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/11-exasol-user
-    chmod 0440 /etc/sudoers.d/11-exasol-user
-
-    # Copy SSH authorized_keys from default cloud user to exasol user
-    # DigitalOcean uses 'root' by default
-    for user_home in /root /home/ubuntu /home/admin; do
-      if [ -d "$user_home/.ssh" ] && [ -f "$user_home/.ssh/authorized_keys" ]; then
-        mkdir -p /home/exasol/.ssh
-        cp "$user_home/.ssh/authorized_keys" /home/exasol/.ssh/
-        chown -R exasol:exasol /home/exasol/.ssh
-        chmod 700 /home/exasol/.ssh
-        chmod 600 /home/exasol/.ssh/authorized_keys
-        break
-      fi
-    done
-
-    # Ensure original cloud user also has passwordless sudo (for compatibility)
-    for cloud_user in ubuntu admin; do
-      if id -u "$cloud_user" >/dev/null 2>&1; then
-        echo "$cloud_user ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/10-$cloud_user-user"
-        chmod 0440 "/etc/sudoers.d/10-$cloud_user-user"
-      fi
-    done
-  EOF
+  user_data = local.cloud_init_script
 
   # Resize root disk if needed
   resize_disk = var.root_volume_size > 25 ? true : false
@@ -258,11 +226,6 @@ resource "digitalocean_volume_attachment" "data_attachment" {
 # ==============================================================================
 # OUTPUTS AND INVENTORY
 # ==============================================================================
-
-locals {
-  node_public_ips = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address]
-  node_private_ips = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address_private]
-}
 
 # Generate Ansible Inventory
 resource "local_file" "ansible_inventory" {

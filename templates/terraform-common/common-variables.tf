@@ -1,6 +1,10 @@
 # ==============================================================================
 # COMMON VARIABLES (shared across all cloud providers)
-# These variables are used by all cloud providers with the same definition
+# These variables are used by all cloud providers with the same definition.
+#
+# NOTE: These variables are redefined in each provider's variables.tf for
+# better organization and to allow provider-specific documentation/examples.
+# The definitions here serve as documentation and reference.
 # ==============================================================================
 
 variable "instance_architecture" {

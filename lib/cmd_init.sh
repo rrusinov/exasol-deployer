@@ -380,10 +380,11 @@ cmd_init() {
 
     # First, copy common Terraform resources (SSH keys, random ID, cloud-init)
     # These go directly into .templates/ so provider templates can reference them
-    # Note: common-variables.tf and common-outputs.tf are documentation only, not copied
+    # Note: common-variables.tf is documentation only, not copied
     if [[ -d "$script_root/templates/terraform-common" ]]; then
         cp "$script_root/templates/terraform-common/common.tf" "$templates_dir/" 2>/dev/null || true
-        log_debug "Copied common Terraform resources (common.tf)"
+        cp "$script_root/templates/terraform-common/common-outputs.tf" "$templates_dir/" 2>/dev/null || true
+        log_debug "Copied common Terraform resources (common.tf, common-outputs.tf)"
     fi
 
     # Then, copy cloud-provider-specific terraform templates
@@ -534,7 +535,7 @@ write_provider_variables() {
             write_variables_file "$deploy_dir" \
                 "hetzner_location=$hetzner_location" \
                 "hetzner_token=$hetzner_token" \
-                "server_type=$instance_type" \
+                "instance_type=$instance_type" \
                 "instance_architecture=$architecture" \
                 "node_count=$cluster_size" \
                 "data_volume_size=$data_volume_size" \
@@ -547,7 +548,7 @@ write_provider_variables() {
             write_variables_file "$deploy_dir" \
                 "digitalocean_region=$digitalocean_region" \
                 "digitalocean_token=$digitalocean_token" \
-                "droplet_size=$instance_type" \
+                "instance_type=$instance_type" \
                 "instance_architecture=$architecture" \
                 "node_count=$cluster_size" \
                 "data_volume_size=$data_volume_size" \

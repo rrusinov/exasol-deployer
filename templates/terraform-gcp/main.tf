@@ -108,6 +108,18 @@ locals {
 
   # SSH keys metadata
   ssh_keys_metadata = "ubuntu:${tls_private_key.exasol_key.public_key_openssh}"
+
+  # Group volume IDs by node for Ansible inventory
+  node_volumes = {
+    for node_idx in range(var.node_count) : node_idx => [
+      for vol_idx in range(var.data_volumes_per_node) :
+      google_compute_disk.data_volume[node_idx * var.data_volumes_per_node + vol_idx].id
+    ]
+  }
+
+  # Node IPs for common outputs
+  node_public_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].access_config[0].nat_ip]
+  node_private_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].network_ip]
 }
 
 # ==============================================================================
@@ -186,20 +198,6 @@ resource "google_compute_attached_disk" "data_attachment" {
 # ==============================================================================
 # Outputs for Ansible Inventory
 # ==============================================================================
-
-locals {
-  # Group volume IDs by node for Ansible inventory
-  node_volumes = {
-    for node_idx in range(var.node_count) : node_idx => [
-      for vol_idx in range(var.data_volumes_per_node) :
-      google_compute_disk.data_volume[node_idx * var.data_volumes_per_node + vol_idx].id
-    ]
-  }
-
-  # Node IPs for common outputs
-  node_public_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].access_config[0].nat_ip]
-  node_private_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].network_ip]
-}
 
 # ==============================================================================
 # Generate Ansible Inventory
