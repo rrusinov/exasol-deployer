@@ -25,6 +25,9 @@ Before using this deployer, ensure you have the following installed:
 - **bash** (>= 4.0)
 - **Cloud provider credentials** configured (see [Cloud Setup Guide](docs/CLOUD_SETUP.md))
 
+**For Development/Testing Only:**
+- **Python 3.6+** (required only for running unit tests in `tests/` directory)
+
 **Note:** Cloud provider CLI tools (aws, az, gcloud) are **not required** for deployment. OpenTofu reads credentials from standard configuration files or environment variables.
 
 ### Installation on macOS

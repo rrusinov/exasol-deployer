@@ -1,4 +1,4 @@
-1. Extract built-in python code in the shell script into extra helper functions lib/python/ directory. Add info to the build dependencies about the needed python packages to run the scripts.
+1. ✅ DONE - Extract built-in python code in the shell script into extra helper functions lib/python/ directory. Add info to the build dependencies about the needed python packages to run the scripts.
 
 2. Check for all clouds what options do we have to implement public available hostname with valid certificates (which can be used for the admin ui and database port), eventually having a load balancer to the open ports.
 
