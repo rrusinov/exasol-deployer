@@ -39,7 +39,7 @@ Common Flags:
   --root-volume-size <gb>        Root volume size in GB (default: 50)
   --db-password <password>       Database password (random if not specified)
   --adminui-password <password>  Admin UI password (random if not specified)
-  --owner <tag>                  Owner tag for resources (default: "exasol-default")
+  --owner <tag>                  Owner tag for resources (default: "exasol-deployer")
   --allowed-cidr <cidr>          CIDR allowed to access cluster (default: "0.0.0.0/0")
   -h, --help                     Show help
 
@@ -99,7 +99,7 @@ cmd_init() {
     local root_volume_size=50
     local db_password=""
     local adminui_password=""
-    local owner="exasol-default"
+    local owner="exasol-deployer"
     local allowed_cidr="0.0.0.0/0"
 
     # AWS-specific variables

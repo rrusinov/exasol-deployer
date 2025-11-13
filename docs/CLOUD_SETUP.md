@@ -106,7 +106,7 @@ All cloud providers support these common options:
 | `--root-volume-size` | Root volume size in GB | `50` |
 | `--db-password` | Database password | Random (16 chars) |
 | `--adminui-password` | Admin UI password | Random (16 chars) |
-| `--owner` | Owner tag for resources | `exasol-default` |
+| `--owner` | Owner tag for resources | `exasol-deployer` |
 | `--allowed-cidr` | CIDR for access control | `0.0.0.0/0` |
 
 ## Feature Comparison
