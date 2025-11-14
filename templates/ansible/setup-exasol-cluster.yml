@@ -214,9 +214,9 @@
           - exasol_symlinks.stdout_lines | length > 0
         fail_msg: "No /dev/exasol_data_* symlinks found on {{ inventory_hostname }}"
 
-    - name: Consolidate data disk symlink paths into a single string
+    - name: Consolidate data disk symlink paths into a list
       ansible.builtin.set_fact:
-        data_disk_paths: "{{ exasol_symlinks.stdout_lines | join(' ') }}"
+        data_disk_paths: "{{ exasol_symlinks.stdout_lines }}"
 
     - name: Create final Exasol config file from template
       ansible.builtin.template:
@@ -228,7 +228,7 @@
       vars:
         internal_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, ['ansible_default_ipv4', 'address']) | join(' ') }}"
         external_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, 'ansible_host') | join(' ') }}"
-        data_disk_paths_var: "{{ data_disk_paths }}"
+        data_disk_paths_var: "{{ data_disk_paths | join(',') }}"
         exa_image_password: "{{ random_image_pass }}"
         exa_working_copy: "{{ exa_working_copy }}"
 

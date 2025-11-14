@@ -250,6 +250,7 @@ resource "azurerm_virtual_machine_data_disk_attachment" "data_attachment" {
 locals {
   # Provider-specific info for common outputs
   provider_name = "Azure"
+  provider_code = "azure"
   region_name = var.azure_region
 
   # Azure firewall rules with priorities
@@ -282,6 +283,7 @@ resource "local_file" "ansible_inventory" {
     public_ips   = local.node_public_ips
     private_ips  = local.node_private_ips
     node_volumes = local.node_volumes
+    cloud_provider = local.provider_code
     ssh_key      = local_file.exasol_private_key_pem.filename
   })
   filename        = "${path.module}/inventory.ini"

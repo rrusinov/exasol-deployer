@@ -104,6 +104,7 @@ data "google_compute_image" "ubuntu" {
 locals {
   # Provider-specific info for common outputs
   provider_name = "GCP"
+  provider_code = "gcp"
   region_name = var.gcp_region
   selected_gcp_zone = length(trimspace(var.gcp_zone)) > 0 ? trimspace(var.gcp_zone) : "${var.gcp_region}-a"
 
@@ -209,6 +210,7 @@ resource "local_file" "ansible_inventory" {
     public_ips   = local.node_public_ips
     private_ips  = local.node_private_ips
     node_volumes = local.node_volumes
+    cloud_provider = local.provider_code
     ssh_key      = local_file.exasol_private_key_pem.filename
   })
   filename        = "${path.module}/inventory.ini"

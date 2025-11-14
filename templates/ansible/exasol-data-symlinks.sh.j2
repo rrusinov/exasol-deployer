@@ -13,9 +13,12 @@ VOLUME_IDS=(
     "{{ vol_id }}"
 {% endfor %}
 )
+VOLUME_COUNT={{ volume_ids_list | length }}
 
 # Target symlink prefix
 SYMLINK_PREFIX="/dev/exasol_data_"
+CLOUD_PROVIDER="{{ cloud_provider | default('aws') | lower }}"
+shopt -s nullglob
 
 # Log function
 log() {
@@ -23,6 +26,60 @@ log() {
 }
 
 log "Starting Exasol data volume symlink creation"
+log "Detected cloud provider: $CLOUD_PROVIDER"
+
+log_available_devices() {
+    local header="$1"
+    shift
+    log "$header"
+    local found=false
+    for pattern in "$@"; do
+        for entry in $pattern; do
+            found=true
+            local resolved
+            resolved="$(readlink -f "$entry" 2>/dev/null || echo '?')"
+            log "  $entry -> $resolved"
+        done
+    done
+    if [[ "$found" = false ]]; then
+        log "  (none found)"
+    fi
+}
+
+find_device_via_patterns() {
+    local vol_id="$1"
+    shift
+    for pattern in "$@"; do
+        for link in $pattern; do
+            [[ ! -e "$link" ]] && continue
+            local target
+            target=$(readlink -f "$link") || continue
+            if [[ "$(lsblk -ndo TYPE "$target" 2>/dev/null)" != "disk" ]]; then
+                continue
+            fi
+            echo "$target"
+            return 0
+        done
+    done
+    return 1
+}
+
+declare -a AZURE_LUN_LINKS=()
+AZURE_LUN_INDEX=0
+AZURE_LUN_COUNT=0
+if [[ "$CLOUD_PROVIDER" == "azure" ]]; then
+    while IFS= read -r link; do
+        AZURE_LUN_LINKS+=("$link")
+        ((AZURE_LUN_COUNT++))
+    done < <(for link in /dev/disk/azure/scsi1/lun*; do
+        [[ -e "$link" ]] && echo "$link"
+    done | sort)
+    if ((AZURE_LUN_COUNT == 0)); then
+        log "WARNING: Azure provider detected but no /dev/disk/azure/scsi1/lun* entries found yet"
+    else
+        log "Discovered $AZURE_LUN_COUNT Azure LUN devices"
+    fi
+fi
 
 # Remove any existing symlinks
 for link in ${SYMLINK_PREFIX}*; do
@@ -36,44 +93,85 @@ done
 # ONLY for unmounted volumes (to prevent overwriting OS or other mounted filesystems)
 disk_idx=1
 for vol_id in "${VOLUME_IDS[@]}"; do
-    vol_id_short="${vol_id//-/}"
-
-    # Find the device using the by-id symlink
-    found=false
-    for link in /dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${vol_id_short}*; do
-        [[ ! -e "$link" ]] && continue
-        # Skip partition symlinks (ending with _1, _2, etc)
-        [[ "$link" =~ _[0-9]+$ ]] && continue
-
-        target=$(readlink -f "$link")
-        # Verify it's a whole disk (not partition)
-        if [[ "$target" =~ nvme[0-9]+n[0-9]+$ ]]; then
-            # CRITICAL SAFETY CHECK: Verify volume is not mounted
-            if lsblk -nlo MOUNTPOINT "$target" | grep -q '^/'; then
-                log "SKIPPING: $target (volume: $vol_id) - has mounted partitions (likely root or other OS volume)"
-                found=true
-                break
+    target_device=""
+    case "$CLOUD_PROVIDER" in
+        aws)
+            vol_id_short="${vol_id//-/}"
+            target_device=$(find_device_via_patterns "$vol_id" "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${vol_id_short}*") || true
+            ;;
+        gcp)
+            disk_name="${vol_id##*/}"
+            [[ -z "$disk_name" ]] && disk_name="$vol_id"
+            target_device=$(find_device_via_patterns "$vol_id" "/dev/disk/by-id/google-${disk_name}" "/dev/disk/by-id/google-persistent-disk-${disk_name}") || true
+            ;;
+        hetzner)
+            target_device=$(find_device_via_patterns "$vol_id" "/dev/disk/by-id/scsi-0HC_Volume_${vol_id}" "/dev/disk/by-id/scsi-0HC_Volume_${vol_id}-*" "/dev/disk/by-id/scsi-0HC_Volume_${vol_id}_*") || true
+            ;;
+        digitalocean)
+            vol_id_clean="${vol_id//-/}"
+            target_device=$(find_device_via_patterns "$vol_id" \
+                "/dev/disk/by-id/scsi-0DO_Volume_${vol_id}" \
+                "/dev/disk/by-id/scsi-0DO_Volume_volume-${vol_id}" \
+                "/dev/disk/by-id/scsi-0DO_Volume_${vol_id_clean}" \
+                "/dev/disk/by-id/scsi-0DO_Volume_volume-${vol_id_clean}") || true
+            ;;
+        azure)
+            if ((AZURE_LUN_COUNT == 0)); then
+                log "ERROR: Azure provider detected but no LUN devices discovered"
+                exit 1
             fi
+            if ((AZURE_LUN_INDEX >= AZURE_LUN_COUNT)); then
+                log "ERROR: Not enough Azure data disks discovered (expected $VOLUME_COUNT, found $AZURE_LUN_COUNT)"
+                exit 1
+            fi
+            lun_link="${AZURE_LUN_LINKS[$AZURE_LUN_INDEX]}"
+            ((AZURE_LUN_INDEX++))
+            target_device=$(readlink -f "$lun_link") || target_device=""
+            ;;
+        *)
+            log "ERROR: Unsupported cloud provider '$CLOUD_PROVIDER'"
+            exit 1
+            ;;
+    esac
 
-            symlink_name=$(printf "${SYMLINK_PREFIX}%02d" "$disk_idx")
-            ln -sf "$target" "$symlink_name"
-            log "Created symlink: $symlink_name -> $target (volume: $vol_id)"
-            found=true
-            ((disk_idx++))
-            break
-        fi
-    done
-
-    if [ "$found" = false ]; then
-        log "ERROR: Could not find EBS volume $vol_id"
-        log "Available EBS volumes:"
-        ls -l /dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_* 2>/dev/null | while read line; do
-            log "  $line"
-        done || log "  (none found)"
+    if [[ -z "$target_device" ]]; then
+        log "ERROR: Could not map volume $vol_id for provider $CLOUD_PROVIDER"
+        case "$CLOUD_PROVIDER" in
+            aws)
+                log_available_devices "Available AWS NVMe volumes:" "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_*"
+                ;;
+            gcp)
+                log_available_devices "Available GCP disks:" "/dev/disk/by-id/google-*"
+                ;;
+            hetzner)
+                log_available_devices "Available Hetzner disks:" "/dev/disk/by-id/scsi-0HC_Volume_*"
+                ;;
+            digitalocean)
+                log_available_devices "Available DigitalOcean disks:" "/dev/disk/by-id/scsi-0DO_Volume_*"
+                ;;
+            azure)
+                log_available_devices "Available Azure LUN links:" "/dev/disk/azure/scsi1/lun*"
+                ;;
+        esac
         exit 1
     fi
+
+    if [[ "$(lsblk -ndo TYPE "$target_device" 2>/dev/null)" != "disk" ]]; then
+        log "SKIPPING: $target_device (volume: $vol_id) - resolved device is not a disk"
+        continue
+    fi
+
+    if lsblk -nlo MOUNTPOINT "$target_device" | grep -q '^/'; then
+        log "SKIPPING: $target_device (volume: $vol_id) - has mounted partitions (likely root or other OS volume)"
+        continue
+    fi
+
+    symlink_name=$(printf "${SYMLINK_PREFIX}%02d" "$disk_idx")
+    ln -sf "$target_device" "$symlink_name"
+    log "Created symlink: $symlink_name -> $target_device (volume: $vol_id)"
+    ((disk_idx++))
 done
 
 symlink_count=$((disk_idx - 1))
-log "Successfully created $symlink_count Exasol data volume symlinks ({% raw %}${#VOLUME_IDS[@]}{% endraw %} volumes configured, skipped mounted volumes)"
+log "Successfully created $symlink_count Exasol data volume symlinks ($VOLUME_COUNT volumes configured, skipped mounted volumes)"
 exit 0
