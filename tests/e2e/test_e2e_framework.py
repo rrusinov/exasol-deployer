@@ -49,7 +49,11 @@ class TestE2EFramework(unittest.TestCase):
         for test in plan:
             self.assertEqual(test['test_type'], '2-wise')
             self.assertIn('parameters', test)
-            self.assertEqual(len(test['parameters']), 5)
+            # Check that all expected parameters are present (framework may add additional ones like enable_spot_instances)
+            expected_params = {'param1', 'param2', 'param3', 'param4', 'param5'}
+            actual_params = set(test['parameters'].keys())
+            self.assertTrue(expected_params.issubset(actual_params), 
+                          f"Missing expected parameters. Expected at least {expected_params}, got {actual_params}")
 
     def test_1_wise_combinations(self):
         """Test 1-wise combination generation for 5 parameters with 2 values each."""
@@ -79,7 +83,11 @@ class TestE2EFramework(unittest.TestCase):
         for test in plan:
             self.assertEqual(test['test_type'], '1-wise')
             self.assertIn('parameters', test)
-            self.assertEqual(len(test['parameters']), 5)
+            # Check that all expected parameters are present
+            expected_params = {'param1', 'param2', 'param3', 'param4', 'param5'}
+            actual_params = set(test['parameters'].keys())
+            self.assertTrue(expected_params.issubset(actual_params), 
+                          f"Missing expected parameters. Expected at least {expected_params}, got {actual_params}")
 
     def test_full_combinations(self):
         """Test full combination generation for 2 parameters with 2 values each."""
@@ -106,7 +114,11 @@ class TestE2EFramework(unittest.TestCase):
         for test in plan:
             self.assertEqual(test['test_type'], 'full')
             self.assertIn('parameters', test)
-            self.assertEqual(len(test['parameters']), 2)
+            # Check that all expected parameters are present (framework may add additional ones)
+            expected_params = {'param1', 'param2'}
+            actual_params = set(test['parameters'].keys())
+            self.assertTrue(expected_params.issubset(actual_params), 
+                          f"Missing expected parameters. Expected at least {expected_params}, got {actual_params}")
 
     def test_default_combinations(self):
         """Test default full combinations when combinations not specified."""
@@ -131,6 +143,11 @@ class TestE2EFramework(unittest.TestCase):
         # Each test should have test_type 'full'
         for test in plan:
             self.assertEqual(test['test_type'], 'full')
+            # Check that all expected parameters are present
+            expected_params = {'param1', 'param2'}
+            actual_params = set(test['parameters'].keys())
+            self.assertTrue(expected_params.issubset(actual_params), 
+                          f"Missing expected parameters. Expected at least {expected_params}, got {actual_params}")
 
     def test_1_wise_with_different_value_counts(self):
         """Test 1-wise with parameters having different numbers of values."""

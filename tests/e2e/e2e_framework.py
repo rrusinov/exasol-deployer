@@ -140,8 +140,6 @@ class E2ETestFramework:
         
         return test_plan
 
-        return test_plan
-
     def _generate_2_wise_combinations(self, suite_config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Generate 2-wise parameter combinations for a test suite."""
         parameters = suite_config.get('parameters', {})
