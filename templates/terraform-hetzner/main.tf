@@ -39,6 +39,10 @@ resource "hcloud_ssh_key" "exasol_auth" {
 }
 
 locals {
+  # Provider-specific info for common outputs
+  provider_name = "Hetzner Cloud"
+  region_name = var.hetzner_location
+
   # Map architecture to Hetzner server type prefix
   # Hetzner uses different naming: cx, cpx, ccx series for x86_64, cax for arm64
   server_type_prefix = var.instance_architecture == "arm64" ? "cax" : "cpx"
@@ -50,6 +54,10 @@ locals {
       hcloud_volume.data_volume[node_idx * var.data_volumes_per_node + vol_idx].id
     ]
   }
+
+  # Node IPs for common outputs
+  node_public_ips = [for server in hcloud_server.exasol_node : server.ipv4_address]
+  node_private_ips = local.node_public_ips
 }
 
 # Get available Hetzner locations
@@ -71,7 +79,7 @@ resource "hcloud_network" "exasol_network" {
 resource "hcloud_network_subnet" "exasol_subnet" {
   network_id   = hcloud_network.exasol_network.id
   type         = "cloud"
-  network_zone = var.hetzner_network_zone
+  network_zone = "eu-central"
   ip_range     = "10.0.1.0/24"
 }
 
@@ -86,52 +94,14 @@ resource "hcloud_firewall" "exasol_cluster" {
     owner = var.owner
   }
 
-  # SSH access
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "22"
-    source_ips = [var.allowed_cidr]
-  }
-
-  # Default bucketfs
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "2581"
-    source_ips = [var.allowed_cidr]
-  }
-
-  # Exasol Admin UI
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "8443"
-    source_ips = [var.allowed_cidr]
-  }
-
-  # Exasol database connection
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "8563"
-    source_ips = [var.allowed_cidr]
-  }
-
-  # Exasol container ssh
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "20002"
-    source_ips = [var.allowed_cidr]
-  }
-
-  # Exasol confd API
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "20003"
-    source_ips = [var.allowed_cidr]
+  dynamic "rule" {
+    for_each = local.exasol_firewall_ports
+    content {
+      direction  = "in"
+      protocol   = "tcp"
+      port       = tostring(rule.key)
+      source_ips = [var.allowed_cidr]
+    }
   }
 
   # ICMP for network diagnostics
@@ -192,43 +162,7 @@ resource "hcloud_server" "exasol_node" {
   }
 
   # Cloud-init user-data to create exasol user before Ansible runs
-  user_data = <<-EOF
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    # Create exasol group
-    groupadd -f exasol
-
-    # Create exasol user with sudo privileges
-    if ! id -u exasol >/dev/null 2>&1; then
-      useradd -m -g exasol -G sudo -s /bin/bash exasol
-    fi
-
-    # Enable passwordless sudo for exasol user
-    echo "exasol ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/11-exasol-user
-    chmod 0440 /etc/sudoers.d/11-exasol-user
-
-    # Copy SSH authorized_keys from default cloud user to exasol user
-    # Hetzner uses 'root' by default for Ubuntu images
-    for user_home in /root /home/ubuntu /home/admin; do
-      if [ -d "$user_home/.ssh" ] && [ -f "$user_home/.ssh/authorized_keys" ]; then
-        mkdir -p /home/exasol/.ssh
-        cp "$user_home/.ssh/authorized_keys" /home/exasol/.ssh/
-        chown -R exasol:exasol /home/exasol/.ssh
-        chmod 700 /home/exasol/.ssh
-        chmod 600 /home/exasol/.ssh/authorized_keys
-        break
-      fi
-    done
-
-    # Ensure original cloud user also has passwordless sudo (for compatibility)
-    for cloud_user in ubuntu admin; do
-      if id -u "$cloud_user" >/dev/null 2>&1; then
-        echo "$cloud_user ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/10-$cloud_user-user"
-        chmod 0440 "/etc/sudoers.d/10-$cloud_user-user"
-      fi
-    done
-  EOF
+  user_data = local.cloud_init_script
 
   public_net {
     ipv4_enabled = true
@@ -281,15 +215,11 @@ resource "hcloud_volume_attachment" "data_attachment" {
 # OUTPUTS AND INVENTORY
 # ==============================================================================
 
-locals {
-  node_public_ips = [for instance in hcloud_server.exasol_node : instance.ipv4_address]
-  node_private_ips = [for idx in range(var.node_count) : "10.0.1.${idx + 10}"]
-}
-
 # Generate Ansible Inventory
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/inventory.tftpl", {
-    instances    = hcloud_server.exasol_node
+    public_ips   = local.node_public_ips
+    private_ips  = local.node_private_ips
     node_volumes = local.node_volumes
     ssh_key      = local_file.exasol_private_key_pem.filename
   })
@@ -300,21 +230,4 @@ resource "local_file" "ansible_inventory" {
 }
 
 # Generate SSH config
-resource "local_file" "ssh_config" {
-  content = <<-EOF
-    # Exasol Cluster SSH Config
-    %{for idx, instance in hcloud_server.exasol_node~}
-    Host n${idx + 11}
-        HostName ${instance.ipv4_address}
-        User exasol
-        IdentityFile ${local_file.exasol_private_key_pem.filename}
-        StrictHostKeyChecking no
-        UserKnownHostsFile=/dev/null
-
-    %{endfor~}
-  EOF
-  filename        = "${path.module}/ssh_config"
-  file_permission = "0644"
-
-  depends_on = [hcloud_server.exasol_node]
-}
+# SSH config is generated in common.tf

@@ -16,6 +16,23 @@ declare -A SUPPORTED_PROVIDERS=(
     [digitalocean]="DigitalOcean"
 )
 
+# Normalize checksum values (strip algorithm prefix like "sha256:")
+normalize_checksum_value() {
+    local value="${1:-}"
+
+    if [[ -z "$value" ]]; then
+        echo ""
+        return
+    fi
+
+    local normalized="${value#*:}"
+    if [[ "${value,,}" == sha256:* ]]; then
+        echo "$normalized"
+    else
+        echo "$value"
+    fi
+}
+
 # Show help for init command
 show_init_help() {
     cat <<'EOF'
@@ -380,10 +397,12 @@ cmd_init() {
 
     # First, copy common Terraform resources (SSH keys, random ID, cloud-init)
     # These go directly into .templates/ so provider templates can reference them
-    # Note: common-variables.tf and common-outputs.tf are documentation only, not copied
+    # Note: common-variables.tf is documentation only, not copied
     if [[ -d "$script_root/templates/terraform-common" ]]; then
         cp "$script_root/templates/terraform-common/common.tf" "$templates_dir/" 2>/dev/null || true
-        log_debug "Copied common Terraform resources (common.tf)"
+        cp "$script_root/templates/terraform-common/common-outputs.tf" "$templates_dir/" 2>/dev/null || true
+        cp "$script_root/templates/terraform-common/inventory.tftpl" "$templates_dir/" 2>/dev/null || true
+        log_debug "Copied common Terraform resources (common.tf, common-outputs.tf, inventory.tftpl)"
     fi
 
     # Then, copy cloud-provider-specific terraform templates
@@ -422,11 +441,16 @@ cmd_init() {
     progress_start "init" "store_credentials" "Storing deployment credentials"
     local credentials_file="$deploy_dir/.credentials.json"
 
-    # Get download URLs from version config
-    local db_url c4_url db_working_copy
+    # Get download URLs and checksums from version config
+    local db_url c4_url db_working_copy db_checksum c4_checksum
+    local raw_db_checksum raw_c4_checksum
     db_url=$(get_version_config "$db_version" "DB_DOWNLOAD_URL")
     c4_url=$(get_version_config "$db_version" "C4_DOWNLOAD_URL")
     db_working_copy=$(get_version_config "$db_version" "DB_VERSION")
+    raw_db_checksum=$(get_version_config "$db_version" "DB_CHECKSUM")
+    raw_c4_checksum=$(get_version_config "$db_version" "C4_CHECKSUM")
+    db_checksum=$(normalize_checksum_value "$raw_db_checksum")
+    c4_checksum=$(normalize_checksum_value "$raw_c4_checksum")
 
     cat > "$credentials_file" <<EOF
 {
@@ -435,6 +459,8 @@ cmd_init() {
   "db_download_url": "$db_url",
   "c4_download_url": "$c4_url",
   "db_working_copy": "$db_working_copy",
+  "db_checksum": "$db_checksum",
+  "c4_checksum": "$c4_checksum",
   "cloud_provider": "$cloud_provider",
   "created_at": "$(get_timestamp)"
 }
@@ -451,6 +477,9 @@ EOF
     # Mark initialization as complete
     progress_complete "init" "complete" "Deployment directory initialized successfully"
 
+    # Generate INFO.txt file
+    generate_info_files "$deploy_dir"
+
     log_info ""
     log_info "✅ Deployment directory initialized successfully!"
     log_info ""
@@ -459,6 +488,7 @@ EOF
     log_info "  2. Deploy with: exasol deploy --deployment-dir $deploy_dir"
     log_info ""
     log_info "Credentials saved to: $deploy_dir/.credentials.json"
+    log_info "Deployment info: $deploy_dir/INFO.txt"
 }
 
 # Write provider-specific variables
@@ -534,7 +564,7 @@ write_provider_variables() {
             write_variables_file "$deploy_dir" \
                 "hetzner_location=$hetzner_location" \
                 "hetzner_token=$hetzner_token" \
-                "server_type=$instance_type" \
+                "instance_type=$instance_type" \
                 "instance_architecture=$architecture" \
                 "node_count=$cluster_size" \
                 "data_volume_size=$data_volume_size" \
@@ -547,7 +577,7 @@ write_provider_variables() {
             write_variables_file "$deploy_dir" \
                 "digitalocean_region=$digitalocean_region" \
                 "digitalocean_token=$digitalocean_token" \
-                "droplet_size=$instance_type" \
+                "instance_type=$instance_type" \
                 "instance_architecture=$architecture" \
                 "node_count=$cluster_size" \
                 "data_volume_size=$data_volume_size" \
@@ -622,6 +652,7 @@ create_terraform_files() {
     local templates_dir="$deploy_dir/.templates"
 
     ln -sf ".templates/common.tf" "$deploy_dir/common.tf"
+    ln -sf ".templates/common-outputs.tf" "$deploy_dir/common-outputs.tf"
     ln -sf ".templates/main.tf" "$deploy_dir/main.tf"
     ln -sf ".templates/variables.tf" "$deploy_dir/variables.tf"
     ln -sf ".templates/outputs.tf" "$deploy_dir/outputs.tf"

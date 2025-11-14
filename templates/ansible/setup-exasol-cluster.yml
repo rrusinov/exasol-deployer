@@ -309,11 +309,13 @@
           failed_when: c4_stat.stat.checksum != deployment_config.c4_checksum
 
         - name: Display checksum verification status
+          vars:
+            db_checksum_available: "{{ (deployment_config.db_checksum | default('', true)) | length > 0 }}"
+            c4_checksum_available: "{{ (deployment_config.c4_checksum | default('', true)) | length > 0 }}"
           ansible.builtin.debug:
-            msg: |
-              Checksum verification:
-              - DB tarball: {{ 'VERIFIED' if (deployment_config.db_checksum is defined and deployment_config.db_checksum != '') else 'SKIPPED (no checksum provided)' }}
-              - C4 binary: {{ 'VERIFIED' if (deployment_config.c4_checksum is defined and deployment_config.c4_checksum != '') else 'SKIPPED (no checksum provided)' }}
+            msg:
+              - "{{ 'OK db_tarball_checksum' if db_checksum_available else 'SKIPPED db_tarball_checksum: no checksum provided' }}"
+              - "{{ 'OK c4_binary_checksum' if c4_checksum_available else 'SKIPPED c4_binary_checksum: no checksum provided' }}"
 
         - name: Rename c4 binary to 'c4' for convenience
           ansible.builtin.command:
@@ -387,13 +389,8 @@
 
         - name: Display deployment completion message
           ansible.builtin.debug:
-            msg: |
-              ========================================
-              Exasol cluster deployment completed!
-              ========================================
-              To access the database container:
-                ssh cos
-
-              Database credentials:
-                Admin Password: {{ exa_admin_password }}
-                DB Password: {{ exa_db_password }}
+            msg:
+              - "========================================"
+              - "Exasol cluster deployment completed!"
+              - "========================================"
+              - "Review connection details in INFO.txt or run 'exasol status --show-details' within the deployment directory."

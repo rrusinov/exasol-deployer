@@ -1,3 +1,4 @@
-references/*
+AGENTS.md
 tmp*
 .cloude*
+.venv

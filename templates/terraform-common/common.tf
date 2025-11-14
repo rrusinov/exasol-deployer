@@ -35,6 +35,16 @@ resource "local_file" "exasol_private_key_pem" {
 # ==============================================================================
 
 locals {
+  # Common firewall ports for Exasol cluster
+  exasol_firewall_ports = {
+    22    = "SSH access"
+    2581  = "Default bucketfs"
+    8443  = "Exasol Admin UI"
+    8563  = "Default Exasol database connection"
+    20002 = "Exasol container ssh"
+    20003 = "Exasol confd API"
+  }
+
   # Standard cloud-init script for creating exasol user
   # Works across all Linux distributions (Ubuntu, Debian, RHEL, Amazon Linux, etc.)
   cloud_init_script = <<-EOF
@@ -74,6 +84,38 @@ locals {
       fi
     done
   EOF
+}
+
+# ==============================================================================
+# SSH Config Generation (Common across all providers)
+# Each provider must set local.node_public_ips for this to work
+# ==============================================================================
+
+resource "local_file" "ssh_config" {
+  content = <<-EOF
+    # Exasol Cluster SSH Config
+    %{for idx, ip in local.node_public_ips~}
+    Host n${idx + 11}
+        HostName ${ip}
+        User exasol
+        IdentityFile ${local_file.exasol_private_key_pem.filename}
+        StrictHostKeyChecking no
+        UserKnownHostsFile=/dev/null
+
+    Host n${idx + 11}-cos
+        HostName ${ip}
+        User root
+        Port 20002
+        IdentityFile ${local_file.exasol_private_key_pem.filename}
+        StrictHostKeyChecking no
+        UserKnownHostsFile=/dev/null
+
+    %{endfor~}
+  EOF
+  filename        = "${path.module}/ssh_config"
+  file_permission = "0644"
+
+  # Each provider must ensure this depends on their instances being created
 }
 
 # ==============================================================================

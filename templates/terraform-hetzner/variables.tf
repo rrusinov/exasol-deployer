@@ -6,7 +6,7 @@ variable "hetzner_token" {
 }
 
 variable "hetzner_location" {
-  description = "The Hetzner Cloud location to deploy the cluster in (e.g., 'nbg1', 'fsn1', 'hel1')."
+  description = "The Hetzner Cloud location (e.g., 'nbg1', 'fsn1', 'hel1')."
   type        = string
   # Value will be set in variables.auto.tfvars during initialization
 }

@@ -86,7 +86,7 @@ cmd_deploy() {
     trap 'lock_remove "$_EXASOL_TRAP_DEPLOY_DIR"' EXIT INT TERM
 
     # Update status
-    state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_IN_PROGRESS"
+    state_set_status "$deploy_dir" "$STATE_DEPLOY_IN_PROGRESS"
 
     progress_start "deploy" "begin" "Starting Exasol deployment"
 
@@ -137,6 +137,16 @@ cmd_deploy() {
     sleep 60
     progress_complete "deploy" "wait_instances" "Instances ready"
 
+    # Show deployment summary before Ansible configuration
+    if tofu output summary >/dev/null 2>&1; then
+        log_info ""
+        log_info "🚀 Deployment Summary (Infrastructure Ready):"
+        tofu output summary
+        log_info ""
+        log_info "📋 Next: Configuring cluster with Ansible..."
+        log_info ""
+    fi
+
     # Check if Ansible playbook exists
     if [[ ! -f "$deploy_dir/.templates/setup-exasol-cluster.yml" ]]; then
         log_warn "Ansible playbook not found, skipping configuration"
@@ -175,13 +185,7 @@ cmd_deploy() {
     # Display results
     progress_complete "deploy" "complete" "Deployment completed successfully"
 
-    # Show outputs if available
-    if tofu output -json > /dev/null 2>&1; then
-        log_info ""
-        log_info "Deployment information:"
-        tofu output -json | jq -r 'to_entries[] | "  \(.key): \(.value.value)"'
-    fi
-
     log_info ""
-    log_info "Credentials are stored in: $deploy_dir/.credentials.json"
+    log_info "✅ Exasol Cluster Deployment Complete!"
+    log_info "Check $deploy_dir/INFO.txt for commands or run 'exasol status --show-details' for deployment details."
 }

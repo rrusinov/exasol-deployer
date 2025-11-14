@@ -1,6 +1,6 @@
 [exasol_nodes]
-%{~ for idx, node in nodes }
-n${idx + 11} ansible_host=${node.public_ip} ansible_user=exasol private_ip=${node.private_ip} data_volume_ids='${jsonencode(node.volume_ids)}'
+%{~ for idx, ip in public_ips }
+n${idx + 11} ansible_host=${ip} ansible_user=exasol private_ip=${private_ips[idx]} data_volume_ids='${jsonencode(node_volumes[idx])}'
 %{~ endfor }
 
 [exasol_nodes:vars]

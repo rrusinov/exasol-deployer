@@ -78,9 +78,9 @@ test_state_set_status() {
     local test_dir=$(setup_test_dir)
     state_init "$test_dir" "exasol-2025.1.4" "x86_64"
 
-    state_set_status "$test_dir" "deployment_in_progress"
+    state_set_status "$test_dir" "deploy_in_progress"
     local status=$(state_read "$test_dir" "status")
-    assert_equals "deployment_in_progress" "$status" "Should update status"
+    assert_equals "deploy_in_progress" "$status" "Should update status"
 
     state_set_status "$test_dir" "database_ready"
     status=$(state_read "$test_dir" "status")
@@ -138,6 +138,45 @@ test_lock_operations() {
     cleanup_test_dir "$test_dir"
 }
 
+test_stale_lock_cleanup() {
+    echo ""
+    echo "Test: stale lock cleanup"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+    state_init "$test_dir" "exasol-2025.1.4" "x86_64"
+    state_set_status "$test_dir" "database_ready"
+
+    local pid_max
+    pid_max=$(cat /proc/sys/kernel/pid_max 2>/dev/null || echo 4194304)
+    local fake_pid=$((pid_max + 1000))
+
+    cat > "$test_dir/.exasolLock.json" <<EOF
+{
+  "operation": "deploy",
+  "pid": $fake_pid,
+  "started_at": "$(get_timestamp)",
+  "hostname": "test-host"
+}
+EOF
+
+    local status
+    status=$(get_deployment_status "$test_dir")
+    assert_equals "database_ready" "$status" "Should ignore stale lock and return actual status"
+
+    if ! lock_exists "$test_dir"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Should remove stale lock file"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should remove stale lock file"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
 # Test write_variables_file
 test_write_variables_file() {
     echo ""
@@ -160,12 +199,77 @@ test_write_variables_file() {
     cleanup_test_dir "$test_dir"
 }
 
+# Test status constant consistency
+test_status_constant_consistency() {
+    echo ""
+    echo "Test: status constant consistency"
+
+    # Test that all status constants follow naming conventions
+    assert_equals "initialized" "$STATE_INITIALIZED" "STATE_INITIALIZED should be 'initialized'"
+    assert_equals "deploy_in_progress" "$STATE_DEPLOY_IN_PROGRESS" "STATE_DEPLOY_IN_PROGRESS should be 'deploy_in_progress'"
+    assert_equals "deployment_failed" "$STATE_DEPLOYMENT_FAILED" "STATE_DEPLOYMENT_FAILED should be 'deployment_failed'"
+    assert_equals "database_connection_failed" "$STATE_DATABASE_CONNECTION_FAILED" "STATE_DATABASE_CONNECTION_FAILED should be 'database_connection_failed'"
+    assert_equals "database_ready" "$STATE_DATABASE_READY" "STATE_DATABASE_READY should be 'database_ready'"
+    assert_equals "destroy_in_progress" "$STATE_DESTROY_IN_PROGRESS" "STATE_DESTROY_IN_PROGRESS should be 'destroy_in_progress'"
+    assert_equals "destroy_failed" "$STATE_DESTROY_FAILED" "STATE_DESTROY_FAILED should be 'destroy_failed'"
+    assert_equals "destroyed" "$STATE_DESTROYED" "STATE_DESTROYED should be 'destroyed'"
+
+    # Test that in_progress status values follow ${command}_in_progress pattern
+    assert_contains "$STATE_DEPLOY_IN_PROGRESS" "_in_progress" "Deploy in-progress status should contain '_in_progress'"
+    assert_contains "$STATE_DESTROY_IN_PROGRESS" "_in_progress" "Destroy in-progress status should contain '_in_progress'"
+
+    # Test that in_progress status values start with command name
+    local deploy_prefix="${STATE_DEPLOY_IN_PROGRESS%_in_progress}"
+    local destroy_prefix="${STATE_DESTROY_IN_PROGRESS%_in_progress}"
+    assert_equals "deploy" "$deploy_prefix" "Deploy in-progress status should start with 'deploy'"
+    assert_equals "destroy" "$destroy_prefix" "Destroy in-progress status should start with 'destroy'"
+}
+
+# Test status command integration consistency
+test_status_command_integration() {
+    echo ""
+    echo "Test: status command integration consistency"
+
+    local test_dir=$(setup_test_dir)
+    state_init "$test_dir" "exasol-2025.1.4" "x86_64"
+
+    # Test that get_deployment_status returns expected values
+    local status=$(get_deployment_status "$test_dir")
+    assert_equals "initialized" "$status" "get_deployment_status should return 'initialized' for new deployment"
+
+    # Test with lock file (simulating in-progress operation)
+    lock_create "$test_dir" "deploy"
+    status=$(get_deployment_status "$test_dir")
+    assert_equals "deploy_in_progress" "$status" "get_deployment_status should return 'deploy_in_progress' with deploy lock"
+
+    lock_remove "$test_dir"
+    lock_create "$test_dir" "destroy"
+    status=$(get_deployment_status "$test_dir")
+    assert_equals "destroy_in_progress" "$status" "get_deployment_status should return 'destroy_in_progress' with destroy lock"
+
+    lock_remove "$test_dir"
+
+    # Test that status matches constants when set directly
+    state_set_status "$test_dir" "$STATE_DEPLOY_IN_PROGRESS"
+    status=$(get_deployment_status "$test_dir")
+    assert_equals "$STATE_DEPLOY_IN_PROGRESS" "$status" "Direct status setting should match constant"
+
+    state_set_status "$test_dir" "$STATE_DESTROY_IN_PROGRESS"
+    status=$(get_deployment_status "$test_dir")
+    assert_equals "$STATE_DESTROY_IN_PROGRESS" "$status" "Direct status setting should match constant"
+
+    cleanup_test_dir "$test_dir"
+}
+
 # Run all tests
 test_state_init
 test_is_deployment_directory
 test_state_set_status
 test_lock_operations
+test_stale_lock_cleanup
 test_write_variables_file
+test_status_constant_consistency
+test_status_command_integration
 
 # Show summary
 test_summary

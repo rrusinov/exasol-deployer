@@ -25,6 +25,9 @@ Before using this deployer, ensure you have the following installed:
 - **bash** (>= 4.0)
 - **Cloud provider credentials** configured (see [Cloud Setup Guide](docs/CLOUD_SETUP.md))
 
+**For Development/Testing Only:**
+- **Python 3.6+** (required only for running unit tests in `tests/` directory)
+
 **Note:** Cloud provider CLI tools (aws, az, gcloud) are **not required** for deployment. OpenTofu reads credentials from standard configuration files or environment variables.
 
 ### Installation on macOS
@@ -326,10 +329,13 @@ Get the current status of a deployment in JSON format.
 
 **Status Values:**
 - `initialized`: Deployment directory created, ready to deploy
-- `deployment_in_progress`: Deployment is currently running
+- `deploy_in_progress`: Deployment is currently running
 - `deployment_failed`: Deployment failed (check logs)
 - `database_connection_failed`: Infrastructure deployed but database connection failed
 - `database_ready`: Deployment complete and database is ready
+- `destroy_in_progress`: Destroy operation is currently running
+- `destroy_failed`: Destroy operation failed (check logs)
+- `destroyed`: All resources have been destroyed successfully
 
 ### `destroy`
 

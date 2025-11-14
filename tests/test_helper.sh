@@ -169,45 +169,15 @@ mock_command() {
 extract_command_options() {
     local file="$1"
     local function_name="$2"
-
-    python3 - "$file" "$function_name" <<'PY' || return 1
-import re
-import sys
-
-path, func = sys.argv[1], sys.argv[2]
-with open(path, "r", encoding="utf-8") as f:
-    data = f.read()
-
-func_pattern = re.compile(rf'{re.escape(func)}\s*\(\)\s*{{', re.MULTILINE)
-match = func_pattern.search(data)
-if not match:
-    sys.stderr.write(f"Function {func} not found in {path}\n")
-    sys.exit(1)
-
-idx = match.end()
-brace_depth = 1
-while idx < len(data) and brace_depth > 0:
-    char = data[idx]
-    if char == "{":
-        brace_depth += 1
-    elif char == "}":
-        brace_depth -= 1
-    idx += 1
-
-body = data[match.end():idx - 1]
-options = set()
-
-case_found = False
-for case_match in re.finditer(r'case\s+"?\$1"?\s+in(.*?)esac', body, re.DOTALL):
-    case_found = True
-    for opt in re.findall(r'--[a-z0-9-]+', case_match.group(1)):
-        options.add(opt)
-
-if not case_found:
-    for opt in re.findall(r'--[a-z0-9-]+', body):
-        options.add(opt)
-
-for opt in sorted(options):
-    print(opt)
-PY
+    
+    # Get the directory where this script is located
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    local python_helper="$script_dir/lib/python/extract_function_options.py"
+    
+    if [[ ! -f "$python_helper" ]]; then
+        echo "Error: Python helper not found: $python_helper" >&2
+        return 1
+    fi
+    
+    python3 "$python_helper" "$file" "$function_name"
 }

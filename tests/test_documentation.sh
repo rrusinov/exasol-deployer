@@ -18,43 +18,17 @@ echo "========================"
 # Extract the list of init flags documented in the README (between **Flags:** and **Configuration Flow**)
 extract_readme_init_flags() {
     local readme_path="$1"
-
-    python3 - "$readme_path" <<'PY' || return 1
-import re
-import sys
-
-path = sys.argv[1]
-with open(path, "r", encoding="utf-8") as f:
-    text = f.read()
-
-section_match = re.search(r'### `init`(.*?)### `deploy`', text, re.DOTALL)
-if not section_match:
-    sys.stderr.write("Could not locate init section in README\n")
-    sys.exit(1)
-
-section = section_match.group(1)
-flags_anchor = section.find("**Flags:**")
-if flags_anchor == -1:
-    sys.stderr.write("Could not locate **Flags:** block in README init section\n")
-    sys.exit(1)
-
-config_anchor = section.find("**Configuration Flow")
-if config_anchor == -1:
-    config_anchor = len(section)
-
-flags_block = section[flags_anchor:config_anchor]
-flags = set()
-for snippet in re.findall(r'`([^`]+)`', flags_block):
-    for flag in re.findall(r'--[a-z0-9-]+', snippet, re.IGNORECASE):
-        flags.add(flag.lower())
-flags = sorted(flags)
-if not flags:
-    sys.stderr.write("No flags extracted from README init section\n")
-    sys.exit(1)
-
-for flag in flags:
-    print(flag)
-PY
+    
+    # Get the directory where this script is located
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    local python_helper="$script_dir/lib/python/extract_readme_flags.py"
+    
+    if [[ ! -f "$python_helper" ]]; then
+        echo "Error: Python helper not found: $python_helper" >&2
+        return 1
+    fi
+    
+    python3 "$python_helper" "$readme_path" "init"
 }
 
 test_cloud_provider_docs_linked() {
