@@ -329,7 +329,7 @@ Get the current status of a deployment in JSON format.
 
 **Status Values:**
 - `initialized`: Deployment directory created, ready to deploy
-- `deployment_in_progress`: Deployment is currently running
+- `deploy_in_progress`: Deployment is currently running
 - `deployment_failed`: Deployment failed (check logs)
 - `database_connection_failed`: Infrastructure deployed but database connection failed
 - `database_ready`: Deployment complete and database is ready

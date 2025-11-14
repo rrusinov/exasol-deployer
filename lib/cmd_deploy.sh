@@ -86,7 +86,7 @@ cmd_deploy() {
     trap 'lock_remove "$_EXASOL_TRAP_DEPLOY_DIR"' EXIT INT TERM
 
     # Update status
-    state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_IN_PROGRESS"
+    state_set_status "$deploy_dir" "$STATE_DEPLOY_IN_PROGRESS"
 
     progress_start "deploy" "begin" "Starting Exasol deployment"
 

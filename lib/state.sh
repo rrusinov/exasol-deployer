@@ -18,7 +18,7 @@ readonly VARS_FILE="variables.auto.tfvars"
 
 # Deployment states
 readonly STATE_INITIALIZED="initialized"
-readonly STATE_DEPLOYMENT_IN_PROGRESS="deployment_in_progress"
+readonly STATE_DEPLOY_IN_PROGRESS="deploy_in_progress"
 readonly STATE_DEPLOYMENT_FAILED="deployment_failed"
 readonly STATE_DATABASE_CONNECTION_FAILED="database_connection_failed"
 readonly STATE_DATABASE_READY="database_ready"
@@ -27,7 +27,7 @@ readonly STATE_DESTROY_FAILED="destroy_failed"
 readonly STATE_DESTROYED="destroyed"
 
 # Export state constants for use in other scripts
-export STATE_INITIALIZED STATE_DEPLOYMENT_IN_PROGRESS STATE_DEPLOYMENT_FAILED \
+export STATE_INITIALIZED STATE_DEPLOY_IN_PROGRESS STATE_DEPLOYMENT_FAILED \
        STATE_DATABASE_CONNECTION_FAILED STATE_DATABASE_READY STATE_DESTROY_IN_PROGRESS \
        STATE_DESTROY_FAILED STATE_DESTROYED
 

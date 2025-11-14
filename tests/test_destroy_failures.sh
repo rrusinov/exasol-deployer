@@ -88,6 +88,53 @@ test_destroy_no_terraform_state() {
     assert_equals "destroyed" "$STATE_DESTROYED" "STATE_DESTROYED should be defined"
 }
 
+test_status_constant_cross_references() {
+    echo ""
+    echo "Test: status constant cross-references"
+
+    # Test that deploy constants are used in cmd_deploy.sh
+    if grep -q "STATE_DEPLOY_IN_PROGRESS" "$LIB_DIR/cmd_deploy.sh"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} STATE_DEPLOY_IN_PROGRESS is used in cmd_deploy.sh"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} STATE_DEPLOY_IN_PROGRESS is not used in cmd_deploy.sh"
+    fi
+
+    # Test that destroy constants are used in cmd_destroy.sh
+    if grep -q "STATE_DESTROY_IN_PROGRESS" "$LIB_DIR/cmd_destroy.sh"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} STATE_DESTROY_IN_PROGRESS is used in cmd_destroy.sh"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} STATE_DESTROY_IN_PROGRESS is not used in cmd_destroy.sh"
+    fi
+
+    if grep -q "STATE_DESTROY_FAILED" "$LIB_DIR/cmd_destroy.sh"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} STATE_DESTROY_FAILED is used in cmd_destroy.sh"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} STATE_DESTROY_FAILED is not used in cmd_destroy.sh"
+    fi
+
+    if grep -q "STATE_DESTROYED" "$LIB_DIR/cmd_destroy.sh"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} STATE_DESTROYED is used in cmd_destroy.sh"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} STATE_DESTROYED is not used in cmd_destroy.sh"
+    fi
+}
+
 cleanup_mock_env() {
     # No-op function for compatibility
     true
@@ -98,6 +145,7 @@ run_tests() {
     test_tofu_destroy_failure_updates_status
     test_destroy_success_updates_status
     test_destroy_no_terraform_state
+    test_status_constant_cross_references
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
