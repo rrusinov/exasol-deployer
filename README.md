@@ -182,6 +182,8 @@ Get API token from provider console and use with `--hetzner-token` or `--digital
   --digitalocean-token <your-api-token>
 ```
 
+DigitalOcean currently provides only x86_64 droplets, so arm64 database versions are rejected during initialization for this provider.
+
 The init command will:
 - Create the deployment directory structure
 - Generate dynamic Terraform variables based on your parameters and database version

@@ -122,6 +122,8 @@ Single-node deployment with defaults:
 
 **Warning**: Never commit the token to version control. Use environment variables.
 
+**Architecture note**: DigitalOcean currently offers only x86_64 droplets. `exasol init` will reject `--db-version` values that target arm64 when `--cloud-provider digitalocean` is used.
+
 ### Production Deployment
 
 Multi-node cluster with specific configuration:

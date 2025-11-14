@@ -323,6 +323,10 @@ cmd_init() {
     local architecture
     architecture=$(get_version_config "$db_version" "ARCHITECTURE")
 
+    if [[ "$cloud_provider" == "digitalocean" && "$architecture" == "arm64" ]]; then
+        die "DigitalOcean deployments currently support only x86_64 database versions. Please select an x86_64 build instead of $db_version."
+    fi
+
     # Set default instance type if not provided
     if [[ -z "$instance_type" ]]; then
         instance_type=$(get_version_config "$db_version" "DEFAULT_INSTANCE_TYPE")

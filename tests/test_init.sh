@@ -375,6 +375,51 @@ test_digitalocean_initialization() {
     cleanup_test_dir "$test_dir"
 }
 
+test_digitalocean_arm64_guard() {
+    echo ""
+    echo "Test: DigitalOcean rejects arm64 architectures"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+    local versions_override="$test_dir/versions.conf"
+
+    cat > "$versions_override" <<'EOF'
+[exasol-2099.1.1-arm64]
+ARCHITECTURE=arm64
+DB_VERSION=@exasol-2099.1.1~linux-arm64
+DB_DOWNLOAD_URL=https://example.com/exasol-2099.1.1-arm64.tar.gz
+DB_CHECKSUM=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+C4_VERSION=4.28.4
+C4_DOWNLOAD_URL=https://example.com/c4-arm64
+C4_CHECKSUM=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+DEFAULT_INSTANCE_TYPE=c-2
+
+[default]
+VERSION=exasol-2099.1.1-arm64
+EOF
+
+    local previous_versions_config="${EXASOL_VERSIONS_CONFIG:-}"
+    EXASOL_VERSIONS_CONFIG="$versions_override"
+
+    local output
+    output=$(cmd_init \
+        --cloud-provider digitalocean \
+        --deployment-dir "$test_dir" \
+        --db-version exasol-2099.1.1-arm64 2>&1)
+    local exit_code=$?
+
+    if [[ -n "$previous_versions_config" ]]; then
+        EXASOL_VERSIONS_CONFIG="$previous_versions_config"
+    else
+        unset EXASOL_VERSIONS_CONFIG
+    fi
+
+    assert_failure "$exit_code" "DigitalOcean arm64 init should fail"
+    assert_contains "$output" "support only x86_64" "Error should mention architecture limitation"
+
+    cleanup_test_dir "$test_dir"
+}
+
 # Run all tests
 test_cloud_provider_validation
 test_valid_cloud_providers
@@ -386,6 +431,7 @@ test_data_volumes_per_node
 test_root_volume_size
 test_hetzner_initialization
 test_digitalocean_initialization
+test_digitalocean_arm64_guard
 
 # Show summary
 test_summary
