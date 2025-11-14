@@ -103,9 +103,9 @@ data "google_compute_image" "ubuntu" {
 
 locals {
   # Provider-specific info for common outputs
-  provider_name = "GCP"
-  provider_code = "gcp"
-  region_name = var.gcp_region
+  provider_name     = "GCP"
+  provider_code     = "gcp"
+  region_name       = var.gcp_region
   selected_gcp_zone = length(trimspace(var.gcp_zone)) > 0 ? trimspace(var.gcp_zone) : "${var.gcp_region}-a"
 
   # SSH keys metadata
@@ -120,7 +120,7 @@ locals {
   }
 
   # Node IPs for common outputs
-  node_public_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].access_config[0].nat_ip]
+  node_public_ips  = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].access_config[0].nat_ip]
   node_private_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].network_ip]
 }
 
@@ -136,8 +136,8 @@ resource "google_compute_instance" "exasol_node" {
 
   # Spot (preemptible) instance configuration
   scheduling {
-    preemptible       = var.enable_spot_instances
-    automatic_restart = !var.enable_spot_instances
+    preemptible         = var.enable_spot_instances
+    automatic_restart   = !var.enable_spot_instances
     on_host_maintenance = var.enable_spot_instances ? "TERMINATE" : "MIGRATE"
   }
 
@@ -205,22 +205,5 @@ resource "google_compute_attached_disk" "data_attachment" {
 # Generate Ansible Inventory
 # ==============================================================================
 
-resource "local_file" "ansible_inventory" {
-  content = templatefile("${path.module}/inventory.tftpl", {
-    public_ips   = local.node_public_ips
-    private_ips  = local.node_private_ips
-    node_volumes = local.node_volumes
-    cloud_provider = local.provider_code
-    ssh_key      = local_file.exasol_private_key_pem.filename
-  })
-  filename        = "${path.module}/inventory.ini"
-  file_permission = "0644"
-
-  depends_on = [google_compute_instance.exasol_node, google_compute_attached_disk.data_attachment]
-}
-
-# ==============================================================================
-# Generate SSH Config
-# ==============================================================================
-
+# Ansible inventory is generated in common.tf
 # SSH config is generated in common.tf

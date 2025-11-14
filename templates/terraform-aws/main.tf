@@ -45,7 +45,7 @@ locals {
   # Provider-specific info for common outputs
   provider_name = "AWS"
   provider_code = "aws"
-  region_name = var.aws_region
+  region_name   = var.aws_region
 
   # Map architecture variable to string used in AMI name filter.
   # AWS and Ubuntu AMIs often use 'amd64' in the name for 'x86_64' architecture.
@@ -61,7 +61,7 @@ locals {
   }
 
   # Node public IPs for common outputs
-  node_public_ips = [for instance in aws_instance.exasol_node : instance.public_ip]
+  node_public_ips  = [for instance in aws_instance.exasol_node : instance.public_ip]
   node_private_ips = [for instance in aws_instance.exasol_node : instance.private_ip]
 }
 
@@ -150,18 +150,18 @@ resource "aws_security_group" "exasol_cluster" {
   description = "Security group for Exasol cluster"
   vpc_id      = aws_vpc.exasol_vpc.id
 
-   # External access rules - dynamically created for each port
-   dynamic "ingress" {
-     for_each = local.exasol_firewall_ports
+  # External access rules - dynamically created for each port
+  dynamic "ingress" {
+    for_each = local.exasol_firewall_ports
 
-     content {
-       from_port   = ingress.key
-       to_port     = ingress.key
-       protocol    = "tcp"
-       cidr_blocks = [var.allowed_cidr]
-       description = ingress.value
-     }
-   }
+    content {
+      from_port   = ingress.key
+      to_port     = ingress.key
+      protocol    = "tcp"
+      cidr_blocks = [var.allowed_cidr]
+      description = ingress.value
+    }
+  }
 
   # ICMP for network diagnostics
   ingress {
@@ -294,19 +294,5 @@ resource "aws_volume_attachment" "data_attachment" {
   instance_id = aws_instance.exasol_node[floor(count.index / var.data_volumes_per_node)].id
 }
 
-# Generate Ansible Inventory
-resource "local_file" "ansible_inventory" {
-  content = templatefile("${path.module}/inventory.tftpl", {
-    public_ips   = local.node_public_ips
-    private_ips  = local.node_private_ips
-    node_volumes = local.node_volumes
-    cloud_provider = local.provider_code
-    ssh_key      = local_file.exasol_private_key_pem.filename
-  })
-  filename = "${path.module}/inventory.ini"
-  file_permission = "0644"
-
-  depends_on = [aws_instance.exasol_node, aws_volume_attachment.data_attachment]
-}
-
+# Ansible inventory is generated in common.tf
 # SSH config is generated in common.tf

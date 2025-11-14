@@ -251,7 +251,7 @@ locals {
   # Provider-specific info for common outputs
   provider_name = "Azure"
   provider_code = "azure"
-  region_name = var.azure_region
+  region_name   = var.azure_region
 
   # Azure firewall rules with priorities
   azure_firewall_rules = {
@@ -272,24 +272,11 @@ locals {
   }
 
   # Node IPs for common outputs
-  node_public_ips = azurerm_public_ip.exasol_node[*].ip_address
+  node_public_ips  = azurerm_public_ip.exasol_node[*].ip_address
   node_private_ips = azurerm_network_interface.exasol_node[*].private_ip_address
 }
 
 # ==============================================================================
 # Generate Ansible Inventory
-resource "local_file" "ansible_inventory" {
-  content = templatefile("${path.module}/inventory.tftpl", {
-    public_ips   = local.node_public_ips
-    private_ips  = local.node_private_ips
-    node_volumes = local.node_volumes
-    cloud_provider = local.provider_code
-    ssh_key      = local_file.exasol_private_key_pem.filename
-  })
-  filename        = "${path.module}/inventory.ini"
-  file_permission = "0644"
-
-  depends_on = [azurerm_linux_virtual_machine.exasol_node, azurerm_virtual_machine_data_disk_attachment.data_attachment]
-}
-
+# Ansible inventory is generated in common.tf
 # SSH config is generated in common.tf

@@ -92,7 +92,7 @@ locals {
 # ==============================================================================
 
 resource "local_file" "ssh_config" {
-  content = <<-EOF
+  content         = <<-EOF
     # Exasol Cluster SSH Config
     %{for idx, ip in local.node_public_ips~}
     Host n${idx + 11}
@@ -116,6 +116,25 @@ resource "local_file" "ssh_config" {
   file_permission = "0644"
 
   # Each provider must ensure this depends on their instances being created
+}
+
+# ==============================================================================
+# Ansible Inventory Generation (Common across all providers)
+# Each provider must set locals: node_public_ips, node_private_ips, node_volumes, provider_code
+# ==============================================================================
+
+resource "local_file" "ansible_inventory" {
+  content = templatefile("${path.module}/inventory.tftpl", {
+    public_ips     = local.node_public_ips
+    private_ips    = local.node_private_ips
+    node_volumes   = local.node_volumes
+    cloud_provider = local.provider_code
+    ssh_key        = local_file.exasol_private_key_pem.filename
+  })
+  filename        = "${path.module}/inventory.ini"
+  file_permission = "0644"
+
+  # Each provider must ensure this depends on their instances and volume attachments being created
 }
 
 # ==============================================================================
