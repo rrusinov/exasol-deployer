@@ -198,6 +198,8 @@ Select a region close to your users for lower latency.
 
 Full list: https://cloud.google.com/compute/docs/regions-zones
 
+Use the `--gcp-zone` flag during `exasol init` to target a specific zone (for example, `--gcp-zone europe-west3-b`). If you omit the flag, the deployer defaults to `<region>-a`.
+
 ### Check Machine Type Availability
 
 ```bash

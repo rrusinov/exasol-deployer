@@ -72,6 +72,7 @@ Azure-Specific Flags:
 
 GCP-Specific Flags:
   --gcp-region <region>          GCP region (default: "us-central1")
+  --gcp-zone <zone>              GCP zone (default: "<region>-a")
   --gcp-project <project>        GCP project ID
   --gcp-spot-instance            Enable spot (preemptible) instances
 
@@ -131,6 +132,7 @@ cmd_init() {
 
     # GCP-specific variables
     local gcp_region="us-central1"
+    local gcp_zone=""
     local gcp_project=""
     local gcp_spot_instance=false
 
@@ -226,6 +228,10 @@ cmd_init() {
             # GCP-specific options
             --gcp-region)
                 gcp_region="$2"
+                shift 2
+                ;;
+            --gcp-zone)
+                gcp_zone="$2"
                 shift 2
                 ;;
             --gcp-project)
@@ -428,12 +434,17 @@ cmd_init() {
     progress_complete "init" "copy_templates" "Templates copied successfully"
 
     # Write variables file based on cloud provider
+    if [[ -z "$gcp_zone" ]]; then
+        gcp_zone="${gcp_region}-a"
+        log_info "Using default GCP zone: $gcp_zone"
+    fi
+
     progress_start "init" "generate_variables" "Creating Terraform variables file"
     log_info "Creating variables file..."
     write_provider_variables "$deploy_dir" "$cloud_provider" \
         "$aws_region" "$aws_profile" "$aws_spot_instance" \
         "$azure_region" "$azure_subscription" "$azure_spot_instance" \
-        "$gcp_region" "$gcp_project" "$gcp_spot_instance" \
+        "$gcp_region" "$gcp_zone" "$gcp_project" "$gcp_spot_instance" \
         "$hetzner_location" "$hetzner_token" \
         "$digitalocean_region" "$digitalocean_token" \
         "$instance_type" "$architecture" "$cluster_size" \
@@ -506,20 +517,21 @@ write_provider_variables() {
     local azure_subscription="$7"
     local azure_spot_instance="$8"
     local gcp_region="$9"
-    local gcp_project="${10}"
-    local gcp_spot_instance="${11}"
-    local hetzner_location="${12}"
-    local hetzner_token="${13}"
-    local digitalocean_region="${14}"
-    local digitalocean_token="${15}"
-    local instance_type="${16}"
-    local architecture="${17}"
-    local cluster_size="${18}"
-    local data_volume_size="${19}"
-    local data_volumes_per_node="${20}"
-    local root_volume_size="${21}"
-    local allowed_cidr="${22}"
-    local owner="${23}"
+    local gcp_zone="${10}"
+    local gcp_project="${11}"
+    local gcp_spot_instance="${12}"
+    local hetzner_location="${13}"
+    local hetzner_token="${14}"
+    local digitalocean_region="${15}"
+    local digitalocean_token="${16}"
+    local instance_type="${17}"
+    local architecture="${18}"
+    local cluster_size="${19}"
+    local data_volume_size="${20}"
+    local data_volumes_per_node="${21}"
+    local root_volume_size="${22}"
+    local allowed_cidr="${23}"
+    local owner="${24}"
 
     case "$cloud_provider" in
         aws)
@@ -553,6 +565,7 @@ write_provider_variables() {
         gcp)
             write_variables_file "$deploy_dir" \
                 "gcp_region=$gcp_region" \
+                "gcp_zone=$gcp_zone" \
                 "gcp_project=$gcp_project" \
                 "instance_type=$instance_type" \
                 "instance_architecture=$architecture" \

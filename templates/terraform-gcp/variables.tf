@@ -10,6 +10,12 @@ variable "gcp_region" {
   # Value will be set in variables.auto.tfvars during initialization
 }
 
+variable "gcp_zone" {
+  description = "The GCP zone to deploy the cluster in. Defaults to <region>-a if left empty."
+  type        = string
+  default     = ""
+}
+
 variable "instance_type" {
   description = "The GCP machine type for the cluster nodes."
   type        = string

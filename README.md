@@ -162,6 +162,8 @@ Get API token from provider console and use with `--hetzner-token` or `--digital
   --gcp-spot-instance
 ```
 
+Use `--gcp-zone` to pick a specific zone when the default (`<region>-a`) is not available for your instance type or quota setup.
+
 #### Hetzner Cloud Deployment
 
 ```bash
@@ -295,6 +297,7 @@ Initialize a new deployment directory with configuration files.
 
 **GCP-Specific Flags**
 - `--gcp-region string`: GCP region (default: `us-central1`).
+- `--gcp-zone string`: GCP zone (default: `<region>-a`).
 - `--gcp-project string`: GCP project ID.
 - `--gcp-spot-instance`: Enable GCP spot (preemptible) instances.
 

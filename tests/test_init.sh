@@ -443,6 +443,50 @@ test_hetzner_private_ip_template() {
     fi
 }
 
+# Test: GCP zone configuration
+test_gcp_zone_configuration() {
+    echo ""
+    echo "Test: GCP zone configuration"
+
+    local default_dir
+    default_dir=$(setup_test_dir)
+
+    cmd_init --cloud-provider gcp --deployment-dir "$default_dir" 2>/dev/null
+
+    if grep -q 'gcp_zone = "us-central1-a"' "$default_dir/variables.auto.tfvars"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Defaults to <region>-a when zone not specified"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should default gcp_zone to us-central1-a"
+    fi
+
+    cleanup_test_dir "$default_dir"
+
+    local custom_dir
+    custom_dir=$(setup_test_dir)
+
+    cmd_init --cloud-provider gcp \
+        --deployment-dir "$custom_dir" \
+        --gcp-region europe-west3 \
+        --gcp-zone europe-west3-b \
+        2>/dev/null
+
+    if grep -q 'gcp_zone = "europe-west3-b"' "$custom_dir/variables.auto.tfvars"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Honors custom gcp_zone flag"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Variables file should contain custom gcp_zone"
+    fi
+
+    cleanup_test_dir "$custom_dir"
+}
+
 # Run all tests
 test_cloud_provider_validation
 test_valid_cloud_providers
@@ -452,6 +496,7 @@ test_credentials_file
 test_readme_generation
 test_data_volumes_per_node
 test_root_volume_size
+test_gcp_zone_configuration
 test_hetzner_initialization
 test_digitalocean_initialization
 test_digitalocean_arm64_guard
