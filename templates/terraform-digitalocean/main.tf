@@ -37,6 +37,7 @@ resource "digitalocean_ssh_key" "exasol_auth" {
 locals {
   # Provider-specific info for common outputs
   provider_name = "DigitalOcean"
+  provider_code = "digitalocean"
   region_name = var.digitalocean_region
 
   # Group volume IDs by node for Ansible inventory
@@ -200,6 +201,7 @@ resource "local_file" "ansible_inventory" {
     public_ips   = local.node_public_ips
     private_ips  = local.node_private_ips
     node_volumes = local.node_volumes
+    cloud_provider = local.provider_code
     ssh_key      = local_file.exasol_private_key_pem.filename
   })
   filename        = "${path.module}/inventory.ini"

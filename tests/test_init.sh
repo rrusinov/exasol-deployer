@@ -156,6 +156,28 @@ test_template_directory_selection() {
     cleanup_test_dir "$test_dir"
 }
 
+test_inventory_cloud_provider() {
+    echo ""
+    echo "Test: Inventory includes cloud provider"
+
+    local test_dir=$(setup_test_dir)
+
+    cmd_init --cloud-provider aws --deployment-dir "$test_dir" 2>/dev/null
+
+    local inventory_template="$test_dir/.templates/inventory.tftpl"
+    if [[ -f "$inventory_template" ]] && grep -q "cloud_provider=" "$inventory_template"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Inventory template contains cloud_provider host var"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Inventory template should include cloud_provider"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
 # Test: Credentials file includes cloud provider
 test_credentials_file() {
     echo ""
@@ -486,6 +508,44 @@ test_hetzner_private_ip_template() {
     fi
 }
 
+test_config_datadisk_format() {
+    echo ""
+    echo "Test: Config template uses comma-separated disks"
+
+    local config_template="$TEST_DIR/../templates/ansible/config.j2"
+    if grep -q 'CCC_HOST_DATADISK="{{ data_disk_paths_var }}"' "$config_template"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Config template wraps data disks in quotes"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Config template should quote data disks"
+    fi
+
+    local playbook="$TEST_DIR/../templates/ansible/setup-exasol-cluster.yml"
+    if grep -q 'data_disk_paths: "{{ exasol_symlinks.stdout_lines }}' "$playbook"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} data_disk_paths stored as list"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} data_disk_paths should remain a list"
+    fi
+
+    if grep -q 'data_disk_paths_var: "{{ data_disk_paths | join' "$playbook" && \
+       grep -q "join(',')" "$playbook"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Template joins data disks with commas"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Template should join data disks with commas"
+    fi
+}
+
 # Test: GCP zone configuration
 test_gcp_zone_configuration() {
     echo ""
@@ -535,6 +595,7 @@ test_cloud_provider_validation
 test_valid_cloud_providers
 test_aws_initialization
 test_template_directory_selection
+test_inventory_cloud_provider
 test_credentials_file
 test_readme_generation
 test_data_volumes_per_node
@@ -545,6 +606,7 @@ test_hetzner_network_zone_configuration
 test_digitalocean_initialization
 test_digitalocean_arm64_guard
 test_hetzner_private_ip_template
+test_config_datadisk_format
 
 # Show summary
 test_summary

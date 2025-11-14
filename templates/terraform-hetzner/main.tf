@@ -41,6 +41,7 @@ resource "hcloud_ssh_key" "exasol_auth" {
 locals {
   # Provider-specific info for common outputs
   provider_name = "Hetzner Cloud"
+  provider_code = "hetzner"
   region_name = var.hetzner_location
 
   # Map architecture to Hetzner server type prefix
@@ -221,6 +222,7 @@ resource "local_file" "ansible_inventory" {
     public_ips   = local.node_public_ips
     private_ips  = local.node_private_ips
     node_volumes = local.node_volumes
+    cloud_provider = local.provider_code
     ssh_key      = local_file.exasol_private_key_pem.filename
   })
   filename        = "${path.module}/inventory.ini"
