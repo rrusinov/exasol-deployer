@@ -333,6 +333,9 @@ Get the current status of a deployment in JSON format.
 - `deployment_failed`: Deployment failed (check logs)
 - `database_connection_failed`: Infrastructure deployed but database connection failed
 - `database_ready`: Deployment complete and database is ready
+- `destroy_in_progress`: Destroy operation is currently running
+- `destroy_failed`: Destroy operation failed (check logs)
+- `destroyed`: All resources have been destroyed successfully
 
 ### `destroy`
 

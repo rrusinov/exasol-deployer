@@ -76,6 +76,8 @@ cmd_destroy() {
     # Check if anything was actually deployed
     if [[ ! -f "$deploy_dir/terraform.tfstate" ]]; then
         log_warn "No Terraform state found. Nothing to destroy."
+        # Update status to destroyed since infrastructure appears to be gone
+        state_set_status "$deploy_dir" "$STATE_DESTROYED"
         # Do NOT remove the deployment directory automatically.
         # Inform the user that the directory is preserved and can be removed manually.
         log_info "Deployment directory preserved: $deploy_dir"
@@ -122,6 +124,9 @@ cmd_destroy() {
     # Create lock
     lock_create "$deploy_dir" "destroy" || die "Failed to create lock"
 
+    # Update status to destroy in progress
+    state_set_status "$deploy_dir" "$STATE_DESTROY_IN_PROGRESS"
+
     # Ensure trap can access the deployment directory after this function
     # returns by copying it to a global variable that the trap will use.
     _EXASOL_TRAP_DEPLOY_DIR="$deploy_dir"
@@ -138,6 +143,7 @@ cmd_destroy() {
     local destroy_rc=0
     if ! run_tofu_with_progress "destroy" "tofu_destroy" "Destroying cloud infrastructure" tofu destroy -auto-approve; then
         destroy_rc=$?
+        state_set_status "$deploy_dir" "$STATE_DESTROY_FAILED"
         lock_remove "$deploy_dir"
         progress_fail "destroy" "tofu_destroy" "Infrastructure destruction failed"
         log_error "Terraform destroy failed"
@@ -156,6 +162,9 @@ cmd_destroy() {
         # Remove Terraform state and caches so subsequent destroy runs are no-ops
         rm -f terraform.tfstate terraform.tfstate.backup
         rm -rf .terraform
+
+        # Update deployment status to destroyed
+        state_set_status "$deploy_dir" "$STATE_DESTROYED"
 
         # Remove lock
         lock_remove "$deploy_dir"
