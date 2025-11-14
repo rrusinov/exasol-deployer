@@ -174,7 +174,7 @@ main() {
                 show_status_help
                 exit 0
             fi
-            cmd_status "$DEPLOYMENT_DIR"
+            cmd_status --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         version)
             show_version

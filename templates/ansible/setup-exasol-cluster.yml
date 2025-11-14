@@ -393,4 +393,4 @@
               - "========================================"
               - "Exasol cluster deployment completed!"
               - "========================================"
-              - "Review connection details in INFO.txt / INFO.json within the deployment directory."
+              - "Review connection details in INFO.txt or run 'exasol status --show-details' within the deployment directory."

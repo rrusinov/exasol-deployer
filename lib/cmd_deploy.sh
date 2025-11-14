@@ -185,14 +185,7 @@ cmd_deploy() {
     # Display results
     progress_complete "deploy" "complete" "Deployment completed successfully"
 
-    # Show outputs if available
-    if tofu output -json > /dev/null 2>&1; then
-        log_info ""
-        log_info "Deployment information:"
-        tofu output -json | jq -r 'to_entries[] | "  \(.key): \(.value.value)"'
-    fi
-
     log_info ""
-    log_info "Credentials are stored in: $deploy_dir/.credentials.json"
-    log_info "Deployment info: $deploy_dir/INFO.txt"
+    log_info "✅ Exasol Cluster Deployment Complete!"
+    log_info "Check $deploy_dir/INFO.txt for commands or run 'exasol status --show-details' for deployment details."
 }

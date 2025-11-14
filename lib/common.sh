@@ -104,20 +104,20 @@ declare -A _PROGRESS_LAST_PERCENT
 # Format: stage:step=weight
 declare -A _STEP_WEIGHTS=(
     # Deploy stage weights (total: 100)
-    ["deploy:begin"]=2
-    ["deploy:tofu_init"]=5
-    ["deploy:tofu_plan"]=8
-    ["deploy:tofu_apply"]=30
+    ["deploy:begin"]=1
+    ["deploy:tofu_init"]=2
+    ["deploy:tofu_plan"]=1
+    ["deploy:tofu_apply"]=10
     ["deploy:wait_instances"]=5
-    ["deploy:ansible_config"]=45
-    ["deploy:complete"]=5
+    ["deploy:ansible_config"]=81
+    ["deploy:complete"]=0
 
     # Destroy stage weights (total: 100)
-    ["destroy:begin"]=5
-    ["destroy:confirm"]=5
-    ["destroy:tofu_destroy"]=80
-    ["destroy:cleanup"]=5
-    ["destroy:complete"]=5
+    ["destroy:begin"]=1
+    ["destroy:confirm"]=1
+    ["destroy:tofu_destroy"]=97
+    ["destroy:cleanup"]=1
+    ["destroy:complete"]=0
 
     # Init stage weights (total: 100)
     ["init:validate_config"]=15
@@ -128,6 +128,13 @@ declare -A _STEP_WEIGHTS=(
     ["init:store_credentials"]=15
     ["init:generate_readme"]=10
     ["init:complete"]=10
+)
+
+# Ordered steps per stage so progress never regresses due to hash iteration order
+declare -A _STAGE_STEP_ORDER=(
+    ["deploy"]="begin tofu_init tofu_plan tofu_apply wait_instances ansible_config complete"
+    ["destroy"]="begin confirm tofu_destroy cleanup complete"
+    ["init"]="validate_config create_directories initialize_state copy_templates generate_variables store_credentials generate_readme complete"
 )
 
 # Get the progress file path for a deployment directory
@@ -147,30 +154,53 @@ calculate_overall_progress() {
 
     local total_completed=0
     local found_current=0
+    local ordered_steps="${_STAGE_STEP_ORDER[$stage]}"
+
+    # Fallback: build a deterministic order if not explicitly defined
+    if [[ -z "$ordered_steps" ]]; then
+        local collected_steps=()
+        local key
+        for key in "${!_STEP_WEIGHTS[@]}"; do
+            if [[ "$key" == "${stage}:"* ]]; then
+                collected_steps+=("${key#*:}")
+            fi
+        done
+        if [[ ${#collected_steps[@]} -gt 0 ]]; then
+            IFS=$'\n' collected_steps=($(printf '%s\n' "${collected_steps[@]}" | sort))
+            ordered_steps="${collected_steps[*]}"
+        fi
+    fi
+
+    if [[ -z "$ordered_steps" ]]; then
+        echo "${step_percent:-0}"
+        return
+    fi
 
     # Iterate through steps in order and sum up completed weights
-    for key in "${!_STEP_WEIGHTS[@]}"; do
-        if [[ "$key" =~ ^${stage}: ]]; then
-            local step_name="${key#*:}"
-            local weight="${_STEP_WEIGHTS[$key]}"
+    local step_name
+    for step_name in $ordered_steps; do
+        local weight="${_STEP_WEIGHTS[${stage}:${step_name}]:-0}"
 
-            # If we haven't reached current step yet, count as fully completed
-            if [[ "$found_current" -eq 0 ]]; then
-                if [[ "$step_name" == "$current_step" ]]; then
-                    # This is the current step - add partial completion
-                    found_current=1
-                    total_completed=$((total_completed + (weight * step_percent / 100)))
-                else
-                    # Previous step - count as 100% complete
-                    total_completed=$((total_completed + weight))
-                fi
-            fi
+        # If we haven't reached current step yet, count as fully completed
+        if [[ "$step_name" == "$current_step" ]]; then
+            # This is the current step - add partial completion
+            found_current=1
+            total_completed=$((total_completed + (weight * step_percent / 100)))
+            break
+        else
+            total_completed=$((total_completed + weight))
         fi
     done
+
+    if [[ "$found_current" -eq 0 ]]; then
+        total_completed=100
+    fi
 
     # Return overall percentage (capped at 100)
     if [[ $total_completed -gt 100 ]]; then
         echo "100"
+    elif [[ $total_completed -lt 0 ]]; then
+        echo "0"
     else
         echo "$total_completed"
     fi
@@ -317,14 +347,12 @@ run_tofu_with_progress() {
         echo "$line" >&2
 
         # Parse Terraform/Tofu output for progress
-        # Count total resources from plan output (for apply operations)
-        if [[ "$line" =~ Plan:.*([0-9]+)\ to\ add ]]; then
-            total_resources=${BASH_REMATCH[1]}
-        elif [[ "$line" =~ ([0-9]+)\ to\ change ]]; then
-            ((total_resources += ${BASH_REMATCH[1]}))
-        # For destroy operations
-        elif [[ "$line" =~ Plan:.*([0-9]+)\ to\ destroy ]]; then
-            total_resources=${BASH_REMATCH[1]}
+        # Count total resources based on plan summary
+        local plan_total=""
+        if plan_total=$(extract_plan_total_resources "$line"); then
+            if [[ -n "$plan_total" ]]; then
+                total_resources="$plan_total"
+            fi
         fi
 
         # Track resource creation/modification/destruction
@@ -382,6 +410,45 @@ estimate_task_weight() {
     fi
 }
 
+# Extract total resources from a Terraform/Tofu plan summary line
+extract_plan_total_resources() {
+    local line="$1"
+
+    if [[ ! "$line" =~ ^Plan: ]]; then
+        return 1
+    fi
+
+    local add=0
+    local change=0
+    local destroy=0
+
+    if [[ "$line" =~ ([0-9]+)\ to\ add ]]; then
+        add=${BASH_REMATCH[1]}
+    fi
+    if [[ "$line" =~ ([0-9]+)\ to\ change ]]; then
+        change=${BASH_REMATCH[1]}
+    fi
+    if [[ "$line" =~ ([0-9]+)\ to\ destroy ]]; then
+        destroy=${BASH_REMATCH[1]}
+    fi
+
+    echo $((add + change + destroy))
+}
+
+# Categorize Ansible tasks into phases for more informative progress output
+categorize_ansible_phase() {
+    local task_name="$1"
+    local lower_task="${task_name,,}"
+
+    if [[ "$lower_task" =~ (download|fetch|get|transfer|artifact|tarball) ]]; then
+        echo "download"
+    elif [[ "$lower_task" =~ (install|configure|setup|enable|start|service|systemd|extract|untar|unpack|symlink|directory) ]]; then
+        echo "install"
+    else
+        echo "prepare"
+    fi
+}
+
 # Run Ansible command with progress tracking
 # Usage: run_ansible_with_progress <stage> <step> <base_message> <command> [args...]
 run_ansible_with_progress() {
@@ -397,9 +464,25 @@ run_ansible_with_progress() {
     local total_weight=0
     local completed_weight=0
     local current_task_weight=1
+    local current_phase="prepare"
+    local task_accounted=0
 
-    # Track task weights for better progress estimation
-    declare -A task_weights
+    local -a phase_order=("prepare" "download" "install")
+    declare -A phase_labels=(
+        ["prepare"]="Prep"
+        ["download"]="Download"
+        ["install"]="Install"
+    )
+    declare -A phase_total_weights=(
+        ["prepare"]=0
+        ["download"]=0
+        ["install"]=0
+    )
+    declare -A phase_completed_weights=(
+        ["prepare"]=0
+        ["download"]=0
+        ["install"]=0
+    )
 
     # Run ansible command and capture output line by line
     local exit_code=0
@@ -413,18 +496,16 @@ run_ansible_with_progress() {
         # Parse Ansible output for progress
         # Task headers: "TASK [task name]"
         if [[ "$line" =~ ^TASK\ \[([^\]]+)\] ]]; then
-            # Save previous task if exists
-            if [[ -n "$current_task" ]]; then
-                task_weights["$current_task"]="$current_task_weight"
-                ((total_weight += current_task_weight))
-            fi
-
             current_task="${BASH_REMATCH[1]}"
+            current_phase=$(categorize_ansible_phase "$current_task")
             ((total_tasks++))
             task_start_time=$(date +%s)
+            task_accounted=0
 
             # Estimate weight for this task
             current_task_weight=$(estimate_task_weight "$current_task")
+            ((total_weight += current_task_weight))
+            ((phase_total_weights[$current_phase] += current_task_weight))
         fi
 
         # Task completion indicators: "ok:", "changed:", "failed:"
@@ -439,26 +520,76 @@ run_ansible_with_progress() {
                 task_duration=" (${duration}s)"
             fi
 
-            # Add completed task weight
-            if [[ -n "$current_task" ]]; then
+            if [[ $task_accounted -eq 0 && -n "$current_task" ]]; then
                 ((completed_weight += current_task_weight))
+                ((phase_completed_weights[$current_phase] += current_task_weight))
+                task_accounted=1
             fi
 
-            # Calculate percentage based on weighted progress
-            if [[ $total_weight -gt 0 ]]; then
-                local percent=$((completed_weight * 100 / (total_weight + 30)))  # +30 for estimated remaining
-                if [[ $percent -gt 95 ]]; then
-                    percent=95  # Cap at 95% until truly complete
+            # Build phase summary string
+            local phase_summary_parts=()
+            local phase
+            for phase in "${phase_order[@]}"; do
+                local total_phase_weight=${phase_total_weights[$phase]:-0}
+                if [[ $total_phase_weight -eq 0 ]]; then
+                    continue
                 fi
-                progress_update "$stage" "$step" "$base_message (task: $current_task${task_duration})" "$percent"
+                local done_weight=${phase_completed_weights[$phase]:-0}
+                local phase_percent=$((done_weight * 100 / total_phase_weight))
+                if [[ $phase_percent -gt 100 ]]; then
+                    phase_percent=100
+                fi
+                phase_summary_parts+=("${phase_labels[$phase]} ${phase_percent}%")
+            done
+            local phase_summary=""
+            if [[ ${#phase_summary_parts[@]} -gt 0 ]]; then
+                phase_summary=$(IFS=' | ' ; echo "${phase_summary_parts[*]}")
+            fi
+
+            local message="$base_message"
+            if [[ -n "$phase_summary" ]]; then
+                message="$message [$phase_summary]"
+            fi
+
+            # Calculate percentage based on weighted progress with a buffer for upcoming tasks
+            if [[ $total_weight -gt 0 ]]; then
+                local percent_buffer=20
+                local percent=$((completed_weight * 100 / (total_weight + percent_buffer)))
+                if [[ $percent -gt 95 ]]; then
+                    percent=95
+                fi
+                progress_update "$stage" "$step" "$message (task: $current_task${task_duration})" "$percent"
             else
-                progress_update "$stage" "$step" "$base_message (task: $current_task${task_duration})"
+                progress_update "$stage" "$step" "$message (task: $current_task${task_duration})"
             fi
         fi
 
         # Play recap indicates completion
         if [[ "$line" =~ ^PLAY\ RECAP ]]; then
-            progress_update "$stage" "$step" "$base_message (finalizing)" 98
+            local recap_summary_parts=()
+            local recap_phase
+            for recap_phase in "${phase_order[@]}"; do
+                local total_phase_weight=${phase_total_weights[$recap_phase]:-0}
+                if [[ $total_phase_weight -eq 0 ]]; then
+                    continue
+                fi
+                local done_weight=${phase_completed_weights[$recap_phase]:-0}
+                local phase_percent=$((done_weight * 100 / total_phase_weight))
+                if [[ $phase_percent -gt 100 ]]; then
+                    phase_percent=100
+                fi
+                recap_summary_parts+=("${phase_labels[$recap_phase]} ${phase_percent}%")
+            done
+            local recap_summary=""
+            if [[ ${#recap_summary_parts[@]} -gt 0 ]]; then
+                recap_summary=$(IFS=' | ' ; echo "${recap_summary_parts[*]}")
+            fi
+
+            local recap_message="$base_message (finalizing)"
+            if [[ -n "$recap_summary" ]]; then
+                recap_message="$recap_message [$recap_summary]"
+            fi
+            progress_update "$stage" "$step" "$recap_message" 98
         fi
     done < <(
         set +e
@@ -581,18 +712,19 @@ get_timestamp() {
     date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
-# Generate INFO.txt and INFO.json files for deployment directory
+# Generate INFO.txt file for deployment directory
 
 generate_info_files() {
     local deploy_dir="$1"
-    local normalized_dir="${deploy_dir%/}"
+    local normalized_dir
+    normalized_dir="$(cd "$deploy_dir" && pwd)" || die "Failed to normalize deployment directory: $deploy_dir"
     local info_txt_file="$deploy_dir/INFO.txt"
-    local info_json_file="$deploy_dir/INFO.json"
 
-    local status_cmd="exasol status --deployment-dir $normalized_dir"
-    local deploy_cmd="exasol deploy --deployment-dir $normalized_dir"
-    local destroy_cmd="exasol destroy --deployment-dir $normalized_dir"
-    local tofu_cmd="tofu -chdir='$normalized_dir' output"
+    local cd_cmd="cd $normalized_dir"
+    local status_cmd="exasol status --show-details"
+    local deploy_cmd="exasol deploy"
+    local destroy_cmd="exasol destroy"
+    local tofu_cmd="tofu output"
 
     cat > "$info_txt_file" <<EOF
 Exasol Deployment Entry Point
@@ -601,10 +733,16 @@ Exasol Deployment Entry Point
 Deployment Directory: $normalized_dir
 
 Essential Commands:
-- Check status: $status_cmd
-- Deploy infrastructure: $deploy_cmd
-- Destroy infrastructure: $destroy_cmd
-- Terraform outputs: $tofu_cmd
+- Change to the deployment directory:
+        $cd_cmd
+- Check status:
+        $status_cmd
+- Deploy infrastructure:
+        $deploy_cmd
+- Destroy infrastructure:
+        $destroy_cmd
+- Terraform outputs:
+        $tofu_cmd
 
 Important Files:
 - .exasol.json          (deployment state - do not edit)
@@ -615,35 +753,8 @@ Important Files:
 - README.md             (deployment instructions)
 
 Notes:
-- INFO.txt / INFO.json provide static entry points only.
-- Use the commands above to retrieve live status or infrastructure details.
+- INFO.txt is a static entry point generated during initialization.
+- Run the commands above inside the deployment directory for live updates.
 - Review configuration and credentials using the files referenced here.
 EOF
-
-    cat > "$info_json_file" <<EOF
-{
-  "deployment_directory": "$normalized_dir",
-  "commands": {
-    "status": "$status_cmd",
-    "deploy": "$deploy_cmd",
-    "destroy": "$destroy_cmd",
-    "terraform_outputs": "$tofu_cmd"
-  },
-  "files": {
-    "state": ".exasol.json",
-    "variables": "variables.auto.tfvars",
-    "credentials": ".credentials.json",
-    "ssh_config": "ssh_config",
-    "ansible_inventory": "inventory.ini",
-    "readme": "README.md"
-  },
-  "notes": [
-    "INFO files are static entry points generated during initialization.",
-    "Run the status command to obtain the current deployment state.",
-    "Use the Terraform outputs command for infrastructure details."
-  ]
 }
-EOF
-}
-
-

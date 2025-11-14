@@ -477,7 +477,7 @@ EOF
     # Mark initialization as complete
     progress_complete "init" "complete" "Deployment directory initialized successfully"
 
-    # Generate INFO.txt and INFO.json files
+    # Generate INFO.txt file
     generate_info_files "$deploy_dir"
 
     log_info ""

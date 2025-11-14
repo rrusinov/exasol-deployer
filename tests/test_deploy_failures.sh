@@ -125,11 +125,10 @@ assert_deployment_failed() {
     assert_equals "$expected_step" "$progress_step" "Failure step should be $expected_step"
 
     assert_file_exists "$deploy_dir/INFO.txt" "INFO.txt should be generated"
-    assert_file_exists "$deploy_dir/INFO.json" "INFO.json should be generated"
-    assert_contains "$(cat "$deploy_dir/INFO.txt")" "Exasol Deployment Entry Point" "INFO.txt should mention entry point"
-    local info_status_cmd
-    info_status_cmd=$(jq -r '.commands.status' "$deploy_dir/INFO.json")
-    assert_equals "exasol status --deployment-dir $deploy_dir" "$info_status_cmd" "INFO.json should expose status command"
+    local info_txt_content
+    info_txt_content=$(cat "$deploy_dir/INFO.txt")
+    assert_contains "$info_txt_content" "Exasol Deployment Entry Point" "INFO.txt should mention entry point"
+    assert_contains "$info_txt_content" "exasol status --show-details" "INFO.txt should mention status command"
 }
 
 test_tofu_init_failure_updates_status() {
