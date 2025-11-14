@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import atexit
 import time
+from datetime import datetime
 
 
 class TestRunner:
@@ -31,7 +32,11 @@ class TestRunner:
         
         # Set up temporary results directory if not specified
         if not self.keep_results:
-            self.temp_results_dir = Path(tempfile.mkdtemp(prefix="exasol_test_results_"))
+            # Use /tmp/$USER/exasol-deployer/date-time/ directory structure
+            user = os.environ.get('USER', 'unknown')
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            self.temp_results_dir = Path(f"/tmp/{user}/exasol-deployer/{timestamp}")
+            self.temp_results_dir.mkdir(parents=True, exist_ok=True)
             self.temp_dirs.append(self.temp_results_dir)
             self.cleanup_dirs.append(self.temp_results_dir)
             
@@ -201,6 +206,15 @@ def main():
         verbose=args.verbose,
         keep_results=args.keep_results
     )
+    
+    # Set up temporary test results directory if not specified
+    if not args.test_results_dir:
+        # Use /tmp/$USER/exasol-deployer/date-time/ directory structure
+        user = os.environ.get('USER', 'unknown')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        temp_test_dir = Path(f"/tmp/{user}/exasol-deployer/{timestamp}")
+        temp_test_dir.mkdir(parents=True, exist_ok=True)
+        args.test_results_dir = temp_test_dir
     
     # Override temp results directory if specified
     if args.test_results_dir:
