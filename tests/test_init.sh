@@ -327,6 +327,49 @@ test_hetzner_initialization() {
     cleanup_test_dir "$test_dir"
 }
 
+test_hetzner_network_zone_configuration() {
+    echo ""
+    echo "Test: Hetzner network zone configuration"
+
+    local default_dir
+    default_dir=$(setup_test_dir)
+
+    cmd_init --cloud-provider hetzner --deployment-dir "$default_dir" 2>/dev/null
+
+    if grep -q 'hetzner_network_zone = "eu-central"' "$default_dir/variables.auto.tfvars"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Defaults hetzner_network_zone to eu-central"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should default hetzner_network_zone to eu-central"
+    fi
+
+    cleanup_test_dir "$default_dir"
+
+    local custom_dir
+    custom_dir=$(setup_test_dir)
+
+    cmd_init --cloud-provider hetzner \
+        --deployment-dir "$custom_dir" \
+        --hetzner-network-zone us-east \
+        --hetzner-location ash \
+        2>/dev/null
+
+    if grep -q 'hetzner_network_zone = "us-east"' "$custom_dir/variables.auto.tfvars"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Honors custom hetzner_network_zone flag"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Variables file should contain custom hetzner_network_zone"
+    fi
+
+    cleanup_test_dir "$custom_dir"
+}
+
 # Test: DigitalOcean provider initialization
 test_digitalocean_initialization() {
     echo ""
@@ -498,6 +541,7 @@ test_data_volumes_per_node
 test_root_volume_size
 test_gcp_zone_configuration
 test_hetzner_initialization
+test_hetzner_network_zone_configuration
 test_digitalocean_initialization
 test_digitalocean_arm64_guard
 test_hetzner_private_ip_template

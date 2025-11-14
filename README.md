@@ -174,6 +174,8 @@ Use `--gcp-zone` to pick a specific zone when the default (`<region>-a`) is not 
   --hetzner-token <your-api-token>
 ```
 
+Match `--hetzner-network-zone` to your chosen location (default `eu-central` works for `nbg1`, `fsn1`, and `hel1`; use `us-east`, `us-west`, or `ap-southeast` for the corresponding regions).
+
 #### DigitalOcean Deployment
 
 ```bash
@@ -303,6 +305,7 @@ Initialize a new deployment directory with configuration files.
 
 **Hetzner-Specific Flags**
 - `--hetzner-location string`: Hetzner location (default: `nbg1`).
+- `--hetzner-network-zone string`: Hetzner network zone (default: `eu-central`).
 - `--hetzner-token string`: Hetzner API token.
 
 **DigitalOcean-Specific Flags**

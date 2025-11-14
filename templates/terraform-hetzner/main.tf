@@ -79,7 +79,7 @@ resource "hcloud_network" "exasol_network" {
 resource "hcloud_network_subnet" "exasol_subnet" {
   network_id   = hcloud_network.exasol_network.id
   type         = "cloud"
-  network_zone = "eu-central"
+  network_zone = var.hetzner_network_zone
   ip_range     = "10.0.1.0/24"
 }
 

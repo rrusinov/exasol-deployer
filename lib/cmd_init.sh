@@ -78,6 +78,7 @@ GCP-Specific Flags:
 
 Hetzner-Specific Flags:
   --hetzner-location <loc>       Hetzner location (default: "nbg1")
+  --hetzner-network-zone <zone>  Hetzner network zone (default: "eu-central")
   --hetzner-token <token>        Hetzner API token
 
 DigitalOcean-Specific Flags:
@@ -138,6 +139,7 @@ cmd_init() {
 
     # Hetzner-specific variables
     local hetzner_location="nbg1"
+    local hetzner_network_zone="eu-central"
     local hetzner_token=""
 
     # DigitalOcean-specific variables
@@ -245,6 +247,10 @@ cmd_init() {
             # Hetzner-specific options
             --hetzner-location)
                 hetzner_location="$2"
+                shift 2
+                ;;
+            --hetzner-network-zone)
+                hetzner_network_zone="$2"
                 shift 2
                 ;;
             --hetzner-token)
@@ -377,6 +383,7 @@ cmd_init() {
             ;;
         hetzner)
             log_info "  Hetzner Location: $hetzner_location"
+            log_info "  Hetzner Network Zone: $hetzner_network_zone"
             ;;
         digitalocean)
             log_info "  DigitalOcean Region: $digitalocean_region"
@@ -445,7 +452,7 @@ cmd_init() {
         "$aws_region" "$aws_profile" "$aws_spot_instance" \
         "$azure_region" "$azure_subscription" "$azure_spot_instance" \
         "$gcp_region" "$gcp_zone" "$gcp_project" "$gcp_spot_instance" \
-        "$hetzner_location" "$hetzner_token" \
+        "$hetzner_location" "$hetzner_network_zone" "$hetzner_token" \
         "$digitalocean_region" "$digitalocean_token" \
         "$instance_type" "$architecture" "$cluster_size" \
         "$data_volume_size" "$data_volumes_per_node" "$root_volume_size" \
@@ -521,17 +528,18 @@ write_provider_variables() {
     local gcp_project="${11}"
     local gcp_spot_instance="${12}"
     local hetzner_location="${13}"
-    local hetzner_token="${14}"
-    local digitalocean_region="${15}"
-    local digitalocean_token="${16}"
-    local instance_type="${17}"
-    local architecture="${18}"
-    local cluster_size="${19}"
-    local data_volume_size="${20}"
-    local data_volumes_per_node="${21}"
-    local root_volume_size="${22}"
-    local allowed_cidr="${23}"
-    local owner="${24}"
+    local hetzner_network_zone="${14}"
+    local hetzner_token="${15}"
+    local digitalocean_region="${16}"
+    local digitalocean_token="${17}"
+    local instance_type="${18}"
+    local architecture="${19}"
+    local cluster_size="${20}"
+    local data_volume_size="${21}"
+    local data_volumes_per_node="${22}"
+    local root_volume_size="${23}"
+    local allowed_cidr="${24}"
+    local owner="${25}"
 
     case "$cloud_provider" in
         aws)
@@ -580,6 +588,7 @@ write_provider_variables() {
         hetzner)
             write_variables_file "$deploy_dir" \
                 "hetzner_location=$hetzner_location" \
+                "hetzner_network_zone=$hetzner_network_zone" \
                 "hetzner_token=$hetzner_token" \
                 "instance_type=$instance_type" \
                 "instance_architecture=$architecture" \
