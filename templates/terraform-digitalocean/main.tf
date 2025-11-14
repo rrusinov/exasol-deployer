@@ -38,7 +38,7 @@ locals {
   # Provider-specific info for common outputs
   provider_name = "DigitalOcean"
   provider_code = "digitalocean"
-  region_name = var.digitalocean_region
+  region_name   = var.digitalocean_region
 
   # Group volume IDs by node for Ansible inventory
   node_volumes = {
@@ -49,7 +49,7 @@ locals {
   }
 
   # Node IPs for common outputs
-  node_public_ips = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address]
+  node_public_ips  = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address]
   node_private_ips = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address_private]
 }
 
@@ -195,20 +195,5 @@ resource "digitalocean_volume_attachment" "data_attachment" {
 # OUTPUTS AND INVENTORY
 # ==============================================================================
 
-# Generate Ansible Inventory
-resource "local_file" "ansible_inventory" {
-  content = templatefile("${path.module}/inventory.tftpl", {
-    public_ips   = local.node_public_ips
-    private_ips  = local.node_private_ips
-    node_volumes = local.node_volumes
-    cloud_provider = local.provider_code
-    ssh_key      = local_file.exasol_private_key_pem.filename
-  })
-  filename        = "${path.module}/inventory.ini"
-  file_permission = "0644"
-
-  depends_on = [digitalocean_droplet.exasol_node, digitalocean_volume_attachment.data_attachment]
-}
-
-# Generate SSH config
+# Ansible inventory is generated in common.tf
 # SSH config is generated in common.tf

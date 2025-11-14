@@ -42,7 +42,7 @@ locals {
   # Provider-specific info for common outputs
   provider_name = "Hetzner Cloud"
   provider_code = "hetzner"
-  region_name = var.hetzner_location
+  region_name   = var.hetzner_location
 
   # Map architecture to Hetzner server type prefix
   # Hetzner uses different naming: cx, cpx, ccx series for x86_64, cax for arm64
@@ -57,7 +57,7 @@ locals {
   }
 
   # Node IPs for common outputs
-  node_public_ips = [for server in hcloud_server.exasol_node : server.ipv4_address]
+  node_public_ips  = [for server in hcloud_server.exasol_node : server.ipv4_address]
   node_private_ips = [for network in hcloud_server_network.exasol_node_network : network.ip]
 }
 
@@ -147,12 +147,12 @@ data "hcloud_image" "ubuntu" {
 }
 
 resource "hcloud_server" "exasol_node" {
-  count       = var.node_count
-  name        = "n${count.index + 11}-${random_id.instance.hex}"
-  server_type = var.instance_type
-  location    = var.hetzner_location
-  image       = data.hcloud_image.ubuntu.id
-  ssh_keys    = [hcloud_ssh_key.exasol_auth.id]
+  count        = var.node_count
+  name         = "n${count.index + 11}-${random_id.instance.hex}"
+  server_type  = var.instance_type
+  location     = var.hetzner_location
+  image        = data.hcloud_image.ubuntu.id
+  ssh_keys     = [hcloud_ssh_key.exasol_auth.id]
   firewall_ids = [hcloud_firewall.exasol_cluster.id]
 
   labels = {
@@ -178,10 +178,10 @@ resource "hcloud_server" "exasol_node" {
 
 # Attach servers to private network
 resource "hcloud_server_network" "exasol_node_network" {
-  count     = var.node_count
-  server_id = hcloud_server.exasol_node[count.index].id
+  count      = var.node_count
+  server_id  = hcloud_server.exasol_node[count.index].id
   network_id = hcloud_network.exasol_network.id
-  ip        = "10.0.1.${count.index + 10}"
+  ip         = "10.0.1.${count.index + 10}"
 }
 
 # ==============================================================================
@@ -197,10 +197,10 @@ resource "hcloud_volume" "data_volume" {
   format   = "ext4"
 
   labels = {
-    owner       = var.owner
-    cluster     = "exasol-cluster"
+    owner        = var.owner
+    cluster      = "exasol-cluster"
     volume_index = tostring((count.index % var.data_volumes_per_node) + 1)
-    node_index  = tostring(floor(count.index / var.data_volumes_per_node) + 11)
+    node_index   = tostring(floor(count.index / var.data_volumes_per_node) + 11)
   }
 }
 
@@ -216,20 +216,5 @@ resource "hcloud_volume_attachment" "data_attachment" {
 # OUTPUTS AND INVENTORY
 # ==============================================================================
 
-# Generate Ansible Inventory
-resource "local_file" "ansible_inventory" {
-  content = templatefile("${path.module}/inventory.tftpl", {
-    public_ips   = local.node_public_ips
-    private_ips  = local.node_private_ips
-    node_volumes = local.node_volumes
-    cloud_provider = local.provider_code
-    ssh_key      = local_file.exasol_private_key_pem.filename
-  })
-  filename        = "${path.module}/inventory.ini"
-  file_permission = "0644"
-
-  depends_on = [hcloud_server.exasol_node, hcloud_volume_attachment.data_attachment]
-}
-
-# Generate SSH config
+# Ansible inventory is generated in common.tf
 # SSH config is generated in common.tf
