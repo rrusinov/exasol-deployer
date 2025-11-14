@@ -1,0 +1,54 @@
+2025-11-14 19:06:57,321 - INFO - Enhanced E2E Framework initialized - Dry run: True
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check /dev/exasol_data_* symlinks
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check /dev/exasol_data_* symlinks
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check data volume size (expected: 100GB)
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check data volume size (expected: 100GB)
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check exasol-data-symlinks service status
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check exasol-data-symlinks service status
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check Exasol database installation
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check Exasol database installation
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Test connectivity from exasol-node-1 to exasol-node-2
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check CPU count
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check memory size
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check CPU count
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check memory size
+2025-11-14 19:06:57,321 - INFO - DRY_RUN: Check /dev/exasol_data_* symlinks
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check /dev/exasol_data_* symlinks
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check data volume size (expected: 100GB)
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check data volume size (expected: 100GB)
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check exasol-data-symlinks service status
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check exasol-data-symlinks service status
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check Exasol database installation
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check Exasol database installation
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Test connectivity from exasol-node-1 to exasol-node-2
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check CPU count
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check memory size
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check CPU count
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check memory size
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check /dev/exasol_data_* symlinks
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check /dev/exasol_data_* symlinks
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check data volume size (expected: 100GB)
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check data volume size (expected: 100GB)
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check exasol-data-symlinks service status
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check exasol-data-symlinks service status
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check Exasol database installation
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check Exasol database installation
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Test connectivity from exasol-node-1 to exasol-node-2
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check CPU count
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check memory size
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check CPU count
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check memory size
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check /dev/exasol_data_* symlinks
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check /dev/exasol_data_* symlinks
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check data volume size (expected: 100GB)
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check data volume size (expected: 100GB)
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check exasol-data-symlinks service status
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check exasol-data-symlinks service status
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check Exasol database installation
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check Exasol database installation
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Test connectivity from exasol-node-1 to exasol-node-2
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check CPU count
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check memory size
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check CPU count
+2025-11-14 19:06:57,322 - INFO - DRY_RUN: Check memory size
+2025-11-14 19:06:57,323 - INFO - Enhanced execution plan saved to /tmp/test_enhanced_plan.json

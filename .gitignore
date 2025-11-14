@@ -2,3 +2,4 @@ AGENTS.md
 tmp*
 .cloude*
 .venv
+__pycache__

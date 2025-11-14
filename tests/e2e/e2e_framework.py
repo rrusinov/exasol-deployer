@@ -1,0 +1,1011 @@
+#!/usr/bin/env python3
+"""
+Exasol E2E Test Framework
+
+A comprehensive end-to-end testing framework for Exasol deployments that can:
+- Define test parameters via JSON/YAML configurations
+- Generate test plans from parameter combinations
+- Execute tests in parallel across cloud providers
+- Validate deployment outcomes
+- Manage cleanup and resource lifecycle
+"""
+
+import argparse
+import concurrent.futures
+import http.client
+import json
+import logging
+import os
+import shutil
+import socket
+import ssl
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Any, Optional, Set, Tuple
+
+
+class E2ETestFramework:
+    """Main E2E test framework class."""
+
+    def __init__(self, config_path: str, results_dir: Optional[Path] = None):
+        self.config_path = Path(config_path)
+        self.work_dir = Path(tempfile.mkdtemp(prefix="exasol_e2e_"))
+        self.results_dir = results_dir if results_dir else Path('./tmp/e2e-results/')
+        self.results_dir.mkdir(parents=True, exist_ok=True)
+        self.results = []
+        # Run CLI commands from repository root so ./exasol can be found
+        self.repo_root = Path(__file__).resolve().parents[2]
+        self.retained_root = self.results_dir / 'retained-deployments'
+        self.retained_root.mkdir(parents=True, exist_ok=True)
+        self.tests_root = self.results_dir / 'tests'
+        self.tests_root.mkdir(parents=True, exist_ok=True)
+        self.generated_ids: Set[str] = set()
+        self._progress_lock = threading.Lock()
+
+        # Setup logging
+        self._setup_logging()
+        self.config = self._load_config()
+
+    def _setup_logging(self):
+        """Setup logging configuration."""
+        log_file = self.results_dir / f"e2e_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(log_file),
+                logging.StreamHandler(sys.stdout)
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+
+    def _load_config(self) -> Dict[str, Any]:
+        """Load test configuration from JSON/YAML file."""
+        if not self.config_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
+
+        with open(self.config_path, 'r', encoding='utf-8') as f:
+            if self.config_path.suffix.lower() in ['.json']:
+                config = json.load(f)
+            else:
+                # For now, assume JSON; could extend to YAML later
+                config = json.load(f)
+
+        # Validate for misspelled keys
+        self._validate_config_keys(config)
+        return config
+
+    def _validate_config_keys(self, config: Dict[str, Any]):
+        """Validate configuration for misspelled keys."""
+        valid_keys = {
+            'test_suites',
+            'provider',
+            'parameters',
+            'combinations',
+            'cluster_size',
+            'instance_type',
+            'data_volumes_per_node',
+            'data_volume_size',
+            'root_volume_size'
+        }
+
+        common_typos = {
+            'clustor_size': 'cluster_size',
+            'instnce_type': 'instance_type',
+            'data_volums_per_node': 'data_volumes_per_node',
+            'data_volum_size': 'data_volume_size',
+            'root_volum_size': 'root_volume_size',
+            'variaton_tests': 'variation_tests',
+            'variaton': 'variation',
+            'base_paramters': 'base_parameters',
+            'paramters': 'parameters'
+        }
+
+        def check_keys(obj, path=""):
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    current_path = f"{path}.{key}" if path else key
+                    if key in common_typos:
+                        raise ValueError(f"Possible misspelling in config at {current_path}: '{key}' should be '{common_typos[key]}'")
+                    # Skip validation for suite names and parameter names
+                    if not (path == 'test_suites' or 'parameters' in path):
+                        if key not in valid_keys:
+                            self.logger.warning(f"Unknown key in config at {current_path}: '{key}'")
+                    check_keys(value, current_path)
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    check_keys(item, f"{path}[{i}]")
+
+        check_keys(config)
+
+    def _slugify(self, value: str) -> str:
+        slug = ''.join(c.lower() if c.isalnum() or c in ('-', '_') else '-' for c in str(value))
+        slug = slug.replace('_', '-')
+        while '--' in slug:
+            slug = slug.replace('--', '-')
+        return slug.strip('-') or 'value'
+
+    def _build_deployment_id(self, suite_name: str, provider: str, combo: Dict[str, Any]) -> str:
+        base = f"{self._slugify(suite_name)}-{self._slugify(provider)}"
+        param_bits = []
+        for key in sorted(combo.keys()):
+            value = combo[key]
+            display_value = str(value).replace('/', '-')
+            param_bits.append(f"{self._slugify(key)}_{self._slugify(display_value)}")
+        param_segment = '-'.join(param_bits) if param_bits else 'default'
+        candidate = f"{base}-{param_segment}"
+        if len(candidate) > 120:
+            candidate = candidate[:117] + '...'
+
+        final_name = candidate
+        suffix = 2
+        while final_name in self.generated_ids:
+            final_name = f"{candidate}-{suffix}"
+            suffix += 1
+        self.generated_ids.add(final_name)
+        return final_name
+
+    def _provider_supports_spot(self, provider: str) -> bool:
+        """Return True if the provider supports spot/preemptible instances."""
+        normalized = provider.lower()
+        return normalized in {'aws', 'azure', 'gcp'}
+
+    def generate_test_plan(
+        self,
+        dry_run: bool = False,
+        providers: Optional[Set[str]] = None,
+        only_tests: Optional[Set[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """Generate test plan from configuration parameters."""
+        test_plan = []
+
+        for suite_name, suite_config in self.config.get('test_suites', {}).items():
+            provider_name = suite_config.get('provider', '').lower()
+            if providers and provider_name not in providers:
+                continue
+            combinations_type = suite_config.get('combinations', 'full')
+            if combinations_type == '2-wise':
+                combinations = self._generate_2_wise_combinations(suite_config)
+            elif combinations_type == '1-wise':
+                combinations = self._generate_1_wise_combinations(suite_config)
+            else:
+                combinations = self._generate_full_combinations(suite_config)
+
+            for combo in combinations:
+                deployment_id = self._build_deployment_id(suite_name, suite_config['provider'], combo)
+                if only_tests and deployment_id not in only_tests:
+                    continue
+                test_case = {
+                    'suite': suite_name,
+                    'provider': suite_config['provider'],
+                    'test_type': combinations_type,
+                    'parameters': combo,
+                    'deployment_id': deployment_id,
+                    'config_path': str(self.config_path)
+                }
+                if self._provider_supports_spot(suite_config['provider']):
+                    test_case.setdefault('parameters', {})
+                    test_case['parameters'].setdefault('enable_spot_instances', True)
+                test_plan.append(test_case)
+
+        if dry_run:
+            print(f"Dry run: Generated {len(test_plan)} test cases")
+            for i, test in enumerate(test_plan):
+                print(f"  {i+1}: {test['deployment_id']} - {test['parameters']}")
+        
+        return test_plan
+
+    def _generate_2_wise_combinations(self, suite_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Generate 2-wise parameter combinations for a test suite."""
+        parameters = suite_config.get('parameters', {})
+        param_names = list(parameters.keys())
+        param_values = [parameters[name] if isinstance(parameters[name], list) else [parameters[name]] for name in param_names]
+
+        # For this implementation, use a simple pairwise covering for up to 5 parameters
+        # Using a covering design for 5 parameters with 2 values each
+        if len(param_names) == 5 and all(len(v) == 2 for v in param_values):
+            # Covering matrix: each row is a combination, 1=first value, 2=second value
+            covering_matrix = [
+                [1, 1, 1, 1, 1],
+                [1, 1, 2, 2, 2],
+                [1, 2, 1, 2, 1],
+                [1, 2, 2, 1, 2],
+                [2, 1, 1, 2, 2],
+                [2, 1, 2, 1, 1],
+                [2, 2, 1, 1, 2],
+                [2, 2, 2, 2, 1],
+            ]
+            combinations = []
+            for row in covering_matrix:
+                combo = {}
+                for i, idx in enumerate(row):
+                    combo[param_names[i]] = param_values[i][idx - 1]
+                combinations.append(combo)
+            return combinations
+        else:
+            # For other cases, fall back to full combinations
+            return self._generate_full_combinations(suite_config)
+
+    def _generate_1_wise_combinations(self, suite_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Generate 1-wise parameter combinations for a test suite."""
+        parameters = suite_config.get('parameters', {})
+        param_names = list(parameters.keys())
+        param_values = [parameters[name] if isinstance(parameters[name], list) else [parameters[name]] for name in param_names]
+
+        # 1-wise: ensure every parameter value appears at least once
+        # Minimal number of tests is the maximum number of values across parameters
+        max_vals = max(len(v) for v in param_values) if param_values else 0
+        combinations = []
+        for i in range(max_vals):
+            combo = {}
+            for name, vals in zip(param_names, param_values):
+                # Use the i-th value if available, otherwise use the first
+                combo[name] = vals[min(i, len(vals) - 1)]
+            combinations.append(combo)
+        return combinations
+
+    def _generate_full_combinations(self, suite_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Generate full Cartesian product of parameter combinations."""
+        parameters = suite_config.get('parameters', {})
+        param_names = list(parameters.keys())
+        param_values = [parameters[name] if isinstance(parameters[name], list) else [parameters[name]] for name in param_names]
+
+        combinations = [{}]
+        for param_name, param_vals in zip(param_names, param_values):
+            new_combinations = []
+            for combo in combinations:
+                for value in param_vals:
+                    new_combo = combo.copy()
+                    new_combo[param_name] = value
+                    new_combinations.append(new_combo)
+            combinations = new_combinations
+        return combinations
+
+    def run_tests(self, test_plan: List[Dict[str, Any]], max_parallel: int = 1) -> List[Dict[str, Any]]:
+        """Execute tests in parallel."""
+        results = []
+        start_time = time.time()
+
+        if not test_plan:
+            self.logger.warning("No tests to execute.")
+            return results
+
+        if max_parallel <= 0:
+            max_parallel = max(1, len(test_plan))
+
+        self.logger.info(f"Starting test execution with {len(test_plan)} tests, max_parallel={max_parallel}")
+        self._render_progress(0, len(test_plan))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as executor:
+            future_to_test = {executor.submit(self._run_single_test, test): test for test in test_plan}
+            completed = 0
+            for future in concurrent.futures.as_completed(future_to_test):
+                result = future.result()
+                results.append(result)
+                completed += 1
+                status = 'PASS' if result['success'] else 'FAIL'
+                self.logger.info(f"Completed: {result['deployment_id']} - {status} ({result['duration']:.1f}s)")
+                self._render_progress(completed, len(test_plan))
+
+        total_time = time.time() - start_time
+        print()  # newline after progress bar
+        self._save_results(results, total_time)
+        self._print_summary(results, total_time)
+
+        return results
+
+    def _render_progress(self, completed: int, total: int):
+        """Render a simple textual progress bar."""
+        if total == 0:
+            return
+        bar_length = 30
+        fraction = min(1.0, completed / total)
+        filled = int(bar_length * fraction)
+        bar = '#' * filled + '-' * (bar_length - filled)
+        message = f"\rProgress: [{bar}] {completed}/{total} tests completed"
+        with self._progress_lock:
+            print(message, end='', flush=True)
+
+    def _log_to_file(self, log_file: Path, message: str):
+        """Append timestamped log entry to the per-test log file."""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with log_file.open('a', encoding='utf-8') as log_handle:
+            log_handle.write(f"[{timestamp}] {message}\n")
+
+    def _run_command(self, cmd: List[str], log_file: Path, cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
+        """Run a CLI command, capturing output in the test log."""
+        cmd_str = ' '.join(cmd)
+        self._log_to_file(log_file, f"Running command: {cmd_str}")
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(cwd or self.repo_root))
+        if result.stdout:
+            self._log_to_file(log_file, f"STDOUT:\n{result.stdout.strip()}")
+        if result.stderr:
+            self._log_to_file(log_file, f"STDERR:\n{result.stderr.strip()}")
+        self._log_to_file(log_file, f"Command exited with {result.returncode}")
+        return result
+
+
+
+
+
+    def _save_results(self, results: List[Dict[str, Any]], total_time: float):
+        """Save test results to JSON file."""
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        results_file = self.results_dir / f"test_results_{timestamp}.json"
+
+        summary = {
+            'timestamp': timestamp,
+            'total_tests': len(results),
+            'passed': sum(1 for r in results if r['success']),
+            'failed': sum(1 for r in results if not r['success']),
+            'total_time': total_time,
+            'results': results
+        }
+
+        with open(results_file, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, default=str)
+
+        latest_file = self.results_dir / 'latest_results.json'
+        with open(latest_file, 'w', encoding='utf-8') as latest:
+            json.dump(summary, latest, indent=2, default=str)
+
+        self.logger.info(f"Results saved to {results_file}")
+
+    def _print_summary(self, results: List[Dict[str, Any]], total_time: float):
+        """Print test execution summary."""
+        passed = sum(1 for r in results if r['success'])
+        failed = len(results) - passed
+
+        print(f"\n{'='*50}")
+        print("E2E TEST SUMMARY")
+        print(f"{'='*50}")
+        print(f"Total Tests: {len(results)}")
+        print(f"Passed: {passed}")
+        print(f"Failed: {failed}")
+        print(f"Success Rate: {passed/len(results)*100:.1f}%" if results else "Success Rate: N/A")
+        print(f"Total Time: {total_time:.1f}s")
+        print(f"Average Time: {total_time/len(results):.1f}s per test" if results else "Average Time: N/A")
+
+        if failed > 0:
+            print(f"\n{'='*50}")
+            print("FAILED TESTS:")
+            print(f"{'='*50}")
+            for result in results:
+                if not result['success']:
+                    print(f"- {result['deployment_id']}: {result.get('error', 'Unknown error')}")
+
+    def _run_single_test(self, test_case: Dict[str, Any]) -> Dict[str, Any]:
+        """Run a single test case."""
+        deployment_id = test_case['deployment_id']
+        provider = test_case['provider']
+        test_type = test_case.get('test_type', 'matrix')
+
+        test_output_dir = self.tests_root / deployment_id
+        test_output_dir.mkdir(parents=True, exist_ok=True)
+        log_file = test_output_dir / 'test.log'
+        self._log_to_file(log_file, f"Starting test {deployment_id} ({provider})")
+
+        result = {
+            'deployment_id': deployment_id,
+            'suite': test_case['suite'],
+            'provider': provider,
+            'test_type': test_type,
+            'success': False,
+            'duration': 0,
+            'error': None,
+            'logs': [],
+            'variation_results': [],
+            'log_file': str(log_file),
+            'log_directory': str(test_output_dir),
+            'config_path': test_case.get('config_path', str(self.config_path))
+        }
+
+        start_time = time.time()
+
+        # Create deployment directory
+        deploy_dir = self.work_dir / deployment_id
+        deploy_dir.mkdir(exist_ok=True)
+        result['deployment_dir'] = str(deploy_dir)
+
+        try:
+            if test_type in ['2-wise', '1-wise', 'full']:
+                # Run test
+                params = test_case['parameters']
+                result['parameters'] = params
+
+                # Initialize deployment
+                self._init_deployment(deploy_dir, provider, params, log_file)
+
+                # Deploy
+                self._deploy(deploy_dir, params, log_file)
+
+                # Validate
+                validation_result = self._validate_deployment(deploy_dir, params, provider, log_file)
+                result['validation'] = validation_result
+                result['success'] = validation_result['success']
+            else:
+                raise ValueError(f"Unsupported test_type: {test_type}")
+
+        except Exception as e:
+            result['error'] = str(e)
+            result['logs'].append(f"Error: {e}")
+            self._log_to_file(log_file, f"Test {deployment_id} failed: {e}")
+
+        finally:
+            result['duration'] = time.time() - start_time
+
+            # Cleanup
+            try:
+                retained_dir = self._cleanup_deployment(
+                    deploy_dir,
+                    provider,
+                    log_file,
+                    keep_artifacts=not result['success']
+                )
+                if retained_dir:
+                    result['retained_deployment_dir'] = str(retained_dir)
+                else:
+                    result['retained_deployment_dir'] = None
+            except Exception as e:
+                result['logs'].append(f"Cleanup error: {e}")
+                self._log_to_file(log_file, f"Cleanup error: {e}")
+
+        return result
+
+    def _init_deployment(self, deploy_dir: Path, provider: str, params: Dict[str, Any], log_file: Path):
+        """Initialize deployment using exasol CLI."""
+        cmd = [
+            './exasol', 'init',
+            '--cloud-provider', provider,
+            '--deployment-dir', str(deploy_dir)
+        ]
+
+        # Add supported parameters as CLI flags
+        param_flag_map = {
+            'cluster_size': '--cluster-size',
+            'instance_type': '--instance-type',
+            'data_volumes_per_node': '--data-volumes-per-node',
+            'data_volume_size': '--data-volume-size',
+            'root_volume_size': '--root-volume-size',
+            'db_version': '--db-version',
+            'allowed_cidr': '--allowed-cidr',
+        }
+        for key, flag in param_flag_map.items():
+            if key in params:
+                cmd.extend([flag, str(params[key])])
+
+        if params.get('enable_spot_instances'):
+            provider_flag = {
+                'aws': '--aws-spot-instance',
+                'azure': '--azure-spot-instance',
+                'gcp': '--gcp-spot-instance'
+            }.get(provider.lower())
+            if provider_flag:
+                cmd.append(provider_flag)
+
+        result = self._run_command(cmd, log_file, cwd=self.repo_root)
+        if result.returncode != 0:
+            raise RuntimeError(f"Init failed: {result.stderr}")
+
+    def _deploy(self, deploy_dir: Path, params: Dict[str, Any], log_file: Path):
+        """Deploy using exasol CLI."""
+        cmd = ['./exasol', 'deploy', '--deployment-dir', str(deploy_dir)]
+
+        result = self._run_command(cmd, log_file, cwd=self.repo_root)
+        if result.returncode != 0:
+            raise RuntimeError(f"Deploy failed: {result.stderr}")
+
+    def _validate_deployment(self, deploy_dir: Path, params: Dict[str, Any], provider: str, log_file: Path) -> Dict[str, Any]:
+        """Validate deployment outcomes."""
+        validation = {
+            'success': True,
+            'checks': []
+        }
+
+        tf_state = self._load_terraform_state(deploy_dir, log_file, validation)
+        if not tf_state:
+            validation['success'] = False
+
+        # Check terraform outputs
+        outputs_file = deploy_dir / 'outputs.tf'
+        if outputs_file.exists():
+            validation['checks'].append({'check': 'outputs_file_exists', 'status': 'pass'})
+        else:
+            validation['checks'].append({'check': 'outputs_file_exists', 'status': 'fail'})
+            validation['success'] = False
+
+        self._validate_tfvars_alignment(params, validation, deploy_dir)
+
+        # Check inventory file (generated by terraform)
+        inventory_file = deploy_dir / 'inventory.ini'
+        if inventory_file.exists():
+            validation['checks'].append({'check': 'inventory_file_exists', 'status': 'pass'})
+
+            inventory_data = self._parse_inventory(inventory_file, validation)
+            node_entries = inventory_data.get('sections', {}).get('exasol_nodes', [])
+            expected_cluster = params.get('cluster_size')
+            actual_cluster = len(node_entries)
+            if expected_cluster is not None:
+                check_status = 'pass' if actual_cluster == expected_cluster else 'fail'
+                validation['checks'].append({
+                    'check': 'cluster_size_matches',
+                    'expected': expected_cluster,
+                    'actual': actual_cluster,
+                    'status': check_status
+                })
+                if check_status == 'fail':
+                    validation['success'] = False
+
+            self._validate_volume_counts(params, inventory_data, validation)
+            self._validate_network_endpoints(node_entries, validation)
+            self._validate_admin_and_db_ports(node_entries, validation, log_file)
+            self._validate_ssh_access(node_entries, deploy_dir, validation, log_file)
+        else:
+            validation['checks'].append({'check': 'inventory_file_exists', 'status': 'fail'})
+            validation['success'] = False
+
+        # Check for terraform apply success by looking for error logs
+        terraform_log = deploy_dir / 'terraform.log'
+        if terraform_log.exists():
+            try:
+                with open(terraform_log, 'r', encoding='utf-8') as f:
+                    log_content = f.read()
+                    if 'Error:' in log_content or 'error' in log_content.lower():
+                        validation['checks'].append({
+                            'check': 'terraform_apply_success',
+                            'status': 'fail',
+                            'details': 'Errors found in terraform log'
+                        })
+                        validation['success'] = False
+                    else:
+                        validation['checks'].append({'check': 'terraform_apply_success', 'status': 'pass'})
+            except Exception as e:
+                validation['checks'].append({
+                    'check': 'terraform_log_check',
+                    'error': str(e),
+                    'status': 'fail'
+                })
+
+        # Verify infrastructure settings via terraform state
+        self._validate_instance_configuration(provider, params, tf_state, validation)
+        self._validate_disk_configuration(provider, params, tf_state, validation)
+
+        return validation
+
+    def _cleanup_deployment(self, deploy_dir: Path, provider: str, log_file: Path, keep_artifacts: bool = False) -> Optional[Path]:
+        """Cleanup deployment resources."""
+        retained_path: Optional[Path] = None
+        if keep_artifacts and deploy_dir.exists():
+            retained_path = self.retained_root / deploy_dir.name
+            if retained_path.exists():
+                shutil.rmtree(retained_path)
+            shutil.copytree(str(deploy_dir), str(retained_path))
+            self._log_to_file(log_file, f"Retained deployment directory for investigation: {retained_path}")
+
+        if deploy_dir.exists():
+            cmd = ['./exasol', 'destroy', '--deployment-dir', str(deploy_dir), '--auto-approve']
+
+            result = self._run_command(cmd, log_file, cwd=self.repo_root)
+            if result.returncode != 0:
+                self._log_to_file(log_file, f"Warning: Cleanup failed for {deploy_dir}: {result.stderr}")
+
+            if not keep_artifacts:
+                shutil.rmtree(deploy_dir, ignore_errors=True)
+
+        return retained_path
+
+    def _parse_inventory(self, inventory_file: Path, validation: Dict[str, Any]) -> Dict[str, Any]:
+        inventory_data = {'hosts': [], 'sections': {}}
+        try:
+            with open(inventory_file, 'r', encoding='utf-8') as f:
+                current_section = None
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith('#'):
+                        continue
+                    if stripped.startswith('[') and stripped.endswith(']'):
+                        current_section = stripped[1:-1]
+                        inventory_data['sections'].setdefault(current_section, [])
+                        continue
+                    parts = stripped.split()
+                    host_name = parts[0]
+                    vars_dict = {}
+                    for token in parts[1:]:
+                        if '=' in token:
+                            key, value = token.split('=', 1)
+                            vars_dict[key] = value.strip().strip("'\"")
+                    entry = {
+                        'name': host_name,
+                        'vars': vars_dict,
+                        'section': current_section,
+                        'ip': vars_dict.get('ansible_host', host_name)
+                    }
+                    inventory_data['hosts'].append(entry)
+                    if current_section:
+                        inventory_data['sections'].setdefault(current_section, []).append(entry)
+        except Exception as exc:
+            validation['checks'].append({
+                'check': 'inventory_parsing',
+                'status': 'fail',
+                'error': str(exc)
+            })
+            validation['success'] = False
+        return inventory_data
+
+    def _parse_tfvars(self, deploy_dir: Path) -> Optional[Dict[str, Any]]:
+        tfvars_path = deploy_dir / 'variables.auto.tfvars'
+        if not tfvars_path.exists():
+            return None
+        data: Dict[str, Any] = {}
+        try:
+            with open(tfvars_path, 'r', encoding='utf-8') as tf_file:
+                for raw_line in tf_file:
+                    line = raw_line.strip()
+                    if not line or line.startswith('#') or '=' not in line:
+                        continue
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip().rstrip(',')
+                    if value.startswith('"') and value.endswith('"'):
+                        data[key] = value.strip('"')
+                    elif value in ('true', 'false'):
+                        data[key] = value == 'true'
+                    else:
+                        try:
+                            data[key] = int(value)
+                        except ValueError:
+                            try:
+                                data[key] = float(value)
+                            except ValueError:
+                                data[key] = value
+        except Exception as exc:
+            self.logger.warning(f"Failed to parse tfvars file: {exc}")
+            return None
+        return data
+
+    def _validate_tfvars_alignment(self, params: Dict[str, Any], validation: Dict[str, Any], deploy_dir: Path):
+        tfvars = self._parse_tfvars(deploy_dir)
+        if tfvars is None:
+            validation['checks'].append({'check': 'tfvars_exists', 'status': 'fail'})
+            validation['success'] = False
+            return
+
+        validation['checks'].append({'check': 'tfvars_exists', 'status': 'pass'})
+
+        mapping = {
+            'cluster_size': 'node_count',
+            'instance_type': 'instance_type',
+            'data_volumes_per_node': 'data_volumes_per_node',
+            'data_volume_size': 'data_volume_size',
+            'root_volume_size': 'root_volume_size',
+            'allowed_cidr': 'allowed_cidr',
+            'enable_spot_instances': 'enable_spot_instances'
+        }
+
+        for param_key, tfvar_key in mapping.items():
+            if param_key not in params:
+                continue
+            expected = params[param_key]
+            actual = tfvars.get(tfvar_key)
+            status = 'pass' if actual == expected else 'fail'
+            validation['checks'].append({
+                'check': f'{param_key}_tfvars_match',
+                'expected': expected,
+                'actual': actual,
+                'status': status
+            })
+            if status == 'fail':
+                validation['success'] = False
+
+    def _load_terraform_state(self, deploy_dir: Path, log_file: Path, validation: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        candidates = [
+            deploy_dir / 'terraform.tfstate',
+            deploy_dir / '.terraform' / 'terraform.tfstate'
+        ]
+        for state_path in candidates:
+            if state_path.exists():
+                try:
+                    with open(state_path, 'r', encoding='utf-8') as f:
+                        state = json.load(f)
+                    validation['checks'].append({
+                        'check': 'terraform_state_exists',
+                        'status': 'pass',
+                        'path': str(state_path)
+                    })
+                    return state
+                except Exception as exc:
+                    validation['checks'].append({
+                        'check': 'terraform_state_parse',
+                        'status': 'fail',
+                        'error': str(exc)
+                    })
+                    self._log_to_file(log_file, f"Failed to parse terraform state: {exc}")
+                    return None
+        validation['checks'].append({'check': 'terraform_state_exists', 'status': 'fail'})
+        self._log_to_file(log_file, "Terraform state file missing.")
+        return None
+
+    def _collect_resources(self, tf_state: Dict[str, Any], resource_type: str) -> List[Dict[str, Any]]:
+        resources = []
+        for resource in tf_state.get('resources', []):
+            if resource.get('type') == resource_type:
+                for instance in resource.get('instances', []):
+                    resources.append(instance.get('attributes', {}))
+        return resources
+
+    def _validate_instance_configuration(self, provider: str, params: Dict[str, Any], tf_state: Optional[Dict[str, Any]], validation: Dict[str, Any]):
+        if not tf_state:
+            return
+        provider_map = {
+            'aws': ('aws_instance', 'instance_type'),
+            'azure': ('azurerm_linux_virtual_machine', 'size'),
+            'gcp': ('google_compute_instance', 'machine_type'),
+            'digitalocean': ('digitalocean_droplet', 'size'),
+            'hetzner': ('hcloud_server', 'server_type')
+        }
+        config = provider_map.get(provider)
+        if not config:
+            return
+
+        resource_type, attr_name = config
+        resources = self._collect_resources(tf_state, resource_type)
+        if not resources:
+            validation['checks'].append({
+                'check': 'instance_resources_found',
+                'provider': provider,
+                'status': 'fail'
+            })
+            validation['success'] = False
+            return
+
+        expected_type = params.get('instance_type')
+        mismatches = [
+            r.get(attr_name) for r in resources
+            if expected_type is not None and r.get(attr_name) != expected_type
+        ]
+        status = 'pass' if not mismatches else 'fail'
+        validation['checks'].append({
+            'check': 'instance_type_matches',
+            'expected': expected_type,
+            'status': status
+        })
+        if status == 'fail':
+            validation['success'] = False
+
+    def _validate_disk_configuration(self, provider: str, params: Dict[str, Any], tf_state: Optional[Dict[str, Any]], validation: Dict[str, Any]):
+        if not tf_state:
+            return
+
+        disk_map = {
+            'aws': ('aws_ebs_volume', 'size'),
+            'azure': ('azurerm_managed_disk', 'disk_size_gb'),
+            'gcp': ('google_compute_disk', 'size'),
+            'digitalocean': ('digitalocean_volume', 'size'),
+            'hetzner': ('hcloud_volume', 'size')
+        }
+        config = disk_map.get(provider)
+        if not config:
+            return
+
+        resource_type, attr_name = config
+        resources = self._collect_resources(tf_state, resource_type)
+        expected_per_node = params.get('data_volumes_per_node')
+        cluster_size = params.get('cluster_size')
+        expected_total = (expected_per_node or 0) * (cluster_size or 0)
+
+        status = 'pass'
+        if expected_total and len(resources) != expected_total:
+            status = 'fail'
+        validation['checks'].append({
+            'check': 'data_volume_count',
+            'expected': expected_total,
+            'actual': len(resources),
+            'status': status
+        })
+        if status == 'fail':
+            validation['success'] = False
+
+        expected_size = params.get('data_volume_size')
+        if expected_size is None:
+            return
+
+        mismatched = [
+            r.get(attr_name) for r in resources if r.get(attr_name) != expected_size
+        ]
+        size_status = 'pass' if not mismatched else 'fail'
+        validation['checks'].append({
+            'check': 'data_volume_size_matches',
+            'expected': expected_size,
+            'status': size_status
+        })
+        if size_status == 'fail':
+            validation['success'] = False
+
+    def _validate_volume_counts(self, params: Dict[str, Any], inventory_data: Dict[str, Any], validation: Dict[str, Any]):
+        expected_per_node = params.get('data_volumes_per_node')
+        if expected_per_node is None:
+            return
+        nodes = inventory_data.get('sections', {}).get('exasol_nodes', [])
+        for entry in nodes:
+            data_ids = entry['vars'].get('data_volume_ids')
+            volumes = []
+            if data_ids:
+                cleaned = data_ids.strip("'\"")
+                try:
+                    volumes = json.loads(cleaned)
+                except json.JSONDecodeError:
+                    volumes = cleaned.split(',')
+            status = 'pass' if len(volumes) == expected_per_node else 'fail'
+            validation['checks'].append({
+                'check': 'data_volumes_per_node',
+                'host': entry['name'],
+                'expected': expected_per_node,
+                'actual': len(volumes),
+                'status': status
+            })
+            if status == 'fail':
+                validation['success'] = False
+
+    def _validate_network_endpoints(self, node_entries: List[Dict[str, Any]], validation: Dict[str, Any]):
+        if not node_entries:
+            validation['checks'].append({
+                'check': 'inventory_nodes_present',
+                'status': 'fail'
+            })
+            validation['success'] = False
+            return
+        for entry in node_entries:
+            ip = entry.get('ip')
+            status = 'pass' if ip else 'fail'
+            validation['checks'].append({
+                'check': 'node_has_ip',
+                'host': entry['name'],
+                'status': status
+            })
+            if status == 'fail':
+                validation['success'] = False
+
+    def _validate_admin_and_db_ports(self, node_entries: List[Dict[str, Any]], validation: Dict[str, Any], log_file: Path):
+        for entry in node_entries:
+            ip = entry.get('ip')
+            if not ip:
+                continue
+            admin_ok = self._check_https_endpoint(ip, 8443, log_file)
+            validation['checks'].append({
+                'check': 'admin_ui_response',
+                'host': entry['name'],
+                'status': 'pass' if admin_ok else 'fail'
+            })
+            if not admin_ok:
+                validation['success'] = False
+
+            db_ok = self._check_tcp_port(ip, 8563, log_file)
+            validation['checks'].append({
+                'check': 'db_port_response',
+                'host': entry['name'],
+                'status': 'pass' if db_ok else 'fail'
+            })
+            if not db_ok:
+                validation['success'] = False
+
+    def _validate_ssh_access(self, node_entries: List[Dict[str, Any]], deploy_dir: Path, validation: Dict[str, Any], log_file: Path):
+        ssh_config = deploy_dir / 'ssh_config'
+        if not ssh_config.exists():
+            validation['checks'].append({'check': 'ssh_config_exists', 'status': 'fail'})
+            validation['success'] = False
+            return
+
+        for entry in node_entries:
+            host_alias = entry['name']
+            base_cmd = [
+                'ssh', '-F', str(ssh_config),
+                '-o', 'BatchMode=yes',
+                '-o', 'StrictHostKeyChecking=no',
+                '-o', 'ConnectTimeout=30'
+            ]
+            cmd = base_cmd + [host_alias, 'true']
+            result = self._run_command(cmd, log_file, cwd=deploy_dir)
+            status = 'pass' if result.returncode == 0 else 'fail'
+            validation['checks'].append({
+                'check': 'instance_ssh',
+                'host': host_alias,
+                'status': status
+            })
+            if status == 'fail':
+                validation['success'] = False
+
+            cos_alias = f"{host_alias}-cos"
+            cos_cmd = base_cmd + [cos_alias, 'true']
+            cos_result = self._run_command(cos_cmd, log_file, cwd=deploy_dir)
+            cos_status = 'pass' if cos_result.returncode == 0 else 'fail'
+            validation['checks'].append({
+                'check': 'cos_ssh',
+                'host': cos_alias,
+                'status': cos_status
+            })
+            if cos_status == 'fail':
+                validation['success'] = False
+
+    def _check_https_endpoint(self, host: str, port: int, log_file: Path) -> bool:
+        connection: Optional[http.client.HTTPSConnection] = None
+        try:
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            connection = http.client.HTTPSConnection(host, port, timeout=15, context=context)
+            connection.request('GET', '/')
+            response = connection.getresponse()
+            success = response.status < 500
+            return success
+        except Exception as exc:
+            self._log_to_file(log_file, f"HTTPS check failed for {host}:{port} - {exc}")
+            return False
+        finally:
+            if connection:
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+
+    def _check_tcp_port(self, host: str, port: int, log_file: Path, timeout: int = 10) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError as exc:
+            self._log_to_file(log_file, f"TCP check failed for {host}:{port} - {exc}")
+            return False
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Exasol E2E Test Framework')
+    parser.add_argument('action', choices=['plan', 'run'], help='Action to perform')
+    parser.add_argument('--config', required=True, help='Path to test configuration file')
+    parser.add_argument('--results-dir', default='tests/e2e/results', help='Path to results directory')
+    parser.add_argument('--dry-run', action='store_true', help='Generate plan without executing')
+    parser.add_argument('--parallel', type=int, default=0, help='Maximum parallel executions (0=auto)')
+    parser.add_argument('--providers', help='Comma separated list of providers to include (e.g. aws,gcp)')
+    parser.add_argument('--tests', help='Comma separated deployment IDs to execute')
+
+    args = parser.parse_args()
+
+    framework = E2ETestFramework(args.config, Path(args.results_dir))
+
+    provider_filter = (
+        {p.strip().lower() for p in args.providers.split(',') if p.strip()}
+        if args.providers else None
+    )
+    tests_filter = (
+        {t.strip() for t in args.tests.split(',') if t.strip()}
+        if args.tests else None
+    )
+
+    if args.action == 'plan':
+        framework.generate_test_plan(dry_run=True, providers=provider_filter, only_tests=tests_filter)
+    elif args.action == 'run':
+        test_plan = framework.generate_test_plan(
+            dry_run=args.dry_run,
+            providers=provider_filter,
+            only_tests=tests_filter
+        )
+        if not args.dry_run:
+            results = framework.run_tests(test_plan, max_parallel=args.parallel)
+
+            # Print summary
+            passed = sum(1 for r in results if r['success'])
+            total = len(results)
+            print(f"\nResults: {passed}/{total} tests passed")
+
+            if passed < total:
+                print("Failed tests:")
+                for r in results:
+                    if not r['success']:
+                        print(f"  - {r['deployment_id']}: {r.get('error', 'Unknown error')}")
+
+
+if __name__ == '__main__':
+    main()
