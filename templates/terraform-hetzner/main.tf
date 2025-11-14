@@ -57,7 +57,7 @@ locals {
 
   # Node IPs for common outputs
   node_public_ips = [for server in hcloud_server.exasol_node : server.ipv4_address]
-  node_private_ips = local.node_public_ips
+  node_private_ips = [for network in hcloud_server_network.exasol_node_network : network.ip]
 }
 
 # Get available Hetzner locations

@@ -420,6 +420,29 @@ EOF
     cleanup_test_dir "$test_dir"
 }
 
+test_hetzner_private_ip_template() {
+    echo ""
+    echo "Test: Hetzner template uses network private IPs"
+
+    local template_file="$TEST_DIR/../templates/terraform-hetzner/main.tf"
+    if [[ ! -f "$template_file" ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Template file missing: $template_file"
+        return
+    fi
+
+    if grep -q "node_private_ips = \\[for network in hcloud_server_network.exasol_node_network" "$template_file"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Hetzner node_private_ips sourced from server network"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Hetzner node_private_ips should read from hcloud_server_network.exasol_node_network"
+    fi
+}
+
 # Run all tests
 test_cloud_provider_validation
 test_valid_cloud_providers
@@ -432,6 +455,7 @@ test_root_volume_size
 test_hetzner_initialization
 test_digitalocean_initialization
 test_digitalocean_arm64_guard
+test_hetzner_private_ip_template
 
 # Show summary
 test_summary
