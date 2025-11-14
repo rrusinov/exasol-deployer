@@ -105,6 +105,7 @@ locals {
   # Provider-specific info for common outputs
   provider_name = "GCP"
   region_name = var.gcp_region
+  selected_gcp_zone = length(trimspace(var.gcp_zone)) > 0 ? trimspace(var.gcp_zone) : "${var.gcp_region}-a"
 
   # SSH keys metadata
   ssh_keys_metadata = "ubuntu:${tls_private_key.exasol_key.public_key_openssh}"
@@ -130,7 +131,7 @@ resource "google_compute_instance" "exasol_node" {
   count        = var.node_count
   name         = "n${count.index + 11}"
   machine_type = var.instance_type
-  zone         = "${var.gcp_region}-a"
+  zone         = local.selected_gcp_zone
 
   # Spot (preemptible) instance configuration
   scheduling {
@@ -178,7 +179,7 @@ resource "google_compute_disk" "data_volume" {
   count = var.node_count * var.data_volumes_per_node
   name  = "exasol-data-${floor(count.index / var.data_volumes_per_node) + 11}-${(count.index % var.data_volumes_per_node) + 1}"
   type  = "pd-ssd"
-  zone  = "${var.gcp_region}-a"
+  zone  = local.selected_gcp_zone
   size  = var.data_volume_size
 
   labels = {

@@ -13,6 +13,11 @@ source "$LIB_DIR/common.sh"
 
 # Get versions config file path
 get_versions_config_path() {
+    if [[ -n "${EXASOL_VERSIONS_CONFIG:-}" ]]; then
+        echo "$EXASOL_VERSIONS_CONFIG"
+        return
+    fi
+
     local script_root
     script_root="$(cd "$LIB_DIR/.." && pwd)"
     echo "$script_root/versions.conf"

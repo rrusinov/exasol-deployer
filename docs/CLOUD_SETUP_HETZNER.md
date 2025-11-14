@@ -107,6 +107,19 @@ hcloud server-type list
 hcloud location list
 ```
 
+### Network Zones
+
+Hetzner groups locations into network zones. All servers, subnets, and load balancers within the same private network must use the same zone.
+
+| Network Zone | Included Locations | Notes |
+|--------------|-------------------|-------|
+| `eu-central` | `nbg1`, `fsn1`, `hel1` | Default European zone |
+| `us-east` | `ash` (Ashburn) | United States, East Coast |
+| `us-west` | `hil` (Hillsboro) | United States, West Coast |
+| `ap-southeast` | `sin` (Singapore) | Asia Pacific |
+
+Pick the zone that matches your chosen location and pass it with `--hetzner-network-zone`. The deployer defaults to `eu-central`, which covers all current European locations.
+
 ## Step 5: Initialize Exasol Deployment
 
 ### Basic Deployment
@@ -161,6 +174,7 @@ Cost-effective small cluster:
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--hetzner-location` | Datacenter location | `nbg1` |
+| `--hetzner-network-zone` | Network zone matching the location | `eu-central` |
 | `--hetzner-token` | Hetzner API token (required) | - |
 
 **Note**: Hetzner does not support spot instances - all instances are on-demand.

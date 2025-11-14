@@ -162,6 +162,8 @@ Get API token from provider console and use with `--hetzner-token` or `--digital
   --gcp-spot-instance
 ```
 
+Use `--gcp-zone` to pick a specific zone when the default (`<region>-a`) is not available for your instance type or quota setup.
+
 #### Hetzner Cloud Deployment
 
 ```bash
@@ -172,6 +174,8 @@ Get API token from provider console and use with `--hetzner-token` or `--digital
   --hetzner-token <your-api-token>
 ```
 
+Match `--hetzner-network-zone` to your chosen location (default `eu-central` works for `nbg1`, `fsn1`, and `hel1`; use `us-east`, `us-west`, or `ap-southeast` for the corresponding regions).
+
 #### DigitalOcean Deployment
 
 ```bash
@@ -181,6 +185,8 @@ Get API token from provider console and use with `--hetzner-token` or `--digital
   --digitalocean-region nyc3 \
   --digitalocean-token <your-api-token>
 ```
+
+DigitalOcean currently provides only x86_64 droplets, so arm64 database versions are rejected during initialization for this provider.
 
 The init command will:
 - Create the deployment directory structure
@@ -293,11 +299,13 @@ Initialize a new deployment directory with configuration files.
 
 **GCP-Specific Flags**
 - `--gcp-region string`: GCP region (default: `us-central1`).
+- `--gcp-zone string`: GCP zone (default: `<region>-a`).
 - `--gcp-project string`: GCP project ID.
 - `--gcp-spot-instance`: Enable GCP spot (preemptible) instances.
 
 **Hetzner-Specific Flags**
 - `--hetzner-location string`: Hetzner location (default: `nbg1`).
+- `--hetzner-network-zone string`: Hetzner network zone (default: `eu-central`).
 - `--hetzner-token string`: Hetzner API token.
 
 **DigitalOcean-Specific Flags**
