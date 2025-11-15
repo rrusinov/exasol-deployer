@@ -45,6 +45,7 @@ run_test_file() {
 }
 
 # Run all test files
+run_test_file "$TEST_DIR/test_shellcheck.sh"
 run_test_file "$TEST_DIR/test_common.sh"
 run_test_file "$TEST_DIR/test_versions.sh"
 run_test_file "$TEST_DIR/test_state.sh"
@@ -56,7 +57,6 @@ run_test_file "$TEST_DIR/test_template_validation.sh"
 run_test_file "$TEST_DIR/test_url_availability.sh"
 run_test_file "$TEST_DIR/test_documentation.sh"
 run_test_file "$TEST_DIR/test_help_options.sh"
-run_test_file "$TEST_DIR/test_shellcheck.sh"
 run_test_file "$TEST_DIR/test_e2e_framework.sh"
 
 # Overall summary

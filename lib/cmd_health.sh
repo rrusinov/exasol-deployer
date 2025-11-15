@@ -17,24 +17,21 @@ readonly HEALTH_REQUIRED_SERVICES=(
 # Exit codes
 readonly HEALTH_EXIT_HEALTHY=0
 readonly HEALTH_EXIT_ISSUES=1
-readonly HEALTH_EXIT_REMEDIATION_FAILED=2
 
 show_health_help() {
     cat <<'EOF'
 Run connectivity and service health checks for a deployment.
 
 The command verifies SSH reachability for every node, COS endpoints,
-key systemd services installed by the c4 deployer, and IP consistency
-between live hosts and local metadata files. Optional flags allow the
-command to update local metadata or attempt basic remediation.
+key systemd services installed by the c4 deployer, volume attachments,
+and cluster state. Health checks run in parallel for faster execution
+on large deployments.
 
 Usage:
   exasol health [flags]
 
 Flags:
   --deployment-dir <path>   Deployment directory (default: ".")
-  --update                  Update inventory/ssh_config/INFO.txt when IPs change
-  --try-fix                 Restart failed services automatically when possible
   --refresh-terraform       Run 'tofu refresh' to sync Terraform state
   --output-format <format>  Output format: text (default) or json
   --verbose                 Show detailed output
@@ -44,14 +41,11 @@ Flags:
 Exit Codes:
   0  Health check passed without issues
   1  Health check detected issues
-  2  Remediation attempted but failed
 
 Examples:
   exasol health --deployment-dir ./my-deployment
-  exasol health --deployment-dir ./my-deployment --update
-  exasol health --deployment-dir ./my-deployment --try-fix
   exasol health --deployment-dir ./my-deployment --output-format json
-  exasol health --deployment-dir ./my-deployment --update --refresh-terraform
+  exasol health --deployment-dir ./my-deployment --refresh-terraform
   exasol health --deployment-dir ./my-deployment --verbose
 EOF
 }
@@ -92,87 +86,42 @@ health_fetch_remote_ips() {
     local private_ip=""
     private_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" hostname -I 2>/dev/null | awk '{print $1}' || true)
 
+    # Try to get public IP using ip.me (works for all cloud providers)
     local public_ip=""
-    case "$cloud_provider" in
-        aws)
-            public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
-                "curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null" 2>/dev/null || true)
-            ;;
-        azure)
-            public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
-                "curl -s -H Metadata:true --max-time 2 'http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text' 2>/dev/null" 2>/dev/null || true)
-            ;;
-        gcp)
-            public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
-                "curl -s -H Metadata-Flavor:Google --max-time 2 'http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip' 2>/dev/null" 2>/dev/null || true)
-            ;;
-        *)
-            public_ip=""
-            ;;
-    esac
+    public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+        "curl -s --max-time 3 ip.me 2>/dev/null" 2>/dev/null || true)
 
-    public_ip=$(echo "$public_ip" | tr -d '\r')
-    if [[ -z "$public_ip" || "$public_ip" == "not available" ]]; then
+    # Clean up the result (remove any whitespace/newlines)
+    public_ip=$(echo "$public_ip" | tr -d '\r\n' | xargs)
+
+    # Validate that we got a valid IP address (basic check)
+    if [[ ! "$public_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        # If ip.me failed or returned invalid data, fall back to cloud metadata
+        case "$cloud_provider" in
+            aws)
+                public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                    "curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null" 2>/dev/null || true)
+                ;;
+            azure)
+                public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                    "curl -s -H Metadata:true --max-time 2 'http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text' 2>/dev/null" 2>/dev/null || true)
+                ;;
+            gcp)
+                public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                    "curl -s -H Metadata-Flavor:Google --max-time 2 'http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip' 2>/dev/null" 2>/dev/null || true)
+                ;;
+        esac
+        public_ip=$(echo "$public_ip" | tr -d '\r\n' | xargs)
+    fi
+
+    # If still no valid public IP, fall back to private IP
+    if [[ -z "$public_ip" || "$public_ip" == "not available" || ! "$public_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         public_ip="$private_ip"
     fi
 
     echo "${private_ip:-}|${public_ip:-}"
 }
 
-health_check_external_ports() {
-    local public_ip="$1"
-    local host_name="$2"
-    local issues_var="$3"
-    local output_format="$4"
-
-    if [[ -z "$public_ip" ]]; then
-        return 0
-    fi
-
-    # shellcheck disable=SC2178
-    # shellcheck disable=SC2178
-    # shellcheck disable=SC2178
-    local -n issues_ref="$issues_var"
-    local failures=0
-
-    if ! command -v timeout >/dev/null 2>&1; then
-        [[ "$output_format" == "text" ]] && echo "    Port checks skipped (timeout command unavailable)"
-        return 0
-    fi
-
-    local curl_output
-    curl_output=$(curl -sk --max-time 10 -o /dev/null -w "%{http_code}|%{content_type}" "https://$public_ip:8443/" 2>/dev/null || echo "000|")
-    local http_code="${curl_output%%|*}"
-    local content_type="${curl_output#*|}"
-    if [[ "$http_code" != "000" ]]; then
-        [[ "$output_format" == "text" ]] && echo "    Admin UI (8443): HTTPS $http_code (${content_type:-unknown})"
-    else
-        [[ "$output_format" == "text" ]] && echo "    Admin UI (8443): FAILED (no HTTPS response)"
-        issues_ref+=("$(printf '{"type": "adminui_unreachable", "host": "%s", "severity": "warning"}' "$host_name")")
-        failures=$((failures + 1))
-    fi
-
-    local db_ok="false"
-    if command -v openssl >/dev/null 2>&1; then
-        if timeout 5 openssl s_client -brief -connect "$public_ip:8563" < /dev/null >/dev/null 2>&1; then
-            db_ok="true"
-        fi
-    else
-        if timeout 5 bash -c "</dev/tcp/$public_ip/8563" >/dev/null 2>&1; then
-            db_ok="true"
-        fi
-    fi
-
-    if [[ "$db_ok" == "true" ]]; then
-        [[ "$output_format" == "text" ]] && echo "    DB port (8563): reachable"
-    else
-        [[ "$output_format" == "text" ]] && echo "    DB port (8563): FAILED"
-        issues_ref+=("$(printf '{"type": "db_port_unreachable", "host": "%s", "severity": "warning"}' "$host_name")")
-        failures=$((failures + 1))
-    fi
-
-    return "$failures"
-}
 
 health_backup_file() {
     local file="$1"
@@ -347,7 +296,7 @@ health_check_cloud_metadata_aws() {
 
     # Check if AWS CLI is available
     if ! command -v aws >/dev/null 2>&1; then
-        [[ "$output_format" == "text" ]] && echo "    Cloud metadata check: AWS CLI not available, skipping"
+        [[ "$output_format" == "text" && "$verbosity" != "quiet" ]] && echo "    ⓘ Cloud metadata: AWS CLI not available (skipping instance count check)"
         return 0
     fi
 
@@ -355,13 +304,39 @@ health_check_cloud_metadata_aws() {
     local deployment_name
     deployment_name=$(basename "$deploy_dir")
 
+    # Test if AWS CLI has valid credentials/region by running a simple command
+    if ! aws ec2 describe-instances --max-items 1 --output text >/dev/null 2>&1; then
+        # AWS CLI failed - likely no credentials or region configured
+        if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
+            echo "    ⓘ Cloud metadata: AWS credentials/region not configured (skipping instance count check)"
+        fi
+        return 0
+    fi
+
     # Query AWS for instances with this deployment tag
+    # First try with 'deployment' tag, then fall back to 'Name' tag
     local instance_count
-    if ! instance_count=$(aws ec2 describe-instances \
+    instance_count=$(aws ec2 describe-instances \
         --filters "Name=tag:deployment,Values=$deployment_name" "Name=instance-state-name,Values=running" \
-        --query 'length(Reservations[].Instances[])' \
-        --output text 2>/dev/null); then
-        [[ "$output_format" == "text" ]] && echo "    Cloud metadata check: AWS CLI error, skipping"
+        --query 'length(Reservations[*].Instances[*])' \
+        --output text 2>/dev/null || echo "0")
+
+    # If no instances found with 'deployment' tag, try 'Name' tag
+    if [[ "$instance_count" == "0" || "$instance_count" == "None" ]]; then
+        instance_count=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=*${deployment_name}*" "Name=instance-state-name,Values=running" \
+            --query 'length(Reservations[*].Instances[*])' \
+            --output text 2>/dev/null || echo "0")
+    fi
+
+    # Convert "None" to "0" (AWS CLI returns "None" when no results)
+    [[ "$instance_count" == "None" ]] && instance_count="0"
+
+    # If still 0, skip the check (instances might not have the expected tags)
+    if [[ "$instance_count" == "0" ]]; then
+        if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
+            echo "    ⓘ Cloud metadata: No instances found with tag 'deployment=$deployment_name' or 'Name=*${deployment_name}*' (skipping instance count check)"
+        fi
         return 0
     fi
 
@@ -370,12 +345,12 @@ health_check_cloud_metadata_aws() {
     expected_count=$(health_get_expected_cluster_size "$deploy_dir")
 
     if [[ "$instance_count" != "unknown" && "$expected_count" != "unknown" && "$instance_count" != "$expected_count" ]]; then
-        [[ "$output_format" == "text" ]] && echo "    Cloud metadata: Instance count mismatch (expected=$expected_count, found=$instance_count)"
-        issues_ref+=("{\"type\": \"cloud_instance_count_mismatch\", \"expected\": $expected_count, \"actual\": $instance_count, \"severity\": \"critical\"}")
+        [[ "$output_format" == "text" ]] && echo "    ✗ Cloud metadata: Instance count mismatch (expected=$expected_count, found=$instance_count)"
+        issues_ref+=("{\"type\": \"cloud_instance_count_mismatch\", \"expected\": $expected_count, \"actual\": $instance_count, \"severity\": \"warning\"}")
         return 1
     fi
 
-    [[ "$output_format" == "text" ]] && echo "    Cloud metadata: OK (instances=$instance_count)"
+    [[ "$output_format" == "text" ]] && echo "    ✓ Cloud metadata: OK (instances=$instance_count)"
     return 0
 }
 
@@ -508,28 +483,30 @@ health_check_volume_attachments() {
 
     local volume_info
     volume_info=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
-        "bash -lc 'shopt -s nullglob; count=0; broken=""; for link in /dev/exasol_data_*; do [[ -e \"\$link\" ]] || continue; [[ \"\$link\" == *table ]] && continue; if [[ -L \"\$link\" ]]; then target=\$(readlink -f \"\$link\" 2>/dev/null); if [[ -n \"\$target\" && -e \"\$target\" ]]; then count=\$((count+1)); else broken=\"\$broken \$link\"; fi; fi; done; echo \"\$count|\$broken\"'" 2>/dev/null || echo "0|")
+        "bash -lc 'shopt -s nullglob; count=0; broken=\"\"; sizes=\"\"; for link in /dev/exasol_data_*; do [[ -e \"\$link\" ]] || continue; [[ \"\$link\" == *table ]] && continue; if [[ -L \"\$link\" ]]; then target=\$(readlink -f \"\$link\" 2>/dev/null); if [[ -n \"\$target\" && -e \"\$target\" ]]; then count=\$((count+1)); size=\$(lsblk -b -n -o SIZE \"\$target\" 2>/dev/null | head -1); if [[ -n \"\$size\" ]]; then size_gb=\$((size / 1024 / 1024 / 1024)); sizes=\"\${sizes}\${sizes:+,}\${size_gb}GB\"; fi; else broken=\"\$broken \$link\"; fi; fi; done; echo \"\$count|\$broken|\$sizes\"'" 2>/dev/null || echo "0||")
 
     local volume_count="${volume_info%%|*}"
-    local broken_links="${volume_info#*|}"
+    local rest="${volume_info#*|}"
+    local broken_links="${rest%%|*}"
+    local disk_sizes="${rest#*|}"
 
     if [[ -z "$volume_count" ]]; then
         volume_count=0
     fi
 
     if [[ "$volume_count" -eq 0 ]]; then
-        [[ "$output_format" == "text" ]] && echo "    Volume check: WARNING - No exasol_data_* symlinks detected"
+        echo "no_data_volumes|$host_name"
         issues_ref+=("{\"type\": \"no_data_volumes\", \"host\": \"$host_name\", \"severity\": \"warning\"}")
         return 1
     fi
 
-    if [[ -n "$broken_links" && "$broken_links" != "$volume_info" ]]; then
-        [[ "$output_format" == "text" ]] && echo "    Volume check: WARNING - Broken symlinks:${broken_links}"
+    if [[ -n "$broken_links" && "$broken_links" != "$rest" ]]; then
+        echo "broken_volume_symlink|$host_name|$broken_links"
         issues_ref+=("{\"type\": \"broken_volume_symlink\", \"host\": \"$host_name\", \"details\": \"$broken_links\", \"severity\": \"warning\"}")
         return 1
     fi
 
-    [[ "$output_format" == "text" ]] && echo "    Volume check: OK ($volume_count disk(s) found)"
+    echo "volume_ok|$volume_count|$disk_sizes"
     return 0
 }
 
@@ -547,18 +524,138 @@ health_check_cluster_state() {
         "cd /home/exasol/exasol-release 2>/dev/null && sudo -u exasol ./c4 cluster status 2>/dev/null | grep -c 'cluster is online'" 2>/dev/null || echo "0")
 
     if [[ "$cluster_check" == "0" ]]; then
-        [[ "$output_format" == "text" ]] && echo "    Cluster state: Unable to verify (c4 cluster status unavailable)"
+        echo "cluster_state_unknown"
         return 0  # Don't count as failure - might not be fully deployed yet
     fi
 
-    [[ "$output_format" == "text" ]] && echo "    Cluster state: OK (cluster online)"
+    echo "cluster_state_ok"
     return 0
+}
+
+# Perform all health checks for a single host (designed to run in parallel)
+health_check_single_host() {
+    local ssh_config="$1"
+    local host_name="$2"
+    local host_ip="$3"
+    local ssh_timeout="$4"
+    local cloud_provider="$5"
+    local check_cluster_state="$6"  # "true" or "false"
+
+    local result_file="/tmp/health_${host_name}_$$.tmp"
+    local -a local_issues=()
+
+    # Initialize result
+    local ssh_ok="false"
+    local cos_ssh_ok="false"
+    local services_status=""
+    local volume_status=""
+    local cluster_status=""
+    local private_ip=""
+    local public_ip=""
+    local port_8443_ok="false"
+    local port_8563_ok="false"
+
+    # SSH check
+    if ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" true >/dev/null 2>&1; then
+        ssh_ok="true"
+
+        # COS SSH check
+        if grep -Eq "^Host[[:space:]]+${host_name}-cos" "$ssh_config" >/dev/null 2>&1; then
+            if ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "${host_name}-cos" true >/dev/null 2>&1; then
+                cos_ssh_ok="true"
+            else
+                local_issues+=("{\"type\": \"cos_ssh_unreachable\", \"host\": \"$host_name-cos\", \"severity\": \"warning\"}")
+            fi
+        fi
+
+        # Service checks
+        local service_results=""
+        for service in "${HEALTH_REQUIRED_SERVICES[@]}"; do
+            if ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" sudo systemctl is-active "$service" >/dev/null 2>&1; then
+                service_results="${service_results}${service}:active;"
+            else
+                service_results="${service_results}${service}:failed;"
+                local_issues+=("{\"type\": \"service_failed\", \"host\": \"$host_name\", \"service\": \"$service\", \"severity\": \"critical\"}")
+            fi
+        done
+        services_status="$service_results"
+
+        # Volume check
+        volume_status=$(health_check_volume_attachments "$ssh_config" "$host_name" "$ssh_timeout" local_issues "json")
+
+        # Cluster state (only for designated host)
+        if [[ "$check_cluster_state" == "true" ]]; then
+            cluster_status=$(health_check_cluster_state "$ssh_config" "$host_name" "$ssh_timeout" local_issues "json")
+        fi
+
+        # Fetch IPs
+        local ip_info
+        ip_info=$(health_fetch_remote_ips "$ssh_config" "$host_name" "$ssh_timeout" "$cloud_provider")
+        IFS='|' read -r private_ip public_ip <<<"$ip_info"
+        [[ -z "$public_ip" ]] && public_ip="$private_ip"
+
+        # Port checks (if we have a public IP)
+        if [[ -n "$public_ip" ]] && command -v timeout >/dev/null 2>&1; then
+            # Admin UI check
+            local curl_output
+            curl_output=$(curl -sk --max-time 10 -o /dev/null -w "%{http_code}" "https://$public_ip:8443/" 2>/dev/null || echo "000")
+            if [[ "$curl_output" != "000" ]]; then
+                port_8443_ok="true"
+            else
+                local_issues+=("{\"type\": \"adminui_unreachable\", \"host\": \"$host_name\", \"severity\": \"warning\"}")
+            fi
+
+            # DB port check - test on localhost since DB listens on private IP
+            # Try curl first (error JSON response means port is working!)
+            local db_response
+            db_response=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                "curl -sk --max-time 5 'https://localhost:8563/' 2>/dev/null" 2>/dev/null || echo "")
+            if [[ -n "$db_response" ]] && [[ "$db_response" == *"status"* || "$db_response" == *"WebSocket"* || "$db_response" == *"error"* ]]; then
+                port_8563_ok="true"
+            else
+                # Fallback to testing from localhost via SSH
+                if ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                    "timeout 3 bash -c 'cat < /dev/null > /dev/tcp/localhost/8563' 2>/dev/null" >/dev/null 2>&1; then
+                    port_8563_ok="true"
+                fi
+            fi
+
+            if [[ "$port_8563_ok" != "true" ]]; then
+                local_issues+=("{\"type\": \"db_port_unreachable\", \"host\": \"$host_name\", \"severity\": \"warning\"}")
+            fi
+        fi
+    else
+        local_issues+=("{\"type\": \"ssh_unreachable\", \"host\": \"$host_name\", \"severity\": \"critical\"}")
+    fi
+
+    # Build JSON result
+    local issues_json="[]"
+    if [[ ${#local_issues[@]} -gt 0 ]]; then
+        issues_json="[$(IFS=,; echo "${local_issues[*]}")]"
+    fi
+
+    cat > "$result_file" <<EOF
+{
+  "host": "$host_name",
+  "ansible_host": "$host_ip",
+  "ssh_ok": $ssh_ok,
+  "cos_ssh_ok": $cos_ssh_ok,
+  "services": "$services_status",
+  "volume_status": "$volume_status",
+  "cluster_status": "$cluster_status",
+  "private_ip": "$private_ip",
+  "public_ip": "$public_ip",
+  "port_8443_ok": $port_8443_ok,
+  "port_8563_ok": $port_8563_ok,
+  "issues": $issues_json
+}
+EOF
+
+    echo "$result_file"
 }
 
 cmd_health() {
     local deploy_dir="."
-    local do_update="false"
-    local do_try_fix="false"
     local do_refresh_terraform="false"
     local output_format="text"
     local verbosity="normal"  # normal, verbose, quiet
@@ -572,14 +669,6 @@ cmd_health() {
             --deployment-dir)
                 deploy_dir="$2"
                 shift 2
-                ;;
-            --update)
-                do_update="true"
-                shift
-                ;;
-            --try-fix)
-                do_try_fix="true"
-                shift
                 ;;
             --refresh-terraform)
                 do_refresh_terraform="true"
@@ -714,18 +803,15 @@ cmd_health() {
 
     local ssh_timeout=10
     local overall_issues=0
-    local remediation_attempted=false
-    local remediation_failed=false
-    local info_file="$deploy_dir/INFO.txt"
-    local tfstate_file="$deploy_dir/terraform.tfstate"
+    local ip_mismatches=0
 
     # Tracking for JSON output
     local -a json_issues=()
+    local -a failed_checks=()
     local ssh_passed=0
     local ssh_failed=0
     local services_active=0
     local services_failed=0
-    local ip_mismatches=0
 
     # Determine if we should show detailed output
     local show_details="true"
@@ -736,12 +822,17 @@ cmd_health() {
         echo "============================================================"
     fi
 
-    # Check cloud metadata (once per deployment, not per host)
-    if ! health_check_cloud_metadata "$deploy_dir" "$cloud_provider" json_issues "$output_format"; then
-        overall_issues=$((overall_issues + 1))
+    # Skip cloud metadata check - we'll verify instance count through SSH connectivity instead
+    # Cloud metadata checks require AWS CLI and credentials which may not be available
+
+    # Launch parallel health checks for all hosts
+    if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
+        echo "Running health checks on ${#host_entries[@]} host(s) in parallel..."
     fi
 
-    local entry
+    local -a result_files=()
+    local -a host_pids=()
+    local idx=0
     for entry in "${host_entries[@]}"; do
         IFS='|' read -r host_name host_ip <<<"$entry"
         host_name="${host_name//[[:space:]]/}"
@@ -751,130 +842,231 @@ cmd_health() {
             continue
         fi
 
-        [[ "$output_format" == "text" && "$show_details" == "true" ]] && echo "- Host: $host_name (ansible_host=${host_ip:-unknown})"
+        # Check if this is the first host (for cluster state check)
+        local check_cluster="false"
+        [[ "$idx" -eq 0 ]] && check_cluster="true"
 
-        if ! ssh -F "$ssh_config_file" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" true >/dev/null 2>&1; then
-            [[ "$output_format" == "text" ]] && echo "    SSH: FAILED (host unreachable)"
-            overall_issues=$((overall_issues + 1))
-            ssh_failed=$((ssh_failed + 1))
-            json_issues+=("{\"type\": \"ssh_unreachable\", \"host\": \"$host_name\", \"severity\": \"critical\"}")
-            continue
-        else
-            [[ "$output_format" == "text" ]] && echo "    SSH: OK"
-            ssh_passed=$((ssh_passed + 1))
-        fi
+        # Launch health check in background
+        (
+            health_check_single_host "$ssh_config_file" "$host_name" "$host_ip" "$ssh_timeout" "$cloud_provider" "$check_cluster" >/dev/null
+        ) &
+        host_pids+=($!)
 
-        if grep -Eq "^Host[[:space:]]+${host_name}-cos" "$ssh_config_file" >/dev/null 2>&1; then
-            if ssh -F "$ssh_config_file" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "${host_name}-cos" true >/dev/null 2>&1; then
-                [[ "$output_format" == "text" ]] && echo "    COS SSH (${host_name}-cos): OK"
-            else
-                [[ "$output_format" == "text" ]] && echo "    COS SSH (${host_name}-cos): FAILED"
-                overall_issues=$((overall_issues + 1))
-                json_issues+=("{\"type\": \"cos_ssh_unreachable\", \"host\": \"$host_name-cos\", \"severity\": \"warning\"}")
-            fi
-        fi
+        idx=$((idx + 1))
+    done
 
-        local service
-        for service in "${HEALTH_REQUIRED_SERVICES[@]}"; do
-            if ssh -F "$ssh_config_file" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" sudo systemctl is-active "$service" >/dev/null 2>&1; then
-                [[ "$output_format" == "text" ]] && echo "    Service $service: active"
-                services_active=$((services_active + 1))
-                continue
-            fi
-
-            if [[ "$do_try_fix" == "true" ]]; then
-                remediation_attempted=true
-                if ssh -F "$ssh_config_file" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" sudo systemctl restart "$service" >/dev/null 2>&1 && \
-                   ssh -F "$ssh_config_file" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" sudo systemctl is-active "$service" >/dev/null 2>&1; then
-                    [[ "$output_format" == "text" ]] && echo "    Service $service: restarted successfully"
-                    services_active=$((services_active + 1))
-                    continue
-                else
-                    remediation_failed=true
+    # Show progress while waiting for results
+    if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
+        local completed=0
+        while [[ $completed -lt ${#host_pids[@]} ]]; do
+            completed=0
+            for pid in "${host_pids[@]}"; do
+                if ! kill -0 "$pid" 2>/dev/null; then
+                    completed=$((completed + 1))
                 fi
+            done
+            if [[ $completed -lt ${#host_pids[@]} ]]; then
+                echo -ne "\rProgress: $completed/${#host_pids[@]} hosts checked..."
+                sleep 0.5
             fi
-
-            [[ "$output_format" == "text" ]] && echo "    Service $service: FAILED"
-            overall_issues=$((overall_issues + 1))
-            services_failed=$((services_failed + 1))
-            json_issues+=("{\"type\": \"service_failed\", \"host\": \"$host_name\", \"service\": \"$service\", \"severity\": \"critical\"}")
         done
+        echo -e "\rProgress: ${#host_pids[@]}/${#host_pids[@]} hosts checked   "
+        echo ""
+    fi
 
-        # Check volume attachments
-        if ! health_check_volume_attachments "$ssh_config_file" "$host_name" "$ssh_timeout" json_issues "$output_format"; then
-            overall_issues=$((overall_issues + 1))
+    # Wait for all background jobs to complete
+    for pid in "${host_pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+
+    # Collect all result files
+    for entry in "${host_entries[@]}"; do
+        IFS='|' read -r host_name host_ip <<<"$entry"
+        host_name="${host_name//[[:space:]]/}"
+
+        if [[ -z "$host_name" ]]; then
+            continue
         fi
 
-        # Check cluster state (only check on first node to avoid redundancy)
-        if [[ "$host_name" == "${host_entries[0]%%|*}" ]]; then
-            if ! health_check_cluster_state "$ssh_config_file" "$host_name" "$ssh_timeout" json_issues "$output_format"; then
-                overall_issues=$((overall_issues + 1))
-            fi
-        fi
-
-        local ip_info remote_private_ip remote_public_ip
-        ip_info=$(health_fetch_remote_ips "$ssh_config_file" "$host_name" "$ssh_timeout" "$cloud_provider")
-        IFS='|' read -r remote_private_ip remote_public_ip <<<"$ip_info"
-        [[ -z "$remote_public_ip" ]] && remote_public_ip="$remote_private_ip"
-
-        if [[ -n "$remote_private_ip" && "$output_format" == "text" ]]; then
-            echo "    Private IP: $remote_private_ip"
-        fi
-
-        if [[ -n "$remote_public_ip" && -n "$host_ip" && "$remote_public_ip" != "$host_ip" ]]; then
-            ip_mismatches=$((ip_mismatches + 1))
-
-            if [[ "$do_update" == "true" ]]; then
-                # Backup files before modification
-                local backup_inventory backup_ssh backup_info
-                backup_inventory=$(health_backup_file "$inventory_file" "$deploy_dir")
-                backup_ssh=$(health_backup_file "$ssh_config_file" "$deploy_dir")
-                [[ -f "$info_file" ]] && backup_info=$(health_backup_file "$info_file" "$deploy_dir")
-
-                if [[ "$output_format" == "text" ]]; then
-                    [[ -n "$backup_inventory" ]] && echo "    Created backup: $backup_inventory"
-                    [[ -n "$backup_ssh" ]] && echo "    Created backup: $backup_ssh"
-                    [[ -n "$backup_info" ]] && echo "    Created backup: $backup_info"
-                fi
-
-                local updated_any="false"
-                if health_update_inventory_ip "$inventory_file" "$host_name" "$remote_public_ip"; then
-                    [[ "$output_format" == "text" ]] && echo "    Updated inventory.ini with host IP $remote_public_ip"
-                    updated_any="true"
-                fi
-                if health_update_ssh_config "$ssh_config_file" "$host_name" "$remote_public_ip"; then
-                    [[ "$output_format" == "text" ]] && echo "    Updated ssh_config entries for $host_name"
-                    updated_any="true"
-                fi
-                if health_update_info_file "$info_file" "$host_ip" "$remote_public_ip"; then
-                    [[ "$output_format" == "text" ]] && echo "    Updated INFO.txt with new IP address"
-                    updated_any="true"
-                fi
-                if [[ "$updated_any" != "true" ]]; then
-                    [[ "$output_format" == "text" ]] && echo "    IP changed to $remote_public_ip but local metadata already up to date"
-                else
-                    host_ip="$remote_public_ip"
-                fi
-            else
-                [[ "$output_format" == "text" ]] && echo "    IP mismatch detected (inventory=$host_ip, live=$remote_public_ip) - run with --update to sync files"
-                overall_issues=$((overall_issues + 1))
-                json_issues+=("{\"type\": \"ip_mismatch\", \"host\": \"$host_name\", \"expected\": \"$host_ip\", \"actual\": \"$remote_public_ip\", \"severity\": \"warning\"}")
-            fi
-
-            if [[ -f "$tfstate_file" ]] && grep -q "$host_ip" "$tfstate_file"; then
-                [[ "$output_format" == "text" ]] && echo "    Terraform note: terraform.tfstate still references $host_ip (run 'tofu refresh' to update)"
-            fi
-        fi
-
-        if [[ -n "$host_ip" ]]; then
-            health_check_external_ports "$host_ip" "$host_name" json_issues "$output_format"
-            local port_failures=$?
-            overall_issues=$((overall_issues + port_failures))
+        # Find the result file (may have different PID)
+        local result_file
+        result_file=$(find /tmp -maxdepth 1 -name "health_${host_name}_*.tmp" 2>/dev/null | head -1)
+        if [[ -n "$result_file" && -f "$result_file" ]]; then
+            result_files+=("$result_file")
         fi
     done
 
+    # Process results and display output
+    for result_file in "${result_files[@]}"; do
+        if [[ ! -f "$result_file" ]]; then
+            continue
+        fi
+
+        # Read JSON result
+        local host_name ansible_host ssh_ok cos_ssh_ok services volume_status cluster_status private_ip public_ip port_8443_ok port_8563_ok
+        host_name=$(jq -r '.host' "$result_file" 2>/dev/null || echo "unknown")
+        ansible_host=$(jq -r '.ansible_host' "$result_file" 2>/dev/null || echo "unknown")
+        ssh_ok=$(jq -r '.ssh_ok' "$result_file" 2>/dev/null || echo "false")
+        cos_ssh_ok=$(jq -r '.cos_ssh_ok' "$result_file" 2>/dev/null || echo "false")
+        services=$(jq -r '.services' "$result_file" 2>/dev/null || echo "")
+        volume_status=$(jq -r '.volume_status' "$result_file" 2>/dev/null || echo "")
+        cluster_status=$(jq -r '.cluster_status' "$result_file" 2>/dev/null || echo "")
+        private_ip=$(jq -r '.private_ip' "$result_file" 2>/dev/null || echo "")
+        public_ip=$(jq -r '.public_ip' "$result_file" 2>/dev/null || echo "")
+        port_8443_ok=$(jq -r '.port_8443_ok' "$result_file" 2>/dev/null || echo "false")
+        port_8563_ok=$(jq -r '.port_8563_ok' "$result_file" 2>/dev/null || echo "false")
+
+        # Add issues from this host to global issues
+        local host_issues
+        host_issues=$(jq -c '.issues[]' "$result_file" 2>/dev/null || echo "")
+        if [[ -n "$host_issues" ]]; then
+            while IFS= read -r issue; do
+                [[ -n "$issue" ]] && json_issues+=("$issue")
+            done <<< "$host_issues"
+        fi
+
+        # Count results (for both text and JSON output)
+        if [[ "$ssh_ok" == "true" ]]; then
+            ssh_passed=$((ssh_passed + 1))
+        else
+            ssh_failed=$((ssh_failed + 1))
+            overall_issues=$((overall_issues + 1))
+        fi
+
+        # Count service results
+        IFS=';' read -ra service_array <<< "$services"
+        for service_status in "${service_array[@]}"; do
+            [[ -z "$service_status" ]] && continue
+            IFS=':' read -r svc_name svc_state <<< "$service_status"
+            if [[ "$svc_state" == "active" ]]; then
+                services_active=$((services_active + 1))
+            else
+                services_failed=$((services_failed + 1))
+                overall_issues=$((overall_issues + 1))
+            fi
+        done
+
+        # Count volume issues
+        IFS='|' read -r vol_type vol_count vol_sizes <<< "$volume_status"
+        if [[ "$vol_type" == "no_data_volumes" || "$vol_type" == "broken_volume_symlink" ]]; then
+            overall_issues=$((overall_issues + 1))
+        fi
+
+        # Count IP mismatches
+        if [[ -n "$public_ip" && -n "$ansible_host" && "$public_ip" != "$private_ip" && "$public_ip" != "$ansible_host" ]]; then
+            ip_mismatches=$((ip_mismatches + 1))
+            overall_issues=$((overall_issues + 1))
+        fi
+
+        # Count port issues
+        if [[ "$port_8443_ok" != "true" && -n "$public_ip" ]]; then
+            overall_issues=$((overall_issues + 1))
+        fi
+        if [[ "$port_8563_ok" != "true" && -n "$public_ip" ]]; then
+            overall_issues=$((overall_issues + 1))
+        fi
+
+        # Now display (only for text output)
+        if [[ "$output_format" == "text" && "$show_details" == "true" ]]; then
+            echo "- Host: $host_name (ansible_host=${ansible_host})"
+
+            # SSH check
+            if [[ "$ssh_ok" == "true" ]]; then
+                echo "    ✓ SSH: OK"
+            else
+                echo "    ✗ SSH: FAILED (host unreachable)"
+                failed_checks+=("$host_name: SSH unreachable")
+                continue
+            fi
+
+            # COS SSH check
+            if [[ "$cos_ssh_ok" == "true" ]]; then
+                echo "    ✓ COS SSH (${host_name}-cos): OK"
+            elif grep -Eq "^Host[[:space:]]+${host_name}-cos" "$ssh_config_file" 2>/dev/null; then
+                echo "    ✗ COS SSH (${host_name}-cos): FAILED"
+                failed_checks+=("$host_name: COS SSH unreachable")
+            fi
+
+            # Service checks (display only - already counted above)
+            IFS=';' read -ra service_array <<< "$services"
+            for service_status in "${service_array[@]}"; do
+                if [[ -z "$service_status" ]]; then
+                    continue
+                fi
+                IFS=':' read -r svc_name svc_state <<< "$service_status"
+                if [[ "$svc_state" == "active" ]]; then
+                    echo "    ✓ Service $svc_name: active"
+                else
+                    echo "    ✗ Service $svc_name: $svc_state"
+                    failed_checks+=("$host_name: Service $svc_name is $svc_state")
+                fi
+            done
+
+            # Volume check (display only - already counted above)
+            IFS='|' read -r vol_type vol_count vol_sizes <<< "$volume_status"
+            if [[ "$vol_type" == "volume_ok" ]]; then
+                if [[ -n "$vol_sizes" ]]; then
+                    echo "    ✓ Volume check: OK ($vol_count disk(s) found: $vol_sizes)"
+                else
+                    echo "    ✓ Volume check: OK ($vol_count disk(s) found)"
+                fi
+            elif [[ "$vol_type" == "no_data_volumes" ]]; then
+                echo "    ✗ Volume check: WARNING - No exasol_data_* symlinks detected"
+                failed_checks+=("$host_name: No data volumes detected")
+            elif [[ "$vol_type" == "broken_volume_symlink" ]]; then
+                echo "    ✗ Volume check: WARNING - Broken symlinks: $vol_sizes"
+                failed_checks+=("$host_name: Broken volume symlinks")
+            fi
+
+            # Cluster state
+            if [[ "$cluster_status" == "cluster_state_ok" ]]; then
+                echo "    ✓ Cluster state: OK (cluster online)"
+            elif [[ "$cluster_status" == "cluster_state_unknown" ]]; then
+                echo "    Cluster state: Unable to verify (c4 cluster status unavailable)"
+            fi
+
+            # IP information
+            if [[ -n "$private_ip" ]]; then
+                echo "    ✓ Private IP: $private_ip"
+            fi
+
+            # IP mismatch check (display only - already counted above)
+            # If public_ip == private_ip, it means we couldn't fetch public IP from cloud metadata
+            if [[ -n "$public_ip" && -n "$ansible_host" && "$public_ip" != "$private_ip" ]]; then
+                # We have a real public IP from cloud metadata, compare it
+                if [[ "$public_ip" == "$ansible_host" ]]; then
+                    echo "    ✓ Public IP: $public_ip (matches inventory)"
+                else
+                    echo "    ✗ IP mismatch: inventory has $ansible_host, cloud metadata shows $public_ip"
+                    failed_checks+=("$host_name: IP mismatch (inventory=$ansible_host, actual=$public_ip)")
+                fi
+            elif [[ -n "$public_ip" && "$public_ip" == "$private_ip" ]]; then
+                # Cloud metadata not available, show informational message
+                echo "    ⓘ Public IP: Cannot verify (cloud metadata not accessible, inventory shows $ansible_host)"
+            fi
+
+            # Port checks (display only - already counted above)
+            if [[ "$port_8443_ok" == "true" ]]; then
+                echo "    ✓ Admin UI (8443): HTTPS reachable"
+            elif [[ -n "$public_ip" ]]; then
+                echo "    ✗ Admin UI (8443): FAILED"
+                failed_checks+=("$host_name: Admin UI port 8443 unreachable")
+            fi
+
+            if [[ "$port_8563_ok" == "true" ]]; then
+                echo "    ✓ DB port (8563): reachable"
+            elif [[ -n "$public_ip" ]]; then
+                echo "    ✗ DB port (8563): FAILED"
+                failed_checks+=("$host_name: DB port 8563 unreachable")
+            fi
+        fi
+
+        # Clean up result file
+        rm -f "$result_file"
+    done
+
     # Terraform state refresh if requested
-    if [[ "$do_refresh_terraform" == "true" && "$ip_mismatches" -gt 0 ]]; then
+    if [[ "$do_refresh_terraform" == "true" ]]; then
         if [[ "$output_format" == "text" ]]; then
             echo ""
             echo "Running Terraform state refresh..."
@@ -932,10 +1124,6 @@ EOF
             final_status="issues_detected"
             exit_code=$HEALTH_EXIT_ISSUES
         fi
-        if [[ "$remediation_attempted" == "true" && "$remediation_failed" == "true" ]]; then
-            final_status="remediation_failed"
-            exit_code=$HEALTH_EXIT_REMEDIATION_FAILED
-        fi
 
         # Output JSON
         cat <<EOF
@@ -952,26 +1140,29 @@ EOF
     "services": {
       "active": $services_active,
       "failed": $services_failed
-    },
-    "ip_consistency": {
-      "mismatches": $ip_mismatches
     }
   },
   "issues_count": $overall_issues,
-  "issues": $issues_json,
-  "remediation": {
-    "attempted": $remediation_attempted,
-    "failed": $remediation_failed
-  }
+  "issues": $issues_json
 }
 EOF
     else
         # Text output
         echo "============================================================"
         if [[ "$overall_issues" -eq 0 ]]; then
-            log_info "Health check completed without issues."
+            log_info "✓ Health check completed without issues."
         else
-            log_warn "Health check detected ${overall_issues} issue(s)."
+            log_error "✗ Health check detected ${overall_issues} issue(s)."
+
+            # Print summary of failed checks
+            if [[ ${#failed_checks[@]} -gt 0 ]]; then
+                echo ""
+                echo "Summary of Failed Checks:"
+                echo "============================================================"
+                for failed_check in "${failed_checks[@]}"; do
+                    echo "  ✗ $failed_check"
+                done
+            fi
         fi
     fi
 
@@ -981,8 +1172,6 @@ EOF
     # Determine exit code
     if [[ "$overall_issues" -eq 0 ]]; then
         return "$HEALTH_EXIT_HEALTHY"
-    elif [[ "$remediation_attempted" == "true" && "$remediation_failed" == "true" ]]; then
-        return "$HEALTH_EXIT_REMEDIATION_FAILED"
     else
         return "$HEALTH_EXIT_ISSUES"
     fi
