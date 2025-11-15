@@ -121,7 +121,7 @@ class TestE2EFramework(unittest.TestCase):
                           f"Missing expected parameters. Expected at least {expected_params}, got {actual_params}")
 
     def test_default_combinations(self):
-        """Test default full combinations when combinations not specified."""
+        """Test default 1-wise combinations when combinations not specified."""
         config = {
             'test_suites': {
                 'test_suite': {
@@ -137,12 +137,12 @@ class TestE2EFramework(unittest.TestCase):
         framework = E2ETestFramework(config_file, Path(self.temp_dir))
         plan = framework.generate_test_plan(dry_run=True)
         
-        # Should generate 4 test cases (full by default)
-        self.assertEqual(len(plan), 4)
+        # Should generate 2 test cases (1-wise by default)
+        self.assertEqual(len(plan), 2)
         
-        # Each test should have test_type 'full'
+        # Each test should have test_type '1-wise'
         for test in plan:
-            self.assertEqual(test['test_type'], 'full')
+            self.assertEqual(test['test_type'], '1-wise')
             # Check that all expected parameters are present
             expected_params = {'param1', 'param2'}
             actual_params = set(test['parameters'].keys())

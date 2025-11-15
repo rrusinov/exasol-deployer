@@ -168,7 +168,7 @@ class E2ETestFramework:
             provider_name = suite_config.get('provider', '').lower()
             if providers and provider_name not in providers:
                 continue
-            combinations_type = suite_config.get('combinations', 'full')
+            combinations_type = suite_config.get('combinations', '1-wise')
             if combinations_type == '2-wise':
                 combinations = self._generate_2_wise_combinations(suite_config)
             elif combinations_type == '1-wise':
