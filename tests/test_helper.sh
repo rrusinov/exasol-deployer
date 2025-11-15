@@ -144,17 +144,40 @@ test_summary() {
 
 # Setup and teardown helpers
 setup_test_dir() {
-    local test_dir="/tmp/exasol-test-$$"
+    # Create unique test directory in /var/tmp for persistence
+    local username=$(whoami)
+    local test_id=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 8)
+    local test_dir="/var/tmp/exasol-deployer-utest-${username}-${test_id}"
     mkdir -p "$test_dir"
     echo "$test_dir"
 }
 
 cleanup_test_dir() {
     local test_dir="$1"
-    if [[ -n "$test_dir" && "$test_dir" == /tmp/exasol-test-* ]]; then
+    # Only cleanup directories that match our unit test pattern and belong to this user
+    if [[ -n "$test_dir" && "$test_dir" =~ ^/var/tmp/exasol-deployer-utest-$(whoami)-[a-zA-Z0-9]{8}$ ]]; then
         rm -rf "$test_dir"
     fi
 }
+
+# Global cleanup for any test directories that might be left behind
+global_cleanup() {
+    local username=$(whoami)
+    
+    # Clean up any unit test directories in /var/tmp that belong to this user
+    find /var/tmp -maxdepth 1 -name "exasol-deployer-utest-${username}-*" -type d -exec rm -rf {} + 2>/dev/null || true
+    
+    # Clean up any e2e test directories in /var/tmp that belong to this user
+    find /var/tmp -maxdepth 1 -name "exasol-deployer-e2e-${username}-*" -type d -exec rm -rf {} + 2>/dev/null || true
+    
+    # Also clean up any old directories in /tmp (legacy cleanup)
+    find /tmp -maxdepth 1 -name "exasol-test-${username}-*" -type d -exec rm -rf {} + 2>/dev/null || true
+    find /tmp -maxdepth 1 -name "exasol_e2e_${username}_*" -type d -exec rm -rf {} + 2>/dev/null || true
+    find /tmp -maxdepth 1 -name "exasol_test_results_*" -type d -exec rm -rf {} + 2>/dev/null || true
+}
+
+# Register global cleanup to run on script exit
+trap global_cleanup EXIT
 
 # Mock function helper
 mock_command() {
