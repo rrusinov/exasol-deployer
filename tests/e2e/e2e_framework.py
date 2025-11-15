@@ -248,7 +248,7 @@ class E2ETestFramework:
             # Fallback to /tmp if /var/tmp is not available
             self.work_dir = Path(tempfile.mkdtemp(prefix=f"exasol_e2e_{username}_{test_id}_"))
         
-        self.results_dir = results_dir if results_dir else Path('./tmp/e2e-results/')
+        self.results_dir = results_dir if results_dir else Path('./tmp/tests/results/')
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.results = []
         # Run CLI commands from repository root so ./exasol can be found
@@ -286,17 +286,44 @@ class E2ETestFramework:
 
     def _setup_logging(self):
         """Setup logging configuration."""
+        # Ensure results directory exists before creating log file
+        try:
+            self.results_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            # If directory creation fails, create fallback in temp
+            import tempfile
+            fallback_dir = Path(tempfile.mkdtemp(prefix="exasol_e2e_logs_"))
+            self.results_dir = fallback_dir / 'results'
+            self.results_dir.mkdir(parents=True, exist_ok=True)
+        
         log_file = self.results_dir / f"e2e_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         self.file_handler = logging.FileHandler(log_file)
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                self.file_handler,
-                logging.StreamHandler(sys.stdout)
-            ]
-        )
+        
+        # Configure logger specifically for this module instead of basicConfig
         self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+        
+        # Create formatter
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        
+        # Configure file handler
+        self.file_handler.setFormatter(formatter)
+        self.file_handler.setLevel(logging.INFO)
+        
+        # Add file handler to this logger
+        self.logger.addHandler(self.file_handler)
+        
+        # Also add to root logger if no handlers exist yet (for stdout)
+        root_logger = logging.getLogger()
+        if not root_logger.handlers:
+            # Add stdout handler to root logger
+            stdout_handler = logging.StreamHandler(sys.stdout)
+            stdout_handler.setFormatter(formatter)
+            stdout_handler.setLevel(logging.INFO)
+            root_logger.addHandler(stdout_handler)
+            root_logger.setLevel(logging.INFO)
+        
+        # Logging is now ready - messages will be written when called
 
     def _load_config(self) -> Dict[str, Any]:
         """Load test configuration from JSON/YAML file."""
@@ -1607,7 +1634,7 @@ def main():
     parser = argparse.ArgumentParser(description='Exasol E2E Test Framework')
     parser.add_argument('action', choices=['plan', 'run'], help='Action to perform')
     parser.add_argument('--config', required=True, help='Path to test configuration file')
-    parser.add_argument('--results-dir', default='tests/e2e/results', help='Path to results directory')
+    parser.add_argument('--results-dir', default='tmp/tests/results', help='Path to results directory')
     parser.add_argument('--dry-run', action='store_true', help='Generate plan without executing')
     parser.add_argument('--parallel', type=int, default=0, help='Maximum parallel executions (0=auto)')
     parser.add_argument('--providers', help='Comma separated list of providers to include (e.g. aws,gcp)')

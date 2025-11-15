@@ -25,7 +25,7 @@ tests/e2e/
 └── README.md          # This file
 ```
 
-Results are stored in `./tmp/e2e-results/` by default (auto-created).
+Results are stored in `./tmp/tests/results/` by default (auto-created).
 
 ## Usage
 
@@ -168,7 +168,7 @@ The framework performs the following validation checks for each test:
 
 ## Results
 
-Test results are saved to `./tmp/e2e-results/` with timestamps:
+Test results are saved to `./tmp/tests/results/` with timestamps:
 
 - `test_results_YYYYMMDD_HHMMSS.json`: Detailed results with validation information
 - `test_results_YYYYMMDD_HHMMSS.html`: Human-friendly report with pass/fail table
