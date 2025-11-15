@@ -67,7 +67,7 @@ results = framework.run_tests(plan, max_parallel=2)
 
 ## Configuration Format
 
-Test configurations are defined in JSON format. The framework supports three combination strategies:
+Test configurations are defined in JSON format. The framework supports three combination strategies. If no combination strategy is specified, 1-wise testing is used by default:
 
 ### 2-wise Testing
 
@@ -85,13 +85,13 @@ Generates combinations covering all pairs of parameter values efficiently:
         "data_volume_size": [100, 200],
         "root_volume_size": [50, 100]
       },
-      "combinations": "2-wise"
+      "combinations": "1-wise"
     }
   }
 }
 ```
 
-For 5 parameters with 2 values each, generates 8 test combinations.
+For 5 parameters with 2 values each, generates 2 test combinations (one with all first values, one with all second values).
 
 ### 1-wise Testing
 
