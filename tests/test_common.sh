@@ -29,12 +29,16 @@ test_validate_directory() {
     assert_equals "$test_dir" "$result" "Should validate existing directory"
 
     # Test with relative path
-    local result
-    pushd /tmp >/dev/null || return 1
-    result=$(validate_directory "./exasol-test-$$")
-    popd >/dev/null || return 1
-    assert_contains "$result" "/tmp/" "Should convert relative path to /tmp"
-    assert_contains "$result" "exasol-test-$$" "Should include directory name"
+    test_dir=$(setup_test_dir)
+    (cd /var/tmp && result=$(validate_directory "./$(basename "$test_dir")"))
+    # Check that the result has the expected pattern (username + random ID)
+    username=$(whoami)
+    if [[ ! "$result" =~ ^/var/tmp/exasol-deployer-utest-${username}-[a-zA-Z0-9]{8}$ ]]; then
+        echo -e "${RED}✗${NC} Result should match pattern /var/tmp/exasol-deployer-utest-${username}-XXXXXXXX"
+        echo "  String: $result"
+        echo "  Expected pattern: /var/tmp/exasol-deployer-utest-${username}-XXXXXXXX"
+        return 1
+    fi
 
     cleanup_test_dir "$test_dir"
 }

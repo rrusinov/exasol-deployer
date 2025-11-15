@@ -9,6 +9,8 @@ E2E framework for comprehensive testing of Exasol deployments.
 import json
 import logging
 import time
+import getpass
+import uuid
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import asdict
@@ -389,15 +391,19 @@ def main():
     temp_dirs = []
     cleanup_temp_dirs = []
     
+    # Create user-specific temp directories to avoid conflicts
+    username = getpass.getuser()
+    user_id = str(uuid.uuid4())[:8]
+    
     if not args.results_dir:
-        temp_results_dir = tempfile.mkdtemp(prefix="exasol_e2e_results_")
+        temp_results_dir = tempfile.mkdtemp(prefix=f"exasol_e2e_results_{username}_{user_id}_")
         args.results_dir = temp_results_dir
         temp_dirs.append(temp_results_dir)
         if not args.keep_results:
             cleanup_temp_dirs.append(temp_results_dir)
     
     if not args.test_results_dir:
-        temp_test_dir = tempfile.mkdtemp(prefix="exasol_e2e_tests_")
+        temp_test_dir = tempfile.mkdtemp(prefix=f"exasol_e2e_tests_{username}_{user_id}_")
         args.test_results_dir = temp_test_dir
         temp_dirs.append(temp_test_dir)
         if not args.keep_results:

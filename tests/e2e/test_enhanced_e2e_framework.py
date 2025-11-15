@@ -9,6 +9,8 @@ with the main E2E framework without requiring actual cloud resources.
 import unittest
 import tempfile
 import json
+import getpass
+import uuid
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 from enhanced_e2e_framework import EnhancedE2ETestFramework
@@ -19,7 +21,10 @@ class TestEnhancedE2ETestFramework(unittest.TestCase):
     
     def setUp(self):
         """Set up test environment."""
-        self.temp_dir = Path(tempfile.mkdtemp())
+        # Create user-specific temp directory
+        username = getpass.getuser()
+        test_id = str(uuid.uuid4())[:8]
+        self.temp_dir = Path(tempfile.mkdtemp(prefix=f"exasol_test_{username}_{test_id}_"))
         
         # Create test configuration
         self.config = {
@@ -318,7 +323,10 @@ class TestEnhancedE2EFrameworkMain(unittest.TestCase):
     
     def setUp(self):
         """Set up test environment."""
-        self.temp_dir = Path(tempfile.mkdtemp())
+        # Create user-specific temp directory
+        username = getpass.getuser()
+        test_id = str(uuid.uuid4())[:8]
+        self.temp_dir = Path(tempfile.mkdtemp(prefix=f"exasol_test_{username}_{test_id}_"))
         
         # Create test configuration
         self.config = {

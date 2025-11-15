@@ -697,8 +697,12 @@ ensure_directory() {
 # Generate random password
 generate_password() {
     local length="${1:-16}"
-    # Use head first to avoid SIGPIPE with set -o pipefail
-    head -c 100 < /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | head -c "$length"
+    # Generate more characters than needed and take exactly what we want
+    # This ensures we always get the requested length even if tr processes fewer chars
+    local password
+    password=$(head -c 200 < /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9')
+    # Take exactly the requested length
+    echo "${password:0:$length}"
 }
 
 # Check if directory is a valid deployment directory

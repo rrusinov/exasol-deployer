@@ -16,7 +16,7 @@ Usage: tests/run_e2e.sh [options]
 Options:
   --provider <name[,name...]>   Run only tests for the specified cloud provider(s)
   --parallel <n>                Override parallelism (0 = auto/all tests)
-  --results-dir <path>          Directory where e2e results are stored (default: tmp/e2e-results)
+  --results-dir <path>          Directory where e2e results are stored (default: tmp/tests/results)
   --rerun <failed|DEPLOYMENT>   Rerun all failed tests from the latest results or a specific deployment id
   --results-file <path>         Use this results file when selecting tests to rerun
   --list-test(s)                List all known tests grouped by provider
@@ -32,7 +32,7 @@ Examples:
 EOF
 }
 
-RESULTS_DIR="tmp/e2e-results"
+RESULTS_DIR="tmp/tests/results"
 PROVIDER_FILTER=""
 PARALLEL=0
 RERUN_MODE=""
