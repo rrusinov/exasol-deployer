@@ -25,7 +25,8 @@ FAILED_TEST_FILES=0
 # Function to run a test file
 run_test_file() {
     local test_file="$1"
-    local test_name=$(basename "$test_file")
+    local test_name
+    test_name=$(basename "$test_file")
 
     echo -e "${BLUE}Running: $test_name${NC}"
     echo ""
@@ -55,6 +56,7 @@ run_test_file "$TEST_DIR/test_template_validation.sh"
 run_test_file "$TEST_DIR/test_url_availability.sh"
 run_test_file "$TEST_DIR/test_documentation.sh"
 run_test_file "$TEST_DIR/test_help_options.sh"
+run_test_file "$TEST_DIR/test_shellcheck.sh"
 run_test_file "$TEST_DIR/test_e2e_framework.sh"
 
 # Overall summary

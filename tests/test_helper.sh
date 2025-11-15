@@ -171,7 +171,8 @@ extract_command_options() {
     local function_name="$2"
     
     # Get the directory where this script is located
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     local python_helper="$script_dir/lib/python/extract_function_options.py"
     
     if [[ ! -f "$python_helper" ]]; then

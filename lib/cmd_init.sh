@@ -3,8 +3,11 @@
 
 # Source dependencies
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
 source "$LIB_DIR/common.sh"
+# shellcheck source=lib/state.sh
 source "$LIB_DIR/state.sh"
+# shellcheck source=lib/versions.sh
 source "$LIB_DIR/versions.sh"
 
 # Supported cloud providers

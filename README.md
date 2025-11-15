@@ -27,6 +27,7 @@ Before using this deployer, ensure you have the following installed:
 
 **For Development/Testing Only:**
 - **Python 3.6+** (required only for running unit tests in `tests/` directory)
+- **ShellCheck** (used by the shell lint test suite)
 
 **Note:** Cloud provider CLI tools (aws, az, gcloud) are **not required** for deployment. OpenTofu reads credentials from standard configuration files or environment variables.
 
@@ -544,6 +545,8 @@ The project includes a comprehensive unit test suite:
 ./tests/test_common.sh
 ./tests/test_versions.sh
 ./tests/test_state.sh
+# Lint all shell scripts
+./tests/test_shellcheck.sh
 ```
 
 Test coverage includes:
@@ -551,6 +554,7 @@ Test coverage includes:
 - Version management (version validation, config parsing)
 - State management (initialization, locking, status updates)
 - Variable file generation
+- ShellCheck linting for all bash scripts
 
 ### Continuous Integration
 

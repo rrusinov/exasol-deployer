@@ -99,8 +99,10 @@ count_result_files() {
 }
 
 latest_results_file() {
-    if compgen -G "$RESULTS_DIR/test_results_*.json" > /dev/null; then
-        ls -t "$RESULTS_DIR"/test_results_*.json | head -n 1
+    local newest
+    newest=$(find "$RESULTS_DIR" -maxdepth 1 -type f -name 'test_results_*.json' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | awk '{print $2}')
+    if [[ -n "$newest" ]]; then
+        echo "$newest"
     elif [[ -f "$RESULTS_DIR/latest_results.json" ]]; then
         echo "$RESULTS_DIR/latest_results.json"
     else
@@ -302,7 +304,7 @@ if [[ -n "$RUN_TEST_IDS" ]]; then
     declare -A manual_groups=()
     missing_tests=()
 
-    while IFS='|' read -r status test_id cfg provider suite; do
+    while IFS='|' read -r status test_id cfg _ _; do
         [[ -z "$status" ]] && continue
         if [[ "$status" == "FOUND" ]]; then
             if [[ -n "${manual_groups[$cfg]:-}" ]]; then

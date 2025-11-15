@@ -3,11 +3,14 @@
 
 # Get script directory
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=tests/test_helper.sh
 source "$TEST_DIR/test_helper.sh"
 
 # Source the libraries we're testing
 LIB_DIR="$TEST_DIR/../lib"
+# shellcheck source=lib/common.sh
 source "$LIB_DIR/common.sh"
+# shellcheck source=lib/state.sh
 source "$LIB_DIR/state.sh"
 
 echo "Testing common.sh functions"
@@ -19,14 +22,19 @@ test_validate_directory() {
     echo "Test: validate_directory"
 
     # Test with valid directory
-    local test_dir=$(setup_test_dir)
+    local test_dir
+    test_dir=$(setup_test_dir)
     local result
     result=$(validate_directory "$test_dir")
     assert_equals "$test_dir" "$result" "Should validate existing directory"
 
     # Test with relative path
-    (cd /tmp && result=$(validate_directory "./exasol-test-$$"))
-    assert_contains "$result" "/tmp/exasol-test-$$" "Should convert relative to absolute path"
+    local result
+    pushd /tmp >/dev/null || return 1
+    result=$(validate_directory "./exasol-test-$$")
+    popd >/dev/null || return 1
+    assert_contains "$result" "/tmp/" "Should convert relative path to /tmp"
+    assert_contains "$result" "exasol-test-$$" "Should include directory name"
 
     cleanup_test_dir "$test_dir"
 }
@@ -127,7 +135,8 @@ test_parse_config_file() {
     echo ""
     echo "Test: parse_config_file"
 
-    local test_dir=$(setup_test_dir)
+    local test_dir
+    test_dir=$(setup_test_dir)
     local config_file="$test_dir/test.conf"
 
     cat > "$config_file" << 'EOF'
@@ -154,7 +163,8 @@ test_get_config_sections() {
     echo ""
     echo "Test: get_config_sections"
 
-    local test_dir=$(setup_test_dir)
+    local test_dir
+    test_dir=$(setup_test_dir)
     local config_file="$test_dir/test.conf"
 
     cat > "$config_file" << 'EOF'
@@ -183,7 +193,8 @@ test_generate_info_files() {
     echo ""
     echo "Test: generate_info_files"
 
-    local test_dir=$(setup_test_dir)
+    local test_dir
+    test_dir=$(setup_test_dir)
 
     # Create mock state file
     cat > "$test_dir/.exasol.json" << 'EOF'

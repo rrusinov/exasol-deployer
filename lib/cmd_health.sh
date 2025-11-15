@@ -2,7 +2,9 @@
 # Health command implementation
 
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
 source "$LIB_DIR/common.sh"
+# shellcheck source=lib/state.sh
 source "$LIB_DIR/state.sh"
 
 readonly HEALTH_REQUIRED_SERVICES=(
@@ -61,6 +63,117 @@ health_require_tool() {
     fi
 }
 
+health_get_expected_cluster_size() {
+    local deploy_dir="$1"
+
+    local cluster_size
+    cluster_size=$(state_read "$deploy_dir" "cluster_size" 2>/dev/null || echo "")
+    if [[ -z "$cluster_size" || "$cluster_size" == "null" ]]; then
+        local tfvars_file="$deploy_dir/${VARS_FILE}"
+
+        if [[ -f "$tfvars_file" ]]; then
+            cluster_size=$(awk -F'=' '/^[[:space:]]*node_count[[:space:]]*=/{gsub(/[^0-9]/,"",$2); if($2!="") {print $2; exit}}' "$tfvars_file" 2>/dev/null)
+        fi
+    fi
+
+    if [[ -z "$cluster_size" ]]; then
+        cluster_size="unknown"
+    fi
+
+    echo "$cluster_size"
+}
+
+health_fetch_remote_ips() {
+    local ssh_config="$1"
+    local host_name="$2"
+    local ssh_timeout="$3"
+    local cloud_provider="$4"
+
+    local private_ip=""
+    private_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" hostname -I 2>/dev/null | awk '{print $1}' || true)
+
+    local public_ip=""
+    case "$cloud_provider" in
+        aws)
+            public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                "curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null" 2>/dev/null || true)
+            ;;
+        azure)
+            public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                "curl -s -H Metadata:true --max-time 2 'http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text' 2>/dev/null" 2>/dev/null || true)
+            ;;
+        gcp)
+            public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                "curl -s -H Metadata-Flavor:Google --max-time 2 'http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip' 2>/dev/null" 2>/dev/null || true)
+            ;;
+        *)
+            public_ip=""
+            ;;
+    esac
+
+    public_ip=$(echo "$public_ip" | tr -d '\r')
+    if [[ -z "$public_ip" || "$public_ip" == "not available" ]]; then
+        public_ip="$private_ip"
+    fi
+
+    echo "${private_ip:-}|${public_ip:-}"
+}
+
+health_check_external_ports() {
+    local public_ip="$1"
+    local host_name="$2"
+    local issues_var="$3"
+    local output_format="$4"
+
+    if [[ -z "$public_ip" ]]; then
+        return 0
+    fi
+
+    # shellcheck disable=SC2178
+    # shellcheck disable=SC2178
+    # shellcheck disable=SC2178
+    local -n issues_ref="$issues_var"
+    local failures=0
+
+    if ! command -v timeout >/dev/null 2>&1; then
+        [[ "$output_format" == "text" ]] && echo "    Port checks skipped (timeout command unavailable)"
+        return 0
+    fi
+
+    local curl_output
+    curl_output=$(curl -sk --max-time 10 -o /dev/null -w "%{http_code}|%{content_type}" "https://$public_ip:8443/" 2>/dev/null || echo "000|")
+    local http_code="${curl_output%%|*}"
+    local content_type="${curl_output#*|}"
+    if [[ "$http_code" != "000" ]]; then
+        [[ "$output_format" == "text" ]] && echo "    Admin UI (8443): HTTPS $http_code (${content_type:-unknown})"
+    else
+        [[ "$output_format" == "text" ]] && echo "    Admin UI (8443): FAILED (no HTTPS response)"
+        issues_ref+=("$(printf '{"type": "adminui_unreachable", "host": "%s", "severity": "warning"}' "$host_name")")
+        failures=$((failures + 1))
+    fi
+
+    local db_ok="false"
+    if command -v openssl >/dev/null 2>&1; then
+        if timeout 5 openssl s_client -brief -connect "$public_ip:8563" < /dev/null >/dev/null 2>&1; then
+            db_ok="true"
+        fi
+    else
+        if timeout 5 bash -c "</dev/tcp/$public_ip/8563" >/dev/null 2>&1; then
+            db_ok="true"
+        fi
+    fi
+
+    if [[ "$db_ok" == "true" ]]; then
+        [[ "$output_format" == "text" ]] && echo "    DB port (8563): reachable"
+    else
+        [[ "$output_format" == "text" ]] && echo "    DB port (8563): FAILED"
+        issues_ref+=("$(printf '{"type": "db_port_unreachable", "host": "%s", "severity": "warning"}' "$host_name")")
+        failures=$((failures + 1))
+    fi
+
+    return "$failures"
+}
+
 health_backup_file() {
     local file="$1"
     local deploy_dir="$2"
@@ -69,7 +182,8 @@ health_backup_file() {
         return 1
     fi
 
-    local backup_dir="$deploy_dir/.backups/health/$(date +%Y%m%d_%H%M%S)"
+    local backup_dir
+    backup_dir="$deploy_dir/.backups/health/$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$backup_dir" || return 1
 
     local filename
@@ -226,8 +340,10 @@ health_update_info_file() {
 
 health_check_cloud_metadata_aws() {
     local deploy_dir="$1"
-    local -n issues_ref=$2
+    local issues_var="$2"
     local output_format="$3"
+    # shellcheck disable=SC2178
+    local -n issues_ref="$issues_var"
 
     # Check if AWS CLI is available
     if ! command -v aws >/dev/null 2>&1; then
@@ -241,14 +357,17 @@ health_check_cloud_metadata_aws() {
 
     # Query AWS for instances with this deployment tag
     local instance_count
-    instance_count=$(aws ec2 describe-instances \
+    if ! instance_count=$(aws ec2 describe-instances \
         --filters "Name=tag:deployment,Values=$deployment_name" "Name=instance-state-name,Values=running" \
         --query 'length(Reservations[].Instances[])' \
-        --output text 2>/dev/null || echo "0")
+        --output text 2>/dev/null); then
+        [[ "$output_format" == "text" ]] && echo "    Cloud metadata check: AWS CLI error, skipping"
+        return 0
+    fi
 
     # Get expected instance count from state
     local expected_count
-    expected_count=$(state_read "$deploy_dir" "cluster_size" 2>/dev/null || echo "unknown")
+    expected_count=$(health_get_expected_cluster_size "$deploy_dir")
 
     if [[ "$instance_count" != "unknown" && "$expected_count" != "unknown" && "$instance_count" != "$expected_count" ]]; then
         [[ "$output_format" == "text" ]] && echo "    Cloud metadata: Instance count mismatch (expected=$expected_count, found=$instance_count)"
@@ -262,8 +381,10 @@ health_check_cloud_metadata_aws() {
 
 health_check_cloud_metadata_azure() {
     local deploy_dir="$1"
-    local -n issues_ref=$2
+    local issues_var="$2"
     local output_format="$3"
+    # shellcheck disable=SC2178
+    local -n issues_ref="$issues_var"
 
     # Check if Azure CLI is available
     if ! command -v az >/dev/null 2>&1; then
@@ -285,13 +406,16 @@ health_check_cloud_metadata_azure() {
 
     # Query Azure for running VMs
     local instance_count
-    instance_count=$(az vm list --resource-group "$resource_group" \
+    if ! instance_count=$(az vm list --resource-group "$resource_group" \
         --query "[?tags.deployment=='$deployment_name' && powerState=='VM running'] | length(@)" \
-        --output tsv 2>/dev/null || echo "0")
+        --output tsv 2>/dev/null); then
+        [[ "$output_format" == "text" ]] && echo "    Cloud metadata check: Azure CLI error, skipping"
+        return 0
+    fi
 
     # Get expected instance count from state
     local expected_count
-    expected_count=$(state_read "$deploy_dir" "cluster_size" 2>/dev/null || echo "unknown")
+    expected_count=$(health_get_expected_cluster_size "$deploy_dir")
 
     if [[ "$instance_count" != "unknown" && "$expected_count" != "unknown" && "$instance_count" != "$expected_count" ]]; then
         [[ "$output_format" == "text" ]] && echo "    Cloud metadata: Instance count mismatch (expected=$expected_count, found=$instance_count)"
@@ -305,8 +429,10 @@ health_check_cloud_metadata_azure() {
 
 health_check_cloud_metadata_gcp() {
     local deploy_dir="$1"
-    local -n issues_ref=$2
+    local issues_var="$2"
     local output_format="$3"
+    # shellcheck disable=SC2178
+    local -n issues_ref="$issues_var"
 
     # Check if gcloud is available
     if ! command -v gcloud >/dev/null 2>&1; then
@@ -328,14 +454,17 @@ health_check_cloud_metadata_gcp() {
 
     # Query GCP for running instances
     local instance_count
-    instance_count=$(gcloud compute instances list \
+    if ! instance_count=$(gcloud compute instances list \
         --project="$project" \
         --filter="labels.deployment=$deployment_name AND status=RUNNING" \
-        --format="value(name)" 2>/dev/null | wc -l)
+        --format="value(name)" 2>/dev/null | wc -l); then
+        [[ "$output_format" == "text" ]] && echo "    Cloud metadata check: gcloud CLI error, skipping"
+        return 0
+    fi
 
     # Get expected instance count from state
     local expected_count
-    expected_count=$(state_read "$deploy_dir" "cluster_size" 2>/dev/null || echo "unknown")
+    expected_count=$(health_get_expected_cluster_size "$deploy_dir")
 
     if [[ "$instance_count" != "unknown" && "$expected_count" != "unknown" && "$instance_count" != "$expected_count" ]]; then
         [[ "$output_format" == "text" ]] && echo "    Cloud metadata: Instance count mismatch (expected=$expected_count, found=$instance_count)"
@@ -349,22 +478,19 @@ health_check_cloud_metadata_gcp() {
 
 health_check_cloud_metadata() {
     local deploy_dir="$1"
-    local -n issues_ref=$2
-    local output_format="$3"
-
-    # Determine cloud provider from state
-    local cloud_provider
-    cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
+    local cloud_provider="$2"
+    local issues_var="$3"
+    local output_format="$4"
 
     case "$cloud_provider" in
         aws)
-            health_check_cloud_metadata_aws "$deploy_dir" issues_ref "$output_format"
+            health_check_cloud_metadata_aws "$deploy_dir" "$issues_var" "$output_format"
             ;;
         azure)
-            health_check_cloud_metadata_azure "$deploy_dir" issues_ref "$output_format"
+            health_check_cloud_metadata_azure "$deploy_dir" "$issues_var" "$output_format"
             ;;
         gcp)
-            health_check_cloud_metadata_gcp "$deploy_dir" issues_ref "$output_format"
+            health_check_cloud_metadata_gcp "$deploy_dir" "$issues_var" "$output_format"
             ;;
         *)
             return 0
@@ -376,21 +502,34 @@ health_check_volume_attachments() {
     local ssh_config="$1"
     local host_name="$2"
     local ssh_timeout="$3"
+    # shellcheck disable=SC2178
     local -n issues_ref=$4
     local output_format="$5"
 
-    # Get list of block devices on the node
-    local block_devices
-    block_devices=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
-        "lsblk -ndo NAME,TYPE,MOUNTPOINT 2>/dev/null | grep -c disk" 2>/dev/null || echo "0")
+    local volume_info
+    volume_info=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+        "bash -lc 'shopt -s nullglob; count=0; broken=""; for link in /dev/exasol_data_*; do [[ -e \"\$link\" ]] || continue; [[ \"\$link\" == *table ]] && continue; if [[ -L \"\$link\" ]]; then target=\$(readlink -f \"\$link\" 2>/dev/null); if [[ -n \"\$target\" && -e \"\$target\" ]]; then count=\$((count+1)); else broken=\"\$broken \$link\"; fi; fi; done; echo \"\$count|\$broken\"'" 2>/dev/null || echo "0|")
 
-    if [[ "$block_devices" == "0" ]]; then
-        [[ "$output_format" == "text" ]] && echo "    Volume check: WARNING - No additional data disks detected"
+    local volume_count="${volume_info%%|*}"
+    local broken_links="${volume_info#*|}"
+
+    if [[ -z "$volume_count" ]]; then
+        volume_count=0
+    fi
+
+    if [[ "$volume_count" -eq 0 ]]; then
+        [[ "$output_format" == "text" ]] && echo "    Volume check: WARNING - No exasol_data_* symlinks detected"
         issues_ref+=("{\"type\": \"no_data_volumes\", \"host\": \"$host_name\", \"severity\": \"warning\"}")
         return 1
     fi
 
-    [[ "$output_format" == "text" ]] && echo "    Volume check: OK ($block_devices disk(s) found)"
+    if [[ -n "$broken_links" && "$broken_links" != "$volume_info" ]]; then
+        [[ "$output_format" == "text" ]] && echo "    Volume check: WARNING - Broken symlinks:${broken_links}"
+        issues_ref+=("{\"type\": \"broken_volume_symlink\", \"host\": \"$host_name\", \"details\": \"$broken_links\", \"severity\": \"warning\"}")
+        return 1
+    fi
+
+    [[ "$output_format" == "text" ]] && echo "    Volume check: OK ($volume_count disk(s) found)"
     return 0
 }
 
@@ -398,6 +537,7 @@ health_check_cluster_state() {
     local ssh_config="$1"
     local host_name="$2"
     local ssh_timeout="$3"
+    # shellcheck disable=SC2178
     local -n issues_ref=$4
     local output_format="$5"
 
@@ -475,6 +615,11 @@ cmd_health() {
     if [[ ! -d "$deploy_dir" ]]; then
         die "Deployment directory not found: $deploy_dir"
     fi
+
+    health_require_tool "curl"
+
+    local cloud_provider
+    cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
 
     # Check if another operation is in progress
     if lock_exists "$deploy_dir"; then
@@ -575,7 +720,6 @@ cmd_health() {
     local tfstate_file="$deploy_dir/terraform.tfstate"
 
     # Tracking for JSON output
-    local -a json_checks=()
     local -a json_issues=()
     local ssh_passed=0
     local ssh_failed=0
@@ -593,7 +737,7 @@ cmd_health() {
     fi
 
     # Check cloud metadata (once per deployment, not per host)
-    if ! health_check_cloud_metadata "$deploy_dir" json_issues "$output_format"; then
+    if ! health_check_cloud_metadata "$deploy_dir" "$cloud_provider" json_issues "$output_format"; then
         overall_issues=$((overall_issues + 1))
     fi
 
@@ -668,11 +812,16 @@ cmd_health() {
             fi
         fi
 
-        local remote_ip_raw remote_ip
-        remote_ip_raw=$(ssh -F "$ssh_config_file" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" hostname -I 2>/dev/null || true)
-        remote_ip=$(echo "$remote_ip_raw" | awk '{print $1}')
+        local ip_info remote_private_ip remote_public_ip
+        ip_info=$(health_fetch_remote_ips "$ssh_config_file" "$host_name" "$ssh_timeout" "$cloud_provider")
+        IFS='|' read -r remote_private_ip remote_public_ip <<<"$ip_info"
+        [[ -z "$remote_public_ip" ]] && remote_public_ip="$remote_private_ip"
 
-        if [[ -n "$remote_ip" && -n "$host_ip" && "$remote_ip" != "$host_ip" ]]; then
+        if [[ -n "$remote_private_ip" && "$output_format" == "text" ]]; then
+            echo "    Private IP: $remote_private_ip"
+        fi
+
+        if [[ -n "$remote_public_ip" && -n "$host_ip" && "$remote_public_ip" != "$host_ip" ]]; then
             ip_mismatches=$((ip_mismatches + 1))
 
             if [[ "$do_update" == "true" ]]; then
@@ -682,35 +831,45 @@ cmd_health() {
                 backup_ssh=$(health_backup_file "$ssh_config_file" "$deploy_dir")
                 [[ -f "$info_file" ]] && backup_info=$(health_backup_file "$info_file" "$deploy_dir")
 
-                if [[ "$output_format" == "text" && -n "$backup_inventory" ]]; then
-                    echo "    Created backup: $backup_inventory"
+                if [[ "$output_format" == "text" ]]; then
+                    [[ -n "$backup_inventory" ]] && echo "    Created backup: $backup_inventory"
+                    [[ -n "$backup_ssh" ]] && echo "    Created backup: $backup_ssh"
+                    [[ -n "$backup_info" ]] && echo "    Created backup: $backup_info"
                 fi
 
                 local updated_any="false"
-                if health_update_inventory_ip "$inventory_file" "$host_name" "$remote_ip"; then
-                    [[ "$output_format" == "text" ]] && echo "    Updated inventory.ini with host IP $remote_ip"
+                if health_update_inventory_ip "$inventory_file" "$host_name" "$remote_public_ip"; then
+                    [[ "$output_format" == "text" ]] && echo "    Updated inventory.ini with host IP $remote_public_ip"
                     updated_any="true"
                 fi
-                if health_update_ssh_config "$ssh_config_file" "$host_name" "$remote_ip"; then
+                if health_update_ssh_config "$ssh_config_file" "$host_name" "$remote_public_ip"; then
                     [[ "$output_format" == "text" ]] && echo "    Updated ssh_config entries for $host_name"
                     updated_any="true"
                 fi
-                if health_update_info_file "$info_file" "$host_ip" "$remote_ip"; then
+                if health_update_info_file "$info_file" "$host_ip" "$remote_public_ip"; then
                     [[ "$output_format" == "text" ]] && echo "    Updated INFO.txt with new IP address"
                     updated_any="true"
                 fi
                 if [[ "$updated_any" != "true" ]]; then
-                    [[ "$output_format" == "text" ]] && echo "    IP changed to $remote_ip but local metadata already up to date"
+                    [[ "$output_format" == "text" ]] && echo "    IP changed to $remote_public_ip but local metadata already up to date"
+                else
+                    host_ip="$remote_public_ip"
                 fi
             else
-                [[ "$output_format" == "text" ]] && echo "    IP mismatch detected (inventory=$host_ip, live=$remote_ip) - run with --update to sync files"
+                [[ "$output_format" == "text" ]] && echo "    IP mismatch detected (inventory=$host_ip, live=$remote_public_ip) - run with --update to sync files"
                 overall_issues=$((overall_issues + 1))
-                json_issues+=("{\"type\": \"ip_mismatch\", \"host\": \"$host_name\", \"expected\": \"$host_ip\", \"actual\": \"$remote_ip\", \"severity\": \"warning\"}")
+                json_issues+=("{\"type\": \"ip_mismatch\", \"host\": \"$host_name\", \"expected\": \"$host_ip\", \"actual\": \"$remote_public_ip\", \"severity\": \"warning\"}")
             fi
 
             if [[ -f "$tfstate_file" ]] && grep -q "$host_ip" "$tfstate_file"; then
                 [[ "$output_format" == "text" ]] && echo "    Terraform note: terraform.tfstate still references $host_ip (run 'tofu refresh' to update)"
             fi
+        fi
+
+        if [[ -n "$host_ip" ]]; then
+            health_check_external_ports "$host_ip" "$host_name" json_issues "$output_format"
+            local port_failures=$?
+            overall_issues=$((overall_issues + port_failures))
         fi
     done
 
@@ -821,10 +980,10 @@ EOF
 
     # Determine exit code
     if [[ "$overall_issues" -eq 0 ]]; then
-        return $HEALTH_EXIT_HEALTHY
+        return "$HEALTH_EXIT_HEALTHY"
     elif [[ "$remediation_attempted" == "true" && "$remediation_failed" == "true" ]]; then
-        return $HEALTH_EXIT_REMEDIATION_FAILED
+        return "$HEALTH_EXIT_REMEDIATION_FAILED"
     else
-        return $HEALTH_EXIT_ISSUES
+        return "$HEALTH_EXIT_ISSUES"
     fi
 }

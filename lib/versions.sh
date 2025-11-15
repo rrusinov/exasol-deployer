@@ -9,6 +9,7 @@ readonly __EXASOL_VERSIONS_SH_INCLUDED__=1
 
 # Source common functions
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
 source "$LIB_DIR/common.sh"
 
 # Get versions config file path

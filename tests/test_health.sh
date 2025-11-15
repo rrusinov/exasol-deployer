@@ -12,11 +12,11 @@ source "$LIB_DIR/cmd_health.sh"
 ORIGINAL_PATH="$PATH"
 MOCK_BIN_DIR=""
 
-setup_mock_ssh() {
+setup_mock_env() {
     MOCK_BIN_DIR="$(mktemp -d)"
     PATH="$MOCK_BIN_DIR:$ORIGINAL_PATH"
 
-cat > "$MOCK_BIN_DIR/ssh" <<'EOF'
+    cat > "$MOCK_BIN_DIR/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -52,34 +52,62 @@ for ((i=cmd_index; i<${#args[@]}; i++)); do
     cmd+=("${args[$i]}")
 done
 
+joined="${cmd[*]}"
+
 case "${cmd[0]:-}" in
     true)
         exit 0
         ;;
-    hostname)
-        if [[ "${cmd[1]:-}" == "-I" ]]; then
-            if [[ "${MOCK_HEALTH_MODE:-stable}" == "ip-change" ]]; then
-                echo "${MOCK_HEALTH_NEW_IP:-5.6.7.8}"
-            else
-                echo "${MOCK_HEALTH_ORIGINAL_IP:-1.2.3.4}"
-            fi
-            exit 0
-        fi
-        ;;
     sudo)
         if [[ "${cmd[1]:-}" == "systemctl" ]]; then
-            case "${cmd[2]:-}" in
-                is-active|restart)
-                    exit 0
-                    ;;
-            esac
+            exit 0
         fi
         ;;
 esac
 
+if [[ "$joined" == *"hostname -I"* ]]; then
+    if [[ "${MOCK_HEALTH_MODE:-stable}" == "ip-change" && -n "${MOCK_HEALTH_NEW_PRIVATE_IP:-}" ]]; then
+        echo "${MOCK_HEALTH_NEW_PRIVATE_IP}"
+    else
+        echo "${MOCK_HEALTH_REMOTE_PRIVATE_IP:-${MOCK_HEALTH_ORIGINAL_IP:-127.0.0.1}}"
+    fi
+    exit 0
+fi
+
+if [[ "$joined" == *"latest/meta-data/public-ipv4"* ]]; then
+    if [[ "${MOCK_HEALTH_MODE:-stable}" == "ip-change" ]]; then
+        echo "${MOCK_HEALTH_NEW_IP:-5.6.7.8}"
+    else
+        echo "${MOCK_HEALTH_ORIGINAL_IP:-1.2.3.4}"
+    fi
+    exit 0
+fi
+
+if [[ "$joined" == *"/dev/exasol_data_"* ]]; then
+    echo "2|"
+    exit 0
+fi
+
+if [[ "$joined" == *"cluster status"* ]]; then
+    echo "1"
+    exit 0
+fi
+
 exit 0
 EOF
     chmod +x "$MOCK_BIN_DIR/ssh"
+
+    cat > "$MOCK_BIN_DIR/curl" <<'EOF'
+#!/usr/bin/env bash
+echo "200|text/html"
+EOF
+    chmod +x "$MOCK_BIN_DIR/curl"
+
+    cat > "$MOCK_BIN_DIR/openssl" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$MOCK_BIN_DIR/openssl"
 }
 
 cleanup_mock_env() {
@@ -91,24 +119,24 @@ cleanup_mock_env() {
 }
 
 create_deployment_dir() {
-    local ip="$1"
+    local public_ip="$1"
     local deploy_dir
     deploy_dir=$(setup_test_dir)
 
     cat > "$deploy_dir/inventory.ini" <<EOF
 [exasol_nodes]
-n11 ansible_host=$ip
+n11 ansible_host=$public_ip
 EOF
 
     cat > "$deploy_dir/ssh_config" <<EOF
 Host n11
-    HostName $ip
+    HostName $public_ip
     User exasol
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
 
 Host n11-cos
-    HostName $ip
+    HostName $public_ip
     User root
     Port 20002
     StrictHostKeyChecking no
@@ -116,7 +144,19 @@ Host n11-cos
 EOF
 
     cat > "$deploy_dir/INFO.txt" <<EOF
-Deployment created for IP $ip
+Deployment created for IP $public_ip
+EOF
+
+    cat > "$deploy_dir/$STATE_FILE" <<'EOF'
+{
+  "status": "database_ready",
+  "cloud_provider": "aws",
+  "cluster_size": 1
+}
+EOF
+
+    cat > "$deploy_dir/variables.auto.tfvars" <<'EOF'
+node_count = 1
 EOF
 
     echo "$deploy_dir"
@@ -126,35 +166,38 @@ test_health_succeeds_when_all_checks_pass() {
     echo ""
     echo "Test: health command succeeds when SSH/service checks pass"
 
-    setup_mock_ssh
+    setup_mock_env
     local deploy_dir
     deploy_dir=$(create_deployment_dir "1.2.3.4")
 
     export MOCK_HEALTH_MODE="stable"
     export MOCK_HEALTH_ORIGINAL_IP="1.2.3.4"
+    export MOCK_HEALTH_REMOTE_PRIVATE_IP="10.0.0.11"
 
-    local output
-    if ! output=$(cmd_health --deployment-dir "$deploy_dir"); then
-        assert_success $? "Health command should succeed"
-    else
+    if cmd_health --deployment-dir "$deploy_dir" >/dev/null; then
         assert_success 0 "Health command should succeed"
+    else
+        assert_success $? "Health command should succeed"
     fi
 
     cleanup_mock_env
     cleanup_test_dir "$deploy_dir"
+    unset MOCK_HEALTH_MODE MOCK_HEALTH_ORIGINAL_IP MOCK_HEALTH_REMOTE_PRIVATE_IP
 }
 
 test_health_updates_metadata_when_ip_changes() {
     echo ""
     echo "Test: health --update refreshes metadata when IP changes"
 
-    setup_mock_ssh
+    setup_mock_env
     local deploy_dir
     deploy_dir=$(create_deployment_dir "1.2.3.4")
 
     export MOCK_HEALTH_MODE="ip-change"
     export MOCK_HEALTH_ORIGINAL_IP="1.2.3.4"
     export MOCK_HEALTH_NEW_IP="5.6.7.8"
+    export MOCK_HEALTH_REMOTE_PRIVATE_IP="10.0.0.12"
+    export MOCK_HEALTH_NEW_PRIVATE_IP="10.0.0.22"
 
     if ! cmd_health --deployment-dir "$deploy_dir" --update >/dev/null; then
         assert_success $? "Health --update should succeed when updating metadata"
@@ -176,6 +219,7 @@ test_health_updates_metadata_when_ip_changes() {
 
     cleanup_mock_env
     cleanup_test_dir "$deploy_dir"
+    unset MOCK_HEALTH_MODE MOCK_HEALTH_ORIGINAL_IP MOCK_HEALTH_NEW_IP MOCK_HEALTH_REMOTE_PRIVATE_IP MOCK_HEALTH_NEW_PRIVATE_IP
 }
 
 test_health_succeeds_when_all_checks_pass

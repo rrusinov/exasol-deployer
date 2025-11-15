@@ -154,7 +154,7 @@ calculate_overall_progress() {
 
     local total_completed=0
     local found_current=0
-    local ordered_steps="${_STAGE_STEP_ORDER[$stage]}"
+    local ordered_steps="${_STAGE_STEP_ORDER[$stage]:-}"
 
     # Fallback: build a deterministic order if not explicitly defined
     if [[ -z "$ordered_steps" ]]; then
@@ -166,7 +166,7 @@ calculate_overall_progress() {
             fi
         done
         if [[ ${#collected_steps[@]} -gt 0 ]]; then
-            IFS=$'\n' collected_steps=($(printf '%s\n' "${collected_steps[@]}" | sort))
+            mapfile -t collected_steps < <(printf '%s\n' "${collected_steps[@]}" | sort)
             ordered_steps="${collected_steps[*]}"
         fi
     fi
@@ -387,7 +387,7 @@ run_tofu_with_progress() {
         exit_code=1
     fi
 
-    return $exit_code
+    return "$exit_code"
 }
 
 # Estimate task weight based on task name patterns
@@ -515,7 +515,8 @@ run_ansible_with_progress() {
             # Calculate task duration
             local task_duration=""
             if [[ $task_start_time -gt 0 ]]; then
-                local task_end_time=$(date +%s)
+                local task_end_time
+                task_end_time=$(date +%s)
                 local duration=$((task_end_time - task_start_time))
                 task_duration=" (${duration}s)"
             fi
@@ -607,7 +608,7 @@ run_ansible_with_progress() {
         exit_code=1
     fi
 
-    return $exit_code
+    return "$exit_code"
 }
 
 # Check if command exists
