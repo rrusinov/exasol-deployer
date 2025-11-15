@@ -12,7 +12,12 @@ Create a proactive health-check command that detects unexpected provider-initiat
 ## Detection & Validation
 - **Instance Reachability**: Ping/SSH each node (both OS and COS SSH endpoints) to detect reboots or unreachable hosts
 - **Cloud Metadata Check**: Query provider APIs (or rely on `./exasol status --show-details`) to confirm the number of running instances and their IPs match expected values
-- **Service Health**: Run on-node probes (systemctl, Exasol service checks, database ping, AdminUI port) to ensure services recovered after reboot
+- **Service Health**: Run on-node probes (systemctl, Exasol service checks, database ping, AdminUI port) to ensure services recovered after reboot. Example c4-deployed systemd units to verify on AWS:
+  - `c4.service`
+  - `c4_cloud_command.service`
+  - `exasol-admin-ui.service`
+  - `exasol-data-symlinks.service`
+  After spontaneous reboots, health checks should confirm these services are active (`systemctl status ...`) and that Admin UI logs (`journalctl -u exasol-admin-ui`) show fresh startup messages (e.g., “Starting AdminUI HTTPS server…”) indicating a clean restart.
 - **IP Consistency**: Compare live IPs with local files (`inventory.ini`, `variables.auto.tfvars`, Terraform state, INFO.txt); report discrepancies and optionally fix them with `--update`
 - **Volume Attachments**: Validate that data/root volumes are still attached after reboot
 - **Cluster State**: For multi-node deployments, ensure all nodes rejoined the cluster and cluster metadata is consistent
@@ -44,4 +49,3 @@ Document these in the health report so operators know next steps.
 - Reports precise root causes (unreachable nodes, mismatched IPs, failed services)
 - `--update` keeps local metadata synchronized with live infrastructure
 - `--try-fix` can automatically restore common failure modes without manual intervention
-
