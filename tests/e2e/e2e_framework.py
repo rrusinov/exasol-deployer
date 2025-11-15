@@ -259,6 +259,12 @@ class E2ETestFramework:
         self.tests_root.mkdir(parents=True, exist_ok=True)
         self.generated_ids: Set[str] = set()
         self._progress_lock = threading.Lock()
+        
+        # Progress tracking
+        self._current_deployment: Optional[str] = None
+        self._current_step: Optional[str] = None
+        self._completed_tests: int = 0
+        self._total_tests: int = 0
 
         # Setup logging
         self._setup_logging()
@@ -512,6 +518,10 @@ class E2ETestFramework:
             self.logger.error(f"Resource quota limit exceeded: {limit_error}")
             raise
 
+        # Set total tests for progress tracking
+        with self._progress_lock:
+            self._total_tests = len(test_plan)
+        
         self.logger.info(f"Starting test execution with {len(test_plan)} tests, max_parallel={max_parallel}")
         self._render_progress(0, len(test_plan))
 
@@ -525,6 +535,13 @@ class E2ETestFramework:
                 completed += 1
                 status = 'PASS' if result['success'] else 'FAIL'
                 self.logger.info(f"Completed: {result['deployment_id']} - {status} ({result['duration']:.1f}s)")
+                
+                # Update completed count and clear current deployment
+                with self._progress_lock:
+                    self._completed_tests = completed
+                    self._current_deployment = None
+                    self._current_step = None
+                
                 self._render_progress(completed, len(test_plan))
 
         total_time = time.time() - start_time
@@ -534,17 +551,48 @@ class E2ETestFramework:
 
         return results
 
-    def _render_progress(self, completed: int, total: int):
-        """Render a simple textual progress bar."""
+    def _render_progress(self, completed: int, total: int, current_deployment: Optional[str] = None, current_step: Optional[str] = None):
+        """Render an enhanced progress bar with deployment and step information."""
         if total == 0:
             return
         bar_length = 30
         fraction = min(1.0, completed / total)
         filled = int(bar_length * fraction)
         bar = '#' * filled + '-' * (bar_length - filled)
+        
+        # Build progress message
         message = f"\rProgress: [{bar}] {completed}/{total} tests completed"
+        
+        # Add current deployment info
+        if current_deployment:
+            # Truncate deployment ID if too long
+            display_id = current_deployment[:20] + "..." if len(current_deployment) > 20 else current_deployment
+            message += f" | {display_id}"
+        
+        # Add current step info
+        if current_step:
+            message += f" - {current_step}"
+        
         with self._progress_lock:
             print(message, end='', flush=True)
+    
+    def _log_deployment_step(self, deployment_id: str, step: str, status: str = "STARTED"):
+        """Log deployment step to stdout with timestamp."""
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        
+        # Include status in the message if it's not the default
+        if status != "STARTED":
+            step_message = f"{timestamp} {deployment_id} {step} {status}"
+        else:
+            step_message = f"{timestamp} {deployment_id} {step}"
+        
+        with self._progress_lock:
+            # Clear current progress line and print step
+            print("\r" + " " * 100 + "\r", end='', flush=True)
+            print(step_message, flush=True)
+            
+            # Re-render progress bar
+            # Note: We'll track current deployment/step in the calling methods
 
     def _log_to_file(self, log_file: Path, message: str):
         """Append timestamped log entry to the per-test log file."""
@@ -638,6 +686,14 @@ class E2ETestFramework:
         test_output_dir.mkdir(parents=True, exist_ok=True)
         log_file = test_output_dir / 'test.log'
         self._log_to_file(log_file, f"Starting test {deployment_id} ({provider})")
+        
+        # Update progress tracking
+        with self._progress_lock:
+            self._current_deployment = deployment_id
+            self._current_step = "initializing"
+        
+        # Log deployment start
+        self._log_deployment_step(deployment_id, "STARTED", "initializing")
 
         result = {
             'deployment_id': deployment_id,
@@ -671,12 +727,26 @@ class E2ETestFramework:
                 result['parameters'] = params
 
                 # Initialize deployment
+                with self._progress_lock:
+                    self._current_step = "initializing"
+                self._log_deployment_step(deployment_id, "initializing", "in progress")
+                self._render_progress(self._completed_tests, self._total_tests, deployment_id, "initializing")
                 self._init_deployment(deploy_dir, provider, params, log_file)
+                self._log_deployment_step(deployment_id, "initializing", "completed")
 
                 # Deploy
+                with self._progress_lock:
+                    self._current_step = "deploying"
+                self._log_deployment_step(deployment_id, "deploying", "in progress")
+                self._render_progress(self._completed_tests, self._total_tests, deployment_id, "deploying")
                 self._deploy(deploy_dir, params, log_file)
+                self._log_deployment_step(deployment_id, "deploying", "completed")
 
                 # Validate
+                with self._progress_lock:
+                    self._current_step = "validating"
+                self._log_deployment_step(deployment_id, "validating", "in progress")
+                self._render_progress(self._completed_tests, self._total_tests, deployment_id, "validating")
                 validation_result = self._validate_deployment(
                     deploy_dir,
                     params,
@@ -684,6 +754,7 @@ class E2ETestFramework:
                     log_file,
                     resource_tracker=resource_tracker
                 )
+                self._log_deployment_step(deployment_id, "validating", "completed")
                 result['validation'] = validation_result
                 result['success'] = validation_result['success']
             else:
@@ -704,6 +775,11 @@ class E2ETestFramework:
 
             # Cleanup
             try:
+                with self._progress_lock:
+                    self._current_step = "cleaning up"
+                self._log_deployment_step(deployment_id, "cleaning up", "in progress")
+                self._render_progress(self._completed_tests, self._total_tests, deployment_id, "cleaning up")
+                
                 retained_dir = self._cleanup_deployment(
                     deploy_dir,
                     provider,
@@ -712,11 +788,14 @@ class E2ETestFramework:
                 )
                 if retained_dir:
                     result['retained_deployment_dir'] = str(retained_dir)
+                    self._log_deployment_step(deployment_id, "cleaning up", "retained artifacts")
                 else:
                     result['retained_deployment_dir'] = None
+                    self._log_deployment_step(deployment_id, "cleaning up", "completed")
             except Exception as e:
                 result['logs'].append(f"Cleanup error: {e}")
                 self._log_to_file(log_file, f"Cleanup error: {e}")
+                self._log_deployment_step(deployment_id, "cleaning up", "failed")
 
             if emergency_handler:
                 emergency_handler.stop_timeout_monitoring()
@@ -724,7 +803,14 @@ class E2ETestFramework:
             else:
                 result['emergency_summary'] = None
 
-            result['resource_tracking'] = self._collect_resource_tracking_summary(resource_tracker, deployment_id)
+            # Log completion
+            status = "COMPLETED" if result['success'] else "FAILED"
+            self._log_deployment_step(deployment_id, status, f"duration: {result['duration']:.1f}s")
+            
+            # Clear current deployment from progress tracking
+            with self._progress_lock:
+                self._current_deployment = None
+                self._current_step = None
 
         return result
 
@@ -785,27 +871,49 @@ class E2ETestFramework:
             'checks': []
         }
 
+        # Log validation steps
+        deployment_id = deploy_dir.name
+        with self._progress_lock:
+            self._current_step = "checking terraform state"
+        self._log_deployment_step(deployment_id, "checking terraform state", "in progress")
+        self._render_progress(self._completed_tests, self._total_tests, deployment_id, "checking state")
+        
         tf_state = self._load_terraform_state(deploy_dir, log_file, validation)
         if not tf_state:
             validation['success'] = False
+            self._log_deployment_step(deployment_id, "checking terraform state", "failed")
         else:
             self._register_resources_from_state(resource_tracker, tf_state, provider, deploy_dir.name)
+            self._log_deployment_step(deployment_id, "checking terraform state", "completed")
 
         # Check terraform outputs
+        with self._progress_lock:
+            self._current_step = "checking outputs"
+        self._log_deployment_step(deployment_id, "checking outputs", "in progress")
+        self._render_progress(self._completed_tests, self._total_tests, deployment_id, "checking outputs")
+        
         outputs_file = deploy_dir / 'outputs.tf'
         if outputs_file.exists():
             validation['checks'].append({'check': 'outputs_file_exists', 'status': 'pass'})
+            self._log_deployment_step(deployment_id, "checking outputs", "completed")
         else:
             validation['checks'].append({'check': 'outputs_file_exists', 'status': 'fail'})
             validation['success'] = False
+            self._log_deployment_step(deployment_id, "checking outputs", "failed")
 
         self._validate_tfvars_alignment(params, validation, deploy_dir)
 
         # Check inventory file (generated by terraform)
+        with self._progress_lock:
+            self._current_step = "checking inventory"
+        self._log_deployment_step(deployment_id, "checking inventory", "in progress")
+        self._render_progress(self._completed_tests, self._total_tests, deployment_id, "checking inventory")
+        
         inventory_file = deploy_dir / 'inventory.ini'
         inventory_data = {'sections': {}, 'hosts': []}  # Initialize with default value
         if inventory_file.exists():
             validation['checks'].append({'check': 'inventory_file_exists', 'status': 'pass'})
+            self._log_deployment_step(deployment_id, "checking inventory", "completed")
 
             inventory_data = self._parse_inventory(inventory_file, validation)
             node_entries = inventory_data.get('sections', {}).get('exasol_nodes', [])
@@ -822,13 +930,34 @@ class E2ETestFramework:
                 if check_status == 'fail':
                     validation['success'] = False
 
+            # Log detailed validation steps
+            with self._progress_lock:
+                self._current_step = "validating volumes"
+            self._log_deployment_step(deployment_id, "validating volumes", "in progress")
             self._validate_volume_counts(params, inventory_data, validation)
+            self._log_deployment_step(deployment_id, "validating volumes", "completed")
+            
+            with self._progress_lock:
+                self._current_step = "validating network"
+            self._log_deployment_step(deployment_id, "validating network", "in progress")
             self._validate_network_endpoints(node_entries, validation)
+            self._log_deployment_step(deployment_id, "validating network", "completed")
+            
+            with self._progress_lock:
+                self._current_step = "validating ports"
+            self._log_deployment_step(deployment_id, "validating ports", "in progress")
             self._validate_admin_and_db_ports(node_entries, validation, log_file)
+            self._log_deployment_step(deployment_id, "validating ports", "completed")
+            
+            with self._progress_lock:
+                self._current_step = "validating ssh"
+            self._log_deployment_step(deployment_id, "validating ssh", "in progress")
             self._validate_ssh_access(node_entries, deploy_dir, validation, log_file)
+            self._log_deployment_step(deployment_id, "validating ssh", "completed")
         else:
             validation['checks'].append({'check': 'inventory_file_exists', 'status': 'fail'})
             validation['success'] = False
+            self._log_deployment_step(deployment_id, "checking inventory", "failed")
 
         # Check for terraform apply success by looking for error logs
         terraform_log = deploy_dir / 'terraform.log'
@@ -872,6 +1001,7 @@ class E2ETestFramework:
 
     def _perform_ssh_validation(self, deploy_dir: Path, params: Dict[str, Any], inventory_data: Dict[str, Any], validation: Dict[str, Any], log_file: Path):
         """Perform live system validation via SSH."""
+        deployment_id = deploy_dir.name
         try:
             # Initialize SSH validator
             # Re-import to ensure we have the correct reference
@@ -879,6 +1009,11 @@ class E2ETestFramework:
             ssh_validator = SSHValidator(deploy_dir, dry_run=not self.enable_live_validation)
             
             # Perform symlink validation
+            with self._progress_lock:
+                self._current_step = "checking symlinks"
+            self._log_deployment_step(deployment_id, "checking symlinks", "in progress")
+            self._render_progress(self._completed_tests, self._total_tests, deployment_id, "checking symlinks")
+            
             symlink_results = ssh_validator.validate_symlinks()
             symlink_passed = sum(1 for r in symlink_results if r.success)
             symlink_total = len(symlink_results)
@@ -888,8 +1023,14 @@ class E2ETestFramework:
                 'passed': symlink_passed,
                 'total': symlink_total
             })
+            self._log_deployment_step(deployment_id, "checking symlinks", "completed")
             
             # Perform service validation
+            with self._progress_lock:
+                self._current_step = "checking services"
+            self._log_deployment_step(deployment_id, "checking services", "in progress")
+            self._render_progress(self._completed_tests, self._total_tests, deployment_id, "checking services")
+            
             service_results = ssh_validator.validate_services()
             service_passed = sum(1 for r in service_results if r.success)
             service_total = len(service_results)
@@ -899,8 +1040,14 @@ class E2ETestFramework:
                 'passed': service_passed,
                 'total': service_total
             })
+            self._log_deployment_step(deployment_id, "checking services", "completed")
             
             # Perform database installation validation
+            with self._progress_lock:
+                self._current_step = "checking database"
+            self._log_deployment_step(deployment_id, "checking database", "in progress")
+            self._render_progress(self._completed_tests, self._total_tests, deployment_id, "checking database")
+            
             db_results = ssh_validator.validate_database_installation()
             db_passed = sum(1 for r in db_results if r.success)
             db_total = len(db_results)
@@ -910,8 +1057,14 @@ class E2ETestFramework:
                 'passed': db_passed,
                 'total': db_total
             })
+            self._log_deployment_step(deployment_id, "checking database", "completed")
             
             # Perform system resources validation
+            with self._progress_lock:
+                self._current_step = "checking resources"
+            self._log_deployment_step(deployment_id, "checking resources", "in progress")
+            self._render_progress(self._completed_tests, self._total_tests, deployment_id, "checking resources")
+            
             resource_results = ssh_validator.validate_system_resources()
             resource_passed = sum(1 for r in resource_results if r.success)
             resource_total = len(resource_results)
@@ -921,6 +1074,7 @@ class E2ETestFramework:
                 'passed': resource_passed,
                 'total': resource_total
             })
+            self._log_deployment_step(deployment_id, "checking resources", "completed")
             
             # Update overall success based on SSH validation
             ssh_checks = [check for check in validation['checks'] if check['check'].startswith('ssh_')]
