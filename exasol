@@ -24,6 +24,7 @@ source "$SCRIPT_DIR/lib/cmd_init.sh"
 source "$SCRIPT_DIR/lib/cmd_deploy.sh"
 source "$SCRIPT_DIR/lib/cmd_destroy.sh"
 source "$SCRIPT_DIR/lib/cmd_status.sh"
+source "$SCRIPT_DIR/lib/cmd_health.sh"
 
 # Global flags
 DEPLOYMENT_DIR="."
@@ -48,6 +49,7 @@ Available Commands:
   deploy      Deploy using an existing deployment directory
   destroy     Destroy an active deployment
   status      Get the status of a deployment
+  health      Run connectivity and service health checks
   version     Print the program version and exit
   help        Show this help message
 
@@ -175,6 +177,13 @@ main() {
                 exit 0
             fi
             cmd_status --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        health)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_health_help
+                exit 0
+            fi
+            cmd_health --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         version)
             show_version

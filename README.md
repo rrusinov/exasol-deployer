@@ -244,7 +244,22 @@ Output (JSON):
 }
 ```
 
-### 6. Destroy the Deployment
+### 6. Run a Health Check
+
+Use the health command to verify SSH connectivity, COS endpoints, critical c4-managed services, and metadata consistency. Optional flags allow the command to refresh local files or attempt basic remediation such as restarting failed services.
+
+```bash
+# Read-only checks (default)
+./exasol health --deployment-dir ./my-deployment
+
+# Update inventory/ssh_config/INFO.txt if the cloud provider reassigned IPs
+./exasol health --deployment-dir ./my-deployment --update
+
+# Try to restart failed services automatically
+./exasol health --deployment-dir ./my-deployment --try-fix
+```
+
+### 7. Destroy the Deployment
 
 ```bash
 # With confirmation prompts
@@ -344,6 +359,21 @@ Get the current status of a deployment in JSON format.
 - `destroy_in_progress`: Destroy operation is currently running
 - `destroy_failed`: Destroy operation failed (check logs)
 - `destroyed`: All resources have been destroyed successfully
+
+### `health`
+
+Run connectivity and service health checks for an existing deployment. The command verifies SSH access to every node, COS endpoints, key systemd services (c4 stack, Admin UI, symlink initializer), and IP consistency between live infrastructure and local metadata. Use `--update` to refresh `inventory.ini`, `ssh_config`, and `INFO.txt` if the provider changed public IPs. Use `--try-fix` to restart failed services automatically.
+
+```bash
+# Basic health check
+./exasol health --deployment-dir ./my-deployment
+
+# Refresh local metadata files when IPs drift
+./exasol health --deployment-dir ./my-deployment --update
+
+# Attempt automatic remediation
+./exasol health --deployment-dir ./my-deployment --try-fix
+```
 
 ### `destroy`
 
