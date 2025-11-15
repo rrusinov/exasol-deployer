@@ -98,7 +98,7 @@ resource "local_file" "ssh_config" {
     Host n${idx + 11}
         HostName ${ip}
         User exasol
-        IdentityFile ${local_file.exasol_private_key_pem.filename}
+        IdentityFile ${abspath(local_file.exasol_private_key_pem.filename)}
         StrictHostKeyChecking no
         UserKnownHostsFile=/dev/null
 
@@ -106,7 +106,7 @@ resource "local_file" "ssh_config" {
         HostName ${ip}
         User root
         Port 20002
-        IdentityFile ${local_file.exasol_private_key_pem.filename}
+        IdentityFile ${abspath(local_file.exasol_private_key_pem.filename)}
         StrictHostKeyChecking no
         UserKnownHostsFile=/dev/null
 
