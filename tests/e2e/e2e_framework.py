@@ -297,6 +297,8 @@ class E2ETestFramework:
             self.results_dir.mkdir(parents=True, exist_ok=True)
         
         log_file = self.results_dir / f"e2e_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        # Ensure parent directory exists for FileHandler
+        log_file.parent.mkdir(parents=True, exist_ok=True)
         self.file_handler = logging.FileHandler(log_file)
         
         # Configure logger specifically for this module instead of basicConfig
