@@ -9,6 +9,8 @@ Uses mock data and dry-run execution to validate framework functionality.
 import unittest
 import tempfile
 import json
+import getpass
+import uuid
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 from ssh_validator import SSHValidator, SSHCommand, SSHValidationResult
@@ -19,7 +21,10 @@ class TestSSHValidator(unittest.TestCase):
     
     def setUp(self):
         """Set up test environment."""
-        self.temp_dir = Path(tempfile.mkdtemp())
+        # Create user-specific temp directory
+        username = getpass.getuser()
+        test_id = str(uuid.uuid4())[:8]
+        self.temp_dir = Path(tempfile.mkdtemp(prefix=f"exasol_test_{username}_{test_id}_"))
         self.deployment_dir = self.temp_dir / "test-deployment"
         self.deployment_dir.mkdir()
         
@@ -76,7 +81,10 @@ exasol-node-1 ansible_host=192.168.1.10
     
     def test_mock_inventory_creation(self):
         """Test mock inventory creation when no inventory file exists."""
-        temp_dir = Path(tempfile.mkdtemp())
+        # Create user-specific temp directory
+        username = getpass.getuser()
+        test_id = str(uuid.uuid4())[:8]
+        temp_dir = Path(tempfile.mkdtemp(prefix=f"exasol_test_{username}_{test_id}_"))
         deployment_dir = temp_dir / "no-inventory"
         deployment_dir.mkdir()
         

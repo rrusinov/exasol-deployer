@@ -9,7 +9,9 @@ A comprehensive end-to-end testing framework for Exasol deployments across multi
 - **Parallel Execution**: Run multiple test deployments concurrently with configurable limits
 - **Multi-Provider Support**: Test across AWS, Azure, GCP, DigitalOcean, and Hetzner
 - **Comprehensive Validation**: Automated checks for deployment success and configuration correctness
-- **Result Reporting**: JSON-based results with detailed validation information
+- **Live Validation & Emergency Handling**: Integrated SSH validation, resource tracking, and timeout-driven cleanup
+- **Quota Guardrails & Notifications**: Configurable resource limits with automatic slow-test and failure alerts
+- **Result Reporting**: JSON and HTML results with detailed validation information
 - **Dry Run Mode**: Generate test plans without executing deployments
 - **Automatic Cleanup**: Resource cleanup on test completion or failure
 
@@ -146,6 +148,14 @@ For 2 parameters with 2 values each, generates 4 test combinations.
 | 1-wise | Every parameter value appears at least once | Minimal coverage for basic validation |
 | full | All possible parameter combinations | Exhaustive testing when feasible |
 
+### Optional Settings
+
+You can extend the root configuration with extra sections:
+
+- `resource_limits`: Override defaults such as `max_total_instances`, `max_cluster_size_per_test` to guard against runaway deployments.
+- `notifications`: Toggle alerts (`enabled`, `notify_on_failures`, `notify_on_slow_tests`, `slow_test_threshold_seconds`).
+- `enable_live_validation`: Set to `false` to run SSH validation in dry-run mode without executing remote commands.
+
 ## Validation Checks
 
 The framework performs the following validation checks for each test:
@@ -161,6 +171,8 @@ The framework performs the following validation checks for each test:
 Test results are saved to `./tmp/e2e-results/` with timestamps:
 
 - `test_results_YYYYMMDD_HHMMSS.json`: Detailed results with validation information
+- `test_results_YYYYMMDD_HHMMSS.html`: Human-friendly report with pass/fail table
+- `notifications_YYYYMMDD_HHMMSS.json`: Captured alerts for failed or slow tests (also appended to `notifications.log`)
 - `e2e_test_YYYYMMDD_HHMMSS.log`: Execution logs
 
 Results include success/failure status, validation details, execution time, and error messages.

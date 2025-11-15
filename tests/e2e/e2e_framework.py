@@ -11,8 +11,10 @@ A comprehensive end-to-end testing framework for Exasol deployments that can:
 """
 
 import argparse
+import atexit
 import concurrent.futures
 import http.client
+import html
 import json
 import logging
 import os
@@ -26,7 +28,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Set, Tuple
+from typing import Dict, List, Any, Optional, Set, Tuple, Callable
 
 # Try to import SSH validator for live system validation
 try:
@@ -36,13 +38,216 @@ except ImportError:
     SSH_VALIDATION_AVAILABLE = False
     SSHValidator = None
 
+try:
+    from tests.e2e.emergency_handler import EmergencyHandler, ResourceTracker, ResourceInfo
+    EMERGENCY_TOOLING_AVAILABLE = True
+except ImportError:
+    EMERGENCY_TOOLING_AVAILABLE = False
+    EmergencyHandler = ResourceTracker = ResourceInfo = None
+
+
+class NotificationManager:
+    """Collects notification events and persists them to disk."""
+
+    def __init__(self, results_dir: Path, config: Optional[Dict[str, Any]] = None):
+        config = config or {}
+        self.results_dir = Path(results_dir)
+        self.enabled = bool(config.get('enabled', True))
+        self.include_failures = bool(config.get('notify_on_failures', True))
+        self.include_performance = bool(config.get('notify_on_slow_tests', True))
+        self.slow_test_threshold = int(config.get('slow_test_threshold_seconds', 900))
+        self.events: List[Dict[str, Any]] = []
+
+    def record_result(self, result: Dict[str, Any]):
+        if not self.enabled:
+            return
+        reason = None
+        if self.include_failures and not result.get('success', False):
+            reason = 'failure'
+        elif (
+            self.include_performance
+            and result.get('duration', 0) >= self.slow_test_threshold
+        ):
+            reason = 'performance'
+        if not reason:
+            return
+        event = {
+            'deployment_id': result.get('deployment_id'),
+            'reason': reason,
+            'success': result.get('success', False),
+            'duration': result.get('duration', 0),
+            'error': result.get('error'),
+            'timestamp': datetime.utcnow().isoformat() + 'Z'
+        }
+        self.events.append(event)
+
+    def flush_to_disk(self) -> Optional[Dict[str, Any]]:
+        if not self.enabled or not self.events:
+            return None
+        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        notifications_file = self.results_dir / f"notifications_{timestamp}.json"
+        log_file = self.results_dir / 'notifications.log'
+        with open(notifications_file, 'w', encoding='utf-8') as handle:
+            json.dump(self.events, handle, indent=2)
+        with open(log_file, 'a', encoding='utf-8') as handle:
+            for event in self.events:
+                handle.write(
+                    f"[{event['timestamp']}] {event['deployment_id']} "
+                    f"({event['reason']}): success={event['success']} "
+                    f"duration={event['duration']:.1f}s error={event.get('error','') or 'n/a'}\n"
+                )
+        summary = {
+            'event_count': len(self.events),
+            'file': str(notifications_file),
+            'log_file': str(log_file),
+            'slow_test_threshold_seconds': self.slow_test_threshold,
+            'generated_at': timestamp
+        }
+        self.events = []
+        return summary
+
+
+class ResourceQuotaMonitor:
+    """Ensures planned tests stay within configured resource limits."""
+
+    DEFAULT_LIMITS = {
+        'max_cluster_size_per_test': 8,
+        'max_total_instances': 32,
+        'max_total_data_volume_gb': 20000,
+        'max_parallel_executions': 6,
+        'default_cluster_size': 1,
+        'default_data_volumes_per_node': 1,
+        'default_data_volume_size': 100,
+        'deployment_timeout_minutes': 45
+    }
+
+
+
+    def __init__(self, limits: Optional[Dict[str, Any]] = None):
+        limits = limits or {}
+        self.limits = {**self.DEFAULT_LIMITS, **limits}
+
+    def evaluate_plan(self, test_plan: List[Dict[str, Any]], max_parallel: int) -> Dict[str, Any]:
+        metrics = {
+            'total_tests': len(test_plan),
+            'total_instances': 0,
+            'max_cluster_size': 0,
+            'total_data_volume_gb': 0,
+            'max_parallel_requested': max_parallel or len(test_plan)
+        }
+
+        for test in test_plan:
+            params = test.get('parameters', {})
+            cluster_size = int(params.get('cluster_size', self.limits['default_cluster_size']))
+            dv_per_node = int(params.get('data_volumes_per_node', self.limits['default_data_volumes_per_node']))
+            dv_size = int(params.get('data_volume_size', self.limits['default_data_volume_size']))
+            metrics['total_instances'] += cluster_size
+            metrics['max_cluster_size'] = max(metrics['max_cluster_size'], cluster_size)
+            metrics['total_data_volume_gb'] += cluster_size * dv_per_node * dv_size
+            if cluster_size > self.limits['max_cluster_size_per_test']:
+                raise ValueError(
+                    f"cluster_size {cluster_size} exceeds max per test "
+                    f"({self.limits['max_cluster_size_per_test']})"
+                )
+
+        self._assert_limit(
+            metrics['total_instances'],
+            self.limits['max_total_instances'],
+            'total instances'
+        )
+        self._assert_limit(
+            metrics['total_data_volume_gb'],
+            self.limits['max_total_data_volume_gb'],
+            'total data volume (GB)'
+        )
+        if metrics['max_parallel_requested'] > self.limits['max_parallel_executions']:
+            raise ValueError(
+                f"max_parallel {metrics['max_parallel_requested']} exceeds limit "
+                f"({self.limits['max_parallel_executions']})"
+            )
+        return metrics
+
+
+
+    @staticmethod
+    def _assert_limit(actual: float, limit: float, label: str):
+        if actual > limit:
+            raise ValueError(f"{label} {actual} exceeds limit {limit}")
+
+
+class HTMLReportGenerator:
+    """Creates HTML reports alongside JSON summaries."""
+
+    def __init__(self, output_dir: Path):
+        self.output_dir = Path(output_dir)
+
+    def generate(self, summary: Dict[str, Any], filename: str):
+        rows = []
+        for result in summary.get('results', []):
+            status = 'PASS' if result.get('success') else 'FAIL'
+            row_class = 'pass' if result.get('success') else 'fail'
+            error = html.escape(result.get('error') or '')
+            rows.append(
+                f"<tr class='{row_class}'>"
+                f"<td>{html.escape(result.get('deployment_id', 'n/a'))}</td>"
+                f"<td>{html.escape(result.get('provider', ''))}</td>"
+                f"<td>{html.escape(result.get('test_type', ''))}</td>"
+                f"<td>{result.get('duration', 0):.1f}s</td>"
+                f"<td>{status}</td>"
+                f"<td>{error}</td>"
+                "</tr>"
+            )
+        rows_html = '\n'.join(rows)
+        html_content = f"""<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+<meta charset=\"UTF-8\">
+<title>Exasol E2E Test Report</title>
+<style>
+body {{ font-family: Arial, sans-serif; margin: 2rem; }}
+table {{ border-collapse: collapse; width: 100%; }}
+th, td {{ border: 1px solid #ddd; padding: 8px; }}
+th {{ background-color: #f4f4f4; }}
+tr.pass {{ background-color: #f6ffed; }}
+tr.fail {{ background-color: #fff1f0; }}
+</style>
+</head>
+<body>
+<h1>Exasol E2E Test Report</h1>
+<p>Total tests: {summary.get('total_tests', 0)} | Passed: {summary.get('passed', 0)} | Failed: {summary.get('failed', 0)}</p>
+<table>
+<thead><tr><th>Deployment</th><th>Provider</th><th>Type</th><th>Duration</th><th>Status</th><th>Error</th></tr></thead>
+<tbody>
+{rows_html}
+</tbody>
+</table>
+</body>
+</html>"""
+        report_path = self.output_dir / filename
+        with open(report_path, 'w', encoding='utf-8') as handle:
+            handle.write(html_content)
+        latest = self.output_dir / 'latest_results.html'
+        shutil.copyfile(report_path, latest)
+
 
 class E2ETestFramework:
     """Main E2E test framework class."""
 
     def __init__(self, config_path: str, results_dir: Optional[Path] = None):
         self.config_path = Path(config_path)
-        self.work_dir = Path(tempfile.mkdtemp(prefix="exasol_e2e_"))
+        # Create temp directory with user and test ID for uniqueness and proper ownership
+        import getpass
+        username = getpass.getuser()
+        import uuid
+        test_id = str(uuid.uuid4())[:8]
+        
+        # Use /var/tmp for persistence if available, otherwise fallback to /tmp
+        try:
+            self.work_dir = Path(tempfile.mkdtemp(prefix=f"exasol_e2e_{username}_{test_id}_", dir="/var/tmp"))
+        except (OSError, FileNotFoundError):
+            # Fallback to /tmp if /var/tmp is not available
+            self.work_dir = Path(tempfile.mkdtemp(prefix=f"exasol_e2e_{username}_{test_id}_"))
+        
         self.results_dir = results_dir if results_dir else Path('./tmp/e2e-results/')
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.results = []
@@ -58,15 +263,30 @@ class E2ETestFramework:
         # Setup logging
         self._setup_logging()
         self.config = self._load_config()
+        self.live_mode = bool(self.config.get('live_mode', False))
+        self.enable_live_validation = bool(self.config.get('enable_live_validation', True))
+        resource_limits = self.config.get('resource_limits', {})
+        notifications_cfg = self.config.get('notifications', {})
+        self.quota_monitor = ResourceQuotaMonitor(resource_limits)
+        self.notification_manager = NotificationManager(self.results_dir, notifications_cfg)
+        self.html_report_generator = HTMLReportGenerator(self.results_dir)
+        self.resource_plan_metrics: Dict[str, Any] = {}
+        
+        # Register cleanup function to be called on exit
+        atexit.register(self._cleanup)
+        
+        # Register cleanup function to be called on exit
+        atexit.register(self._cleanup)
 
     def _setup_logging(self):
         """Setup logging configuration."""
         log_file = self.results_dir / f"e2e_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        self.file_handler = logging.FileHandler(log_file)
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler(log_file),
+                self.file_handler,
                 logging.StreamHandler(sys.stdout)
             ]
         )
@@ -286,6 +506,12 @@ class E2ETestFramework:
         if max_parallel <= 0:
             max_parallel = max(1, len(test_plan))
 
+        try:
+            self.resource_plan_metrics = self.quota_monitor.evaluate_plan(test_plan, max_parallel)
+        except ValueError as limit_error:
+            self.logger.error(f"Resource quota limit exceeded: {limit_error}")
+            raise
+
         self.logger.info(f"Starting test execution with {len(test_plan)} tests, max_parallel={max_parallel}")
         self._render_progress(0, len(test_plan))
 
@@ -295,6 +521,7 @@ class E2ETestFramework:
             for future in concurrent.futures.as_completed(future_to_test):
                 result = future.result()
                 results.append(result)
+                self.notification_manager.record_result(result)
                 completed += 1
                 status = 'PASS' if result['success'] else 'FAIL'
                 self.logger.info(f"Completed: {result['deployment_id']} - {status} ({result['duration']:.1f}s)")
@@ -354,6 +581,11 @@ class E2ETestFramework:
             'total_time': total_time,
             'results': results
         }
+        if self.resource_plan_metrics:
+            summary['resource_plan'] = self.resource_plan_metrics
+        notification_artifact = self.notification_manager.flush_to_disk()
+        if notification_artifact:
+            summary['notifications'] = notification_artifact
 
         with open(results_file, 'w', encoding='utf-8') as f:
             json.dump(summary, f, indent=2, default=str)
@@ -361,6 +593,9 @@ class E2ETestFramework:
         latest_file = self.results_dir / 'latest_results.json'
         with open(latest_file, 'w', encoding='utf-8') as latest:
             json.dump(summary, latest, indent=2, default=str)
+
+        html_filename = f"test_results_{timestamp}.html"
+        self.html_report_generator.generate(summary, html_filename)
 
         self.logger.info(f"Results saved to {results_file}")
 
@@ -378,6 +613,12 @@ class E2ETestFramework:
         print(f"Success Rate: {passed/len(results)*100:.1f}%" if results else "Success Rate: N/A")
         print(f"Total Time: {total_time:.1f}s")
         print(f"Average Time: {total_time/len(results):.1f}s per test" if results else "Average Time: N/A")
+        if self.resource_plan_metrics:
+            plan = self.resource_plan_metrics
+            print(
+                f"Planned Instances: {plan.get('total_instances', 0)} | "
+                f"Max Cluster Size: {plan.get('max_cluster_size', 0)}"
+            )
 
         if failed > 0:
             print(f"\n{'='*50}")
@@ -420,6 +661,9 @@ class E2ETestFramework:
         deploy_dir.mkdir(exist_ok=True)
         result['deployment_dir'] = str(deploy_dir)
 
+        emergency_handler = self._initialize_emergency_handler(deployment_id, deploy_dir)
+        resource_tracker = self._initialize_resource_tracker(deploy_dir, emergency_handler)
+
         try:
             if test_type in ['2-wise', '1-wise', 'full']:
                 # Run test
@@ -433,7 +677,13 @@ class E2ETestFramework:
                 self._deploy(deploy_dir, params, log_file)
 
                 # Validate
-                validation_result = self._validate_deployment(deploy_dir, params, provider, log_file)
+                validation_result = self._validate_deployment(
+                    deploy_dir,
+                    params,
+                    provider,
+                    log_file,
+                    resource_tracker=resource_tracker
+                )
                 result['validation'] = validation_result
                 result['success'] = validation_result['success']
             else:
@@ -443,6 +693,11 @@ class E2ETestFramework:
             result['error'] = str(e)
             result['logs'].append(f"Error: {e}")
             self._log_to_file(log_file, f"Test {deployment_id} failed: {e}")
+            if emergency_handler:
+                try:
+                    emergency_handler.emergency_cleanup(deployment_id)
+                except Exception as cleanup_error:
+                    self._log_to_file(log_file, f"Emergency cleanup error: {cleanup_error}")
 
         finally:
             result['duration'] = time.time() - start_time
@@ -462,6 +717,14 @@ class E2ETestFramework:
             except Exception as e:
                 result['logs'].append(f"Cleanup error: {e}")
                 self._log_to_file(log_file, f"Cleanup error: {e}")
+
+            if emergency_handler:
+                emergency_handler.stop_timeout_monitoring()
+                result['emergency_summary'] = self._get_emergency_summary(emergency_handler)
+            else:
+                result['emergency_summary'] = None
+
+            result['resource_tracking'] = self._collect_resource_tracking_summary(resource_tracker, deployment_id)
 
         return result
 
@@ -508,7 +771,14 @@ class E2ETestFramework:
         if result.returncode != 0:
             raise RuntimeError(f"Deploy failed: {result.stderr}")
 
-    def _validate_deployment(self, deploy_dir: Path, params: Dict[str, Any], provider: str, log_file: Path) -> Dict[str, Any]:
+    def _validate_deployment(
+        self,
+        deploy_dir: Path,
+        params: Dict[str, Any],
+        provider: str,
+        log_file: Path,
+        resource_tracker: Optional[Any] = None
+    ) -> Dict[str, Any]:
         """Validate deployment outcomes."""
         validation = {
             'success': True,
@@ -518,6 +788,8 @@ class E2ETestFramework:
         tf_state = self._load_terraform_state(deploy_dir, log_file, validation)
         if not tf_state:
             validation['success'] = False
+        else:
+            self._register_resources_from_state(resource_tracker, tf_state, provider, deploy_dir.name)
 
         # Check terraform outputs
         outputs_file = deploy_dir / 'outputs.tf'
@@ -604,7 +876,7 @@ class E2ETestFramework:
             # Initialize SSH validator
             # Re-import to ensure we have the correct reference
             from tests.e2e.ssh_validator import SSHValidator
-            ssh_validator = SSHValidator(deploy_dir, dry_run=False)
+            ssh_validator = SSHValidator(deploy_dir, dry_run=not self.enable_live_validation)
             
             # Perform symlink validation
             symlink_results = ssh_validator.validate_symlinks()
@@ -1017,6 +1289,114 @@ class E2ETestFramework:
             if cos_status == 'fail':
                 validation['success'] = False
 
+    def _initialize_emergency_handler(self, deployment_id: str, deploy_dir: Path):
+        if not EMERGENCY_TOOLING_AVAILABLE or EmergencyHandler is None:
+            return None
+        timeout_minutes = self.quota_monitor.limits.get('deployment_timeout_minutes', 45)
+        handler = EmergencyHandler(
+            deploy_dir,
+            timeout_minutes=timeout_minutes,
+            dry_run=not self.live_mode
+        )
+        handler.start_timeout_monitoring(deployment_id)
+        return handler
+
+    def _initialize_resource_tracker(self, deploy_dir: Path, emergency_handler: Optional[Any]):
+        if emergency_handler:
+            return emergency_handler.resource_tracker
+        if not EMERGENCY_TOOLING_AVAILABLE or not ResourceTracker:
+            return None
+        return ResourceTracker(deploy_dir, dry_run=not self.live_mode)
+
+    def _collect_resource_tracking_summary(self, resource_tracker: Optional[Any], deployment_id: str):
+        if not resource_tracker:
+            return None
+        try:
+            resources = resource_tracker.get_resources_by_deployment(deployment_id)
+        except AttributeError:
+            resources = list(getattr(resource_tracker, 'resources', {}).values())
+        try:
+            estimated_cost = resource_tracker.estimate_total_cost(deployment_id)
+        except Exception:
+            estimated_cost = 0.0
+        return {
+            'resource_count': len(resources) if resources else 0,
+            'estimated_cost': estimated_cost
+        }
+
+    def _register_resources_from_state(
+        self,
+        resource_tracker: Optional[Any],
+        tf_state: Dict[str, Any],
+        provider: str,
+        deployment_id: str
+    ):
+        if not (resource_tracker and EMERGENCY_TOOLING_AVAILABLE and ResourceInfo):
+            return
+        current_time = datetime.utcnow()
+        for resource in tf_state.get('resources', []):
+            resource_type = resource.get('type')
+            for instance in resource.get('instances', []):
+                attributes = instance.get('attributes', {})
+                resource_id = (
+                    attributes.get('id')
+                    or attributes.get('identifier')
+                    or attributes.get('name')
+                )
+                if not resource_id:
+                    continue
+                estimated_cost = self._estimate_resource_cost(resource_type, attributes)
+                info = ResourceInfo(
+                    resource_id=str(resource_id),
+                    resource_type=resource_type,
+                    provider=provider,
+                    deployment_id=deployment_id,
+                    creation_time=current_time,
+                    status=str(attributes.get('status', 'unknown')),
+                    estimated_cost=estimated_cost
+                )
+                resource_tracker.register_resource(info)
+
+    def _estimate_resource_cost(self, resource_type: Optional[str], attributes: Dict[str, Any]) -> float:
+        if not resource_type:
+            return 0.5
+        resource_type = resource_type.lower()
+        size_value = 0.0
+        for key in ('size', 'disk_size_gb', 'volume_size'):
+            if key in attributes:
+                try:
+                    size_value = float(attributes[key])
+                except (TypeError, ValueError):
+                    size_value = 0.0
+                break
+        base_costs = {
+            'aws_instance': 1.5,
+            'aws_ebs_volume': 0.06,
+            'azurerm_linux_virtual_machine': 1.3,
+            'azurerm_managed_disk': 0.05,
+            'google_compute_instance': 1.2,
+            'google_compute_disk': 0.05,
+            'digitalocean_droplet': 0.8,
+            'digitalocean_volume': 0.04,
+            'hcloud_server': 0.7,
+            'hcloud_volume': 0.03
+        }
+        base_cost = base_costs.get(resource_type, 0.5)
+        if 'volume' in resource_type or 'disk' in resource_type:
+            return base_cost * max(size_value, 1)
+        return base_cost
+
+    def _get_emergency_summary(self, emergency_handler: Optional[Any]):
+        if not emergency_handler:
+            return None
+        summary = emergency_handler.get_cleanup_summary()
+        summary['timeout_triggered'] = emergency_handler.timeout_triggered
+        try:
+            summary['leak_report'] = emergency_handler.check_resource_leaks()
+        except Exception:
+            summary['leak_report'] = None
+        return summary
+
     def _check_https_endpoint(self, host: str, port: int, log_file: Path) -> bool:
         connection: Optional[http.client.HTTPSConnection] = None
         try:
@@ -1037,6 +1417,28 @@ class E2ETestFramework:
                     connection.close()
                 except Exception:
                     pass
+
+    def _cleanup(self):
+        """Clean up temporary work directory."""
+        # Close file handler to prevent ResourceWarning
+        if hasattr(self, 'file_handler'):
+            self.file_handler.close()
+        
+        if hasattr(self, 'work_dir') and self.work_dir and self.work_dir.exists():
+            try:
+                shutil.rmtree(self.work_dir)
+                self.logger.debug(f"Cleaned up temporary directory: {self.work_dir}")
+            except Exception as e:
+                self.logger.warning(f"Failed to clean up temporary directory {self.work_dir}: {e}")
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit with cleanup."""
+        self._cleanup()
+        return False  # Don't suppress exceptions
 
     def _check_tcp_port(self, host: str, port: int, log_file: Path, timeout: int = 10) -> bool:
         try:
