@@ -2,6 +2,13 @@
 
 A bash-based multi-cloud deployer for Exasol database that uses OpenTofu (Terraform) and Ansible to provision and configure Exasol clusters. This tool provides a simple command-line interface for managing Exasol deployments with full control over the deployment process.
 
+**Why bash and not Go/another compiled binary?**
+- Zero build toolchain required on the operator side; bash is ubiquitous on Linux/macOS runners and CI agents.
+- Tight integration with existing shell/Ansible/OpenTofu workflows (no cross-language shims needed).
+- Easier to vendor and tweak in-line with the Terraform/Ansible templates without rebuilding binaries.
+- Fast iteration for cloud releases; no cross-compilation or packaging pipeline to maintain for each platform.
+- Proven portability for the surrounding scripts (init/deploy/destroy/status) and test harness.
+
 ## Features
 
 - **Multi-Cloud Support**: Deploy on AWS, Azure, GCP, Hetzner Cloud, and DigitalOcean

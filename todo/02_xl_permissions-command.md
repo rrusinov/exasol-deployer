@@ -1,6 +1,6 @@
 # Implement Cloud Permissions Analysis Command
 
-Create a new `exasol permissions` command that analyzes Terraform templates and displays the required cloud permissions for deployment, helping users configure their cloud accounts correctly.
+Enhance the  `exasol init` command to print in .permissions.json  the needed permisions to deploy the infrastructure with the giffen arguments. The permissions for each option should be previously generated  with helper script build/generate_permissions.h and stored for each cloud in lib/permissions/<cloud>/permission-for-the-specific-init-selected-tasks.json or similar. The command should return empty json if no permissions were generated before. An analyzes of the different terraform templates for the specific option groups are needeb before and displays the required cloud permissions for deployment, helping users configure their cloud accounts correctly.
 
 ## Phase 1: Tool Integration & Setup (Foundation Phase)
 
