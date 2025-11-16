@@ -141,6 +141,11 @@
           ansible.builtin.set_fact:
             volume_ids_list: "{{ data_volume_ids | from_json if data_volume_ids is string else data_volume_ids }}"
 
+        - name: Render volume ids for template substitution
+          ansible.builtin.set_fact:
+            volume_ids_rendered: "{{ volume_ids_list | map('quote') | join(' ') }}"
+            volume_ids_comment: "{{ volume_ids_list | join(', ') }}"
+
         - name: Install symlink creation script for boot persistence
           ansible.builtin.template:
             src: exasol-data-symlinks.sh.j2

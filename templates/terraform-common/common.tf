@@ -76,6 +76,13 @@ locals {
       fi
     done
 
+    # Ensure our generated SSH key is authorized even when the provider does not inject one (e.g., libvirt)
+    mkdir -p /home/exasol/.ssh
+    echo "${tls_private_key.exasol_key.public_key_openssh}" > /home/exasol/.ssh/authorized_keys
+    chown -R exasol:exasol /home/exasol/.ssh
+    chmod 700 /home/exasol/.ssh
+    chmod 600 /home/exasol/.ssh/authorized_keys
+
     # Ensure original cloud user also has passwordless sudo (for compatibility)
     for cloud_user in ubuntu azureuser admin ec2-user debian; do
       if id -u "$cloud_user" >/dev/null 2>&1; then

@@ -619,7 +619,9 @@ command_exists() {
 # Check required commands
 check_required_commands() {
     local missing_commands=()
+    local version_issues=()
 
+    # Check essential tools
     if ! command_exists tofu; then
         missing_commands+=("tofu (OpenTofu)")
     fi
@@ -632,12 +634,132 @@ check_required_commands() {
         missing_commands+=("jq")
     fi
 
+    # Check for bash version (require 4.0+)
+    if [[ -n "$BASH_VERSION" ]]; then
+        local bash_major="${BASH_VERSION%%.*}"
+        if [[ "$bash_major" -lt 4 ]]; then
+            version_issues+=("bash (found version $BASH_VERSION, require 4.0+)")
+        fi
+    fi
+
+    # Check standard Unix tools
+    local required_tools=("grep" "sed" "awk" "curl" "ssh" "cat" "dirname" "basename" "mktemp" "date" "find" "tr" "cut" "wc")
+    for tool in "${required_tools[@]}"; do
+        if ! command_exists "$tool"; then
+            missing_commands+=("$tool")
+        fi
+    done
+
+    # Check for GNU readlink or realpath (BSD readlink doesn't support -f)
+    if ! command_exists readlink && ! command_exists realpath; then
+        missing_commands+=("readlink or realpath")
+    elif command_exists readlink; then
+        # Test if readlink supports -f flag (GNU version)
+        if ! readlink -f / >/dev/null 2>&1; then
+            version_issues+=("readlink (BSD version detected, need GNU readlink with -f support, or install realpath)")
+        fi
+    fi
+
+    # Check for GNU date (BSD date doesn't support date +%s reliably in older versions)
+    if command_exists date; then
+        if ! date +%s >/dev/null 2>&1; then
+            version_issues+=("date (command 'date +%s' failed, may need GNU date)")
+        fi
+    fi
+
+    # Check for mktemp with -d support
+    if command_exists mktemp; then
+        if ! mktemp -d -t "exasol-test-XXXXXX" 2>/dev/null | xargs rm -rf; then
+            version_issues+=("mktemp (mktemp -d failed, ensure GNU coreutils is installed)")
+        fi
+    fi
+
+    # Report errors
     if [[ ${#missing_commands[@]} -gt 0 ]]; then
         log_error "Missing required commands:"
         for cmd in "${missing_commands[@]}"; do
             log_error "  - $cmd"
         done
+    fi
+
+    if [[ ${#version_issues[@]} -gt 0 ]]; then
+        log_error "Incompatible tool versions detected:"
+        for issue in "${version_issues[@]}"; do
+            log_error "  - $issue"
+        done
+        log_error ""
+        log_error "This tool requires GNU versions of standard utilities."
+        log_error "On macOS, install GNU tools via Homebrew:"
+        log_error "  brew install coreutils findutils gnu-sed gawk grep bash"
+        log_error "  # Add to PATH: export PATH=\"/usr/local/opt/coreutils/libexec/gnubin:\$PATH\""
+    fi
+
+    if [[ ${#missing_commands[@]} -gt 0 ]] || [[ ${#version_issues[@]} -gt 0 ]]; then
         die "Please install missing dependencies and try again."
+    fi
+}
+
+# Check provider-specific required commands
+check_provider_requirements() {
+    local provider="$1"
+    local missing_commands=()
+    local warnings=()
+
+    # Skip provider checks in test mode
+    if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
+        return 0
+    fi
+
+    case "$provider" in
+        libvirt)
+            if ! command_exists virsh; then
+                missing_commands+=("virsh (libvirt-client)")
+            fi
+            if ! command_exists mkisofs && ! command_exists genisoimage; then
+                missing_commands+=("mkisofs/genisoimage (install genisoimage package)")
+            fi
+
+            # Check for qemu.conf dynamic_ownership setting
+            local qemu_conf="/etc/libvirt/qemu.conf"
+            if [[ -f "$qemu_conf" ]]; then
+                # Check if dynamic_ownership is explicitly set to 0
+                if grep -qE "^dynamic_ownership\s*=\s*0" "$qemu_conf"; then
+                    warnings+=("dynamic_ownership is disabled in $qemu_conf")
+                    warnings+=("This may cause 'Permission denied' errors when creating VMs")
+                    warnings+=("See docs/CLOUD_SETUP_LIBVIRT.md for troubleshooting")
+                fi
+            fi
+
+            # Check for AppArmor enforcement on libvirt
+            if command_exists aa-status; then
+                if sudo aa-status 2>/dev/null | grep -q "libvirtd$"; then
+                    # libvirtd is in enforce mode
+                    warnings+=("AppArmor is enforcing libvirtd profile")
+                    warnings+=("This may block QEMU from accessing base images (Permission denied)")
+                    warnings+=("Recommended: Run 'sudo aa-complain /usr/sbin/libvirtd' for development")
+                    warnings+=("See docs/CLOUD_SETUP_LIBVIRT.md for details")
+                fi
+            fi
+            ;;
+    esac
+
+    if [[ ${#missing_commands[@]} -gt 0 ]]; then
+        log_error "Missing required commands for provider '$provider':"
+        for cmd in "${missing_commands[@]}"; do
+            log_error "  - $cmd"
+        done
+        log_error ""
+        log_error "For libvirt/KVM setup instructions, see:"
+        log_error "  docs/CLOUD_SETUP_LIBVIRT.md"
+        die "Please install missing dependencies and try again."
+    fi
+
+    if [[ ${#warnings[@]} -gt 0 ]]; then
+        log_warn "Potential configuration issues detected for provider '$provider':"
+        for warning in "${warnings[@]}"; do
+            log_warn "  - $warning"
+        done
+        log_warn ""
     fi
 }
 

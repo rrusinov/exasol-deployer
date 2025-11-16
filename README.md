@@ -11,7 +11,7 @@ A bash-based multi-cloud deployer for Exasol database that uses OpenTofu (Terraf
 
 ## Features
 
-- **Multi-Cloud Support**: Deploy on AWS, Azure, GCP, Hetzner Cloud, and DigitalOcean
+- **Multi-Cloud Support**: Deploy on AWS, Azure, GCP, Hetzner Cloud, DigitalOcean, and local libvirt/KVM
 - **Multiple Database Versions**: Support for multiple Exasol database versions and architectures (x86_64, arm64)
 - **Cloud-Init Integration**: OS-agnostic user provisioning works across all Linux distributions
 - **Spot/Preemptible Instances**: Cost optimization with spot instances on AWS, Azure, and GCP
@@ -24,12 +24,20 @@ A bash-based multi-cloud deployer for Exasol database that uses OpenTofu (Terraf
 
 ## Prerequisites
 
-Before using this deployer, ensure you have the following installed:
+### System Requirements
+
+- **Operating System**: Linux (recommended) or macOS
+- **Bash**: Version 4.0 or later
+- **GNU Core Utilities**: Required for script compatibility
+  - On Linux: Usually pre-installed
+  - On macOS: BSD tools may cause issues, install GNU versions (see below)
+
+### Required Software
 
 - **OpenTofu** or Terraform (>= 1.0)
 - **Ansible** (>= 2.9)
 - **jq** (for JSON processing)
-- **bash** (>= 4.0)
+- **Standard Unix tools**: grep, sed, awk, curl, ssh, date, mktemp, readlink/realpath
 - **Cloud provider credentials** configured (see [Cloud Setup Guide](docs/CLOUD_SETUP.md))
 
 **For Development/Testing Only:**
@@ -40,6 +48,8 @@ Before using this deployer, ensure you have the following installed:
 
 ### Installation on macOS
 
+**Important:** macOS uses BSD versions of standard Unix tools, which have different behavior than GNU versions. You must install GNU tools:
+
 ```bash
 # Install OpenTofu
 brew install opentofu
@@ -49,6 +59,20 @@ brew install ansible
 
 # Install jq
 brew install jq
+
+# Install GNU core utilities (REQUIRED on macOS)
+brew install coreutils findutils gnu-sed gawk grep bash
+
+# Add GNU tools to PATH (add to ~/.zshrc or ~/.bash_profile)
+export PATH="/usr/local/opt/coreutils/libexec/gnubin:$PATH"
+export PATH="/usr/local/opt/findutils/libexec/gnubin:$PATH"
+export PATH="/usr/local/opt/gnu-sed/libexec/gnubin:$PATH"
+export PATH="/usr/local/opt/gawk/libexec/gnubin:$PATH"
+export PATH="/usr/local/opt/grep/libexec/gnubin:$PATH"
+
+# Use Homebrew bash (version 5.x)
+sudo sh -c 'echo /usr/local/bin/bash >> /etc/shells'
+chsh -s /usr/local/bin/bash
 ```
 
 ### Installation on Linux
@@ -74,6 +98,7 @@ Before deploying, you need to set up credentials for your chosen cloud provider.
 - **[GCP (Google Cloud Platform)](docs/CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
 - **[Hetzner Cloud](docs/CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
 - **[DigitalOcean](docs/CLOUD_SETUP_DIGITALOCEAN.md)** - Simple and affordable
+- **[Local libvirt/KVM](docs/CLOUD_SETUP_LIBVIRT.md)** - Local testing and development
 
 **See the [Cloud Provider Setup Guide](docs/CLOUD_SETUP.md) for detailed instructions.**
 
@@ -105,6 +130,9 @@ gcloud config get-value project  # Get project ID
 **Hetzner** / **DigitalOcean**:
 Get API token from provider console and use with `--hetzner-token` or `--digitalocean-token` flag.
 
+**Local libvirt/KVM**:
+Install libvirt and KVM, then ensure your user is in the `libvirt` and `kvm` groups. See [Libvirt Setup Guide](docs/CLOUD_SETUP_LIBVIRT.md).
+
 ## Quick Start
 
 ### 1. Choose Cloud Provider and List Options
@@ -123,6 +151,7 @@ Get API token from provider console and use with `--hetzner-token` or `--digital
 - [GCP Setup Guide](docs/CLOUD_SETUP_GCP.md)
 - [Hetzner Setup Guide](docs/CLOUD_SETUP_HETZNER.md)
 - [DigitalOcean Setup Guide](docs/CLOUD_SETUP_DIGITALOCEAN.md)
+- [Libvirt Setup Guide](docs/CLOUD_SETUP_LIBVIRT.md)
 
 ### 2. Initialize a Deployment
 
@@ -195,6 +224,28 @@ Match `--hetzner-network-zone` to your chosen location (default `eu-central` wor
 ```
 
 DigitalOcean currently provides only x86_64 droplets, so arm64 database versions are rejected during initialization for this provider.
+
+#### Local libvirt/KVM Deployment
+
+```bash
+# Initialize with default settings (single-node, 4GB RAM, 2 vCPUs)
+./exasol init \
+  --cloud-provider libvirt \
+  --deployment-dir ./my-libvirt-deployment
+
+# Initialize with custom resources for testing
+./exasol init \
+  --cloud-provider libvirt \
+  --deployment-dir ./my-libvirt-deployment \
+  --cluster-size 2 \
+  --libvirt-memory 8 \
+  --libvirt-vcpus 4 \
+  --libvirt-network default \
+  --libvirt-pool default \
+  --data-volume-size 200
+```
+
+Perfect for local development, testing, and CI/CD pipelines without cloud costs.
 
 The init command will:
 - Create the deployment directory structure
@@ -334,6 +385,12 @@ Initialize a new deployment directory with configuration files.
 **DigitalOcean-Specific Flags**
 - `--digitalocean-region string`: DigitalOcean region (default: `nyc3`).
 - `--digitalocean-token string`: DigitalOcean API token.
+
+**Libvirt-Specific Flags**
+- `--libvirt-memory integer`: Memory per VM in GB (default: `4`).
+- `--libvirt-vcpus integer`: vCPUs per VM (default: `2`).
+- `--libvirt-network string`: Libvirt network name (default: `default`).
+- `--libvirt-pool string`: Storage pool name (default: `default`).
 
 **Configuration Flow:**
 1. Parse command-line arguments
