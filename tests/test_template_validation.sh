@@ -403,13 +403,13 @@ test_libvirt_template_validation() {
 
     # Run tofu init (this will fail if libvirt provider is not available, but that's expected)
     cd "$test_dir/.templates" || exit 1
-    if tofu init >/dev/null 2>&1; then
+    if timeout 30 tofu init >/dev/null 2>&1; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "${GREEN}✓${NC} Libvirt: tofu init successful"
         
         # Run tofu validate
-        if tofu validate >/dev/null 2>&1; then
+        if timeout 30 tofu validate >/dev/null 2>&1; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
             echo -e "${GREEN}✓${NC} Libvirt: tofu validate successful"
