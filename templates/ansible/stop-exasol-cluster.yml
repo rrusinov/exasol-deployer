@@ -91,33 +91,33 @@
     # ==============================================================================
     # WAIT FOR ALL NODES TO REACH STAGE a/a1
     # ==============================================================================
-    - name: Wait for nodes to reach stage a/a1 (services stopped)
-      ansible.builtin.command:
-        cmd: "c4 ps -e '.[].Instances.Configs | to_entries | map(.value.ground.boot_stage) | all(. == \"a\" or . == \"a1\")'"
-      become_user: "{{ exa_user }}"
-      register: stage_check
-      until: stage_check.stdout | regex_search('true')
-      retries: 60
-      delay: 5
-      changed_when: false
-      failed_when: false
-      run_once: true
+     - name: Wait for nodes to reach stage a/a1 (services stopped)
+       ansible.builtin.command:
+         cmd: "c4 ps -e '.[].Instances.Configs | to_entries | map(.value.ground.boot_stage) | all(. == \"a\" or . == \"a1\")'"
+       become_user: "{{ exa_user }}"
+       register: stage_check
+       until: stage_check.stdout | regex_search('true')
+       retries: 60
+       delay: 5
+       changed_when: false
+       failed_when: false
+       run_once: true
 
-    - name: Power off hosts via in-guest shutdown (fallback for unsupported providers)
-      ansible.builtin.shell: "shutdown now -h 'Exasol stop fallback'"
-      become: true
-      when: power_off_fallback | default(false)
-      ignore_errors: true
-      changed_when: true
+     - name: Display stop summary
+       ansible.builtin.debug:
+         msg:
+           - "✓ {{ inventory_hostname }}: c4_cloud_command.service stopped: {{ stop_cloud_command.changed | default(false) }}"
+           - "✓ {{ inventory_hostname }}: exasol-admin-ui.service stopped: {{ stop_admin_ui.changed | default(false) }}"
+           - "✓ {{ inventory_hostname }}: c4.service stopped: {{ stop_c4.changed }}"
 
-    - name: Display stop summary
-      ansible.builtin.debug:
-        msg:
-          - "✓ {{ inventory_hostname }}: c4_cloud_command.service stopped: {{ stop_cloud_command.changed | default(false) }}"
-          - "✓ {{ inventory_hostname }}: exasol-admin-ui.service stopped: {{ stop_admin_ui.changed | default(false) }}"
-          - "✓ {{ inventory_hostname }}: c4.service stopped: {{ stop_c4.changed }}"
+     - name: Confirm successful stop
+       ansible.builtin.debug:
+         msg: "✓ Exasol database cluster stopped successfully on all nodes (stage a/a1)"
+       run_once: true
 
-    - name: Confirm successful stop
-      ansible.builtin.debug:
-        msg: "✓ Exasol database cluster stopped successfully on all nodes (stage a/a1)"
-      run_once: true
+     - name: Power off hosts via in-guest shutdown (fallback for unsupported providers)
+       ansible.builtin.shell: "shutdown now -h 'Exasol stop fallback'"
+       become: true
+       when: power_off_fallback | default(false)
+       ignore_errors: true
+       changed_when: true
