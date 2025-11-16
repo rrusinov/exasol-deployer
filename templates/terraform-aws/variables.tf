@@ -86,3 +86,9 @@ variable "infra_desired_state" {
     error_message = "infra_desired_state must be either 'running' or 'stopped'."
   }
 }
+
+variable "availability_zone" {
+  description = "The AWS availability zone to deploy resources in. Set during initialization based on instance type availability."
+  type        = string
+  # Value will be set in variables.auto.tfvars during initialization
+}

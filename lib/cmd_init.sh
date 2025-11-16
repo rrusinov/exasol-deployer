@@ -583,6 +583,88 @@ EOF
     log_info "Deployment info: $deploy_dir/INFO.txt"
 }
 
+# Calculate the best availability zone for AWS based on instance type availability
+calculate_aws_availability_zone() {
+    local aws_region="$1"
+    local aws_profile="$2"
+    local instance_type="$3"
+
+    log_debug "Calculating best availability zone for instance type $instance_type in region $aws_region"
+
+    # Create a temporary directory for the AZ query
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    trap 'rm -rf "$temp_dir"' RETURN
+
+    # Create a minimal Terraform configuration to query available AZs
+    cat > "$temp_dir/az_query.tf" <<EOF
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region  = "$aws_region"
+  profile = "$aws_profile"
+}
+
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+data "aws_ec2_instance_type_offerings" "supported" {
+  filter {
+    name   = "instance-type"
+    values = ["$instance_type"]
+  }
+
+  filter {
+    name   = "location"
+    values = data.aws_availability_zones.available.names
+  }
+
+  location_type = "availability-zone"
+}
+
+output "supported_azs" {
+  value = tolist(data.aws_ec2_instance_type_offerings.supported.locations)
+}
+EOF
+
+    # Initialize and query using tofu
+    cd "$temp_dir" || die "Failed to change to temp directory"
+
+    if ! tofu init -upgrade >/dev/null 2>&1; then
+        log_error "Failed to initialize tofu for AZ query"
+        die "Failed to query availability zones using tofu"
+    fi
+
+    # Get the list of supported AZs
+    local supported_azs
+    supported_azs=$(tofu apply -auto-approve -refresh-only >/dev/null 2>&1 && tofu output -json supported_azs 2>/dev/null | jq -r '.[]' 2>/dev/null)
+
+    if [[ -z "$supported_azs" ]]; then
+        log_error "Failed to query availability zones or instance type $instance_type is not available in region $aws_region"
+        die "Instance type $instance_type is not available in region $aws_region. Please choose a different instance type or region."
+    fi
+
+    # Select the first available AZ
+    local selected_az
+    selected_az=$(echo "$supported_azs" | head -n1)
+
+    if [[ -z "$selected_az" ]]; then
+        log_error "No availability zones found for instance type $instance_type in region $aws_region"
+        die "Instance type $instance_type is not available in any AZ within region $aws_region. Please choose a different instance type or region."
+    fi
+
+    log_info "Selected availability zone: $selected_az"
+    echo "$selected_az"
+}
+
 # Write provider-specific variables
 write_provider_variables() {
     local deploy_dir="$1"
@@ -617,9 +699,14 @@ write_provider_variables() {
 
     case "$cloud_provider" in
         aws)
+            # Calculate the best availability zone for the instance type
+            local aws_availability_zone
+            aws_availability_zone=$(calculate_aws_availability_zone "$aws_region" "$aws_profile" "$instance_type")
+
             write_variables_file "$deploy_dir" \
                 "aws_region=$aws_region" \
                 "aws_profile=$aws_profile" \
+                "availability_zone=$aws_availability_zone" \
                 "instance_type=$instance_type" \
                 "instance_architecture=$architecture" \
                 "node_count=$cluster_size" \
