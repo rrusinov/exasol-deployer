@@ -544,7 +544,11 @@ test_common_template_inclusion() {
     for provider in "${providers[@]}"; do
         local test_dir=$(setup_test_dir)
 
-        cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        if [[ "$provider" == "libvirt" ]]; then
+            EXASOL_SKIP_PROVIDER_CHECKS=1 cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        else
+            cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        fi
 
         if [[ -f "$test_dir/.templates/common.tf" ]]; then
             # Check that common.tf contains the expected resources
@@ -580,7 +584,11 @@ test_terraform_symlinks() {
 
     for provider in "${providers[@]}"; do
         local test_dir=$(setup_test_dir)
-        cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        if [[ "$provider" == "libvirt" ]]; then
+            EXASOL_SKIP_PROVIDER_CHECKS=1 cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        else
+            cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        fi
 
         local all_symlinks_valid=true
 
