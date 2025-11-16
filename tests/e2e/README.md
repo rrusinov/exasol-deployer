@@ -21,7 +21,8 @@ A comprehensive end-to-end testing framework for Exasol deployments across multi
 tests/e2e/
 ├── e2e_framework.py    # Main framework script
 ├── configs/           # Test configuration files
-│   └── aws-basic.json
+│   ├── aws-basic.json
+│   └── libvirt-basic.json
 └── README.md          # This file
 ```
 
@@ -64,6 +65,14 @@ from tests.e2e.e2e_framework import E2ETestFramework
 framework = E2ETestFramework('tests/e2e/configs/aws-basic.json')
 plan = framework.generate_test_plan()
 results = framework.run_tests(plan, max_parallel=2)
+"
+
+# Run libvirt tests (requires local libvirt/KVM with network/pool available)
+python3 -c "
+from tests.e2e.e2e_framework import E2ETestFramework
+framework = E2ETestFramework('tests/e2e/configs/libvirt-basic.json')
+plan = framework.generate_test_plan()
+results = framework.run_tests(plan, max_parallel=1)
 "
 ```
 

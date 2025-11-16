@@ -319,6 +319,114 @@ test_digitalocean_template_validation() {
     cleanup_test_dir "$test_dir"
 }
 
+# Test: Libvirt template validation
+test_libvirt_template_validation() {
+    echo ""
+    echo "Test: Libvirt template validation"
+
+    if ! command -v tofu >/dev/null 2>&1; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        echo -e "${YELLOW}⊘${NC} Skipping (tofu not available)"
+        return
+    fi
+
+    local test_dir=$(setup_test_dir)
+
+    # Initialize libvirt deployment with custom options (skip provider checks for testing)
+    EXASOL_SKIP_PROVIDER_CHECKS=1 cmd_init --cloud-provider libvirt --deployment-dir "$test_dir" \
+        --libvirt-memory 8 --libvirt-vcpus 4 --libvirt-network virbr0 --libvirt-pool default 2>/dev/null
+
+    if [[ ! -d "$test_dir/.templates" ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Templates directory not created"
+        cleanup_test_dir "$test_dir"
+        return
+    fi
+
+    # Check that libvirt-specific files exist
+    if [[ ! -f "$test_dir/.templates/main.tf" ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Libvirt main.tf not found"
+        cleanup_test_dir "$test_dir"
+        return
+    fi
+
+    # Check that main.tf contains libvirt-specific resources
+    if ! grep -q "provider \"libvirt\"" "$test_dir/.templates/main.tf" || \
+       ! grep -q "resource \"libvirt_domain\"" "$test_dir/.templates/main.tf" || \
+       ! grep -q "resource \"libvirt_volume\"" "$test_dir/.templates/main.tf"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Libvirt main.tf missing required resources"
+        cleanup_test_dir "$test_dir"
+        return
+    fi
+
+    # Check that variables.tf contains libvirt-specific variables
+    if [[ -f "$test_dir/.templates/variables.tf" ]]; then
+        if ! grep -q "libvirt_memory_gb" "$test_dir/.templates/variables.tf" || \
+           ! grep -q "libvirt_vcpus" "$test_dir/.templates/variables.tf" || \
+           ! grep -q "libvirt_network_bridge" "$test_dir/.templates/variables.tf"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Libvirt variables.tf missing required variables"
+            cleanup_test_dir "$test_dir"
+            return
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Libvirt variables.tf not found"
+        cleanup_test_dir "$test_dir"
+        return
+    fi
+
+    # Check that variables.auto.tfvars contains libvirt values
+    if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
+        if ! grep -q "libvirt_memory_gb\s*=\s*8" "$test_dir/variables.auto.tfvars" || \
+           ! grep -q "libvirt_vcpus\s*=\s*4" "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Libvirt variables.auto.tfvars missing custom values"
+            cleanup_test_dir "$test_dir"
+            return
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} variables.auto.tfvars not found"
+        cleanup_test_dir "$test_dir"
+        return
+    fi
+
+    # Run tofu init (this will fail if libvirt provider is not available, but that's expected)
+    cd "$test_dir/.templates" || exit 1
+    if timeout 30 tofu init >/dev/null 2>&1; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Libvirt: tofu init successful"
+        
+        # Run tofu validate
+        if timeout 30 tofu validate >/dev/null 2>&1; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Libvirt: tofu validate successful"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Libvirt: tofu validate failed"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        echo -e "${YELLOW}⊘${NC} Libvirt: tofu init failed (expected if libvirt provider not available)"
+    fi
+
+    cd - >/dev/null
+    cleanup_test_dir "$test_dir"
+}
+
 # Test: Ansible playbook syntax validation
 test_ansible_playbook_validation() {
     echo ""
@@ -430,13 +538,17 @@ test_common_template_inclusion() {
     echo ""
     echo "Test: Common template inclusion in all providers"
 
-    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean")
+    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean" "libvirt")
     local all_have_common=true
 
     for provider in "${providers[@]}"; do
         local test_dir=$(setup_test_dir)
 
-        cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        if [[ "$provider" == "libvirt" ]]; then
+            EXASOL_SKIP_PROVIDER_CHECKS=1 cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        else
+            cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        fi
 
         if [[ -f "$test_dir/.templates/common.tf" ]]; then
             # Check that common.tf contains the expected resources
@@ -467,12 +579,16 @@ test_terraform_symlinks() {
     echo ""
     echo "Test: Terraform file symlinks in deployment directory"
 
-    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean")
+    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean" "libvirt")
     local required_symlinks=("common.tf" "main.tf" "variables.tf" "outputs.tf" "inventory.tftpl")
 
     for provider in "${providers[@]}"; do
         local test_dir=$(setup_test_dir)
-        cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        if [[ "$provider" == "libvirt" ]]; then
+            EXASOL_SKIP_PROVIDER_CHECKS=1 cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        else
+            cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        fi
 
         local all_symlinks_valid=true
 
@@ -554,6 +670,7 @@ test_azure_template_validation
 test_gcp_template_validation
 test_hetzner_template_validation
 test_digitalocean_template_validation
+test_libvirt_template_validation
 test_ansible_playbook_validation
 test_ansible_template_validation
 test_common_template_inclusion

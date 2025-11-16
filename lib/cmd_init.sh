@@ -17,6 +17,7 @@ declare -A SUPPORTED_PROVIDERS=(
     [gcp]="Google Cloud Platform"
     [hetzner]="Hetzner Cloud"
     [digitalocean]="DigitalOcean"
+    [libvirt]="Local libvirt/KVM deployment"
 )
 
 # Normalize checksum values (strip algorithm prefix like "sha256:")
@@ -45,7 +46,7 @@ Usage:
   exasol init --cloud-provider <provider> [flags]
 
 Required Flags:
-  --cloud-provider <string>      Cloud provider: aws, azure, gcp, hetzner, digitalocean
+  --cloud-provider <string>      Cloud provider: aws, azure, gcp, hetzner, digitalocean, libvirt
 
 Common Flags:
   --deployment-dir <path>        Directory to store deployment files (default: ".")
@@ -88,6 +89,12 @@ DigitalOcean-Specific Flags:
   --digitalocean-region <region> DigitalOcean region (default: "nyc3")
   --digitalocean-token <token>   DigitalOcean API token
 
+Libvirt-Specific Flags:
+  --libvirt-memory <gb>          Memory per VM in GB (default: 4)
+  --libvirt-vcpus <n>            vCPUs per VM (default: 2)
+  --libvirt-network <name>       Network name (default: "default")
+  --libvirt-pool <name>          Storage pool name (default: "default")
+
 Examples:
   # List available providers
   exasol init --list-providers
@@ -106,6 +113,9 @@ Examples:
 
   # Initialize GCP deployment with spot instances
   exasol init --cloud-provider gcp --gcp-project my-project --gcp-spot-instance
+
+  # Initialize libvirt deployment for local testing
+  exasol init --cloud-provider libvirt --libvirt-memory 8 --libvirt-vcpus 4
 EOF
 }
 
@@ -148,6 +158,12 @@ cmd_init() {
     # DigitalOcean-specific variables
     local digitalocean_region="nyc3"
     local digitalocean_token=""
+
+    # Libvirt-specific variables
+    local libvirt_memory_gb=4
+    local libvirt_vcpus=2
+    local libvirt_network_bridge="default"
+    local libvirt_disk_pool="default"
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -269,6 +285,23 @@ cmd_init() {
                 digitalocean_token="$2"
                 shift 2
                 ;;
+            # Libvirt-specific options
+            --libvirt-memory)
+                libvirt_memory_gb="$2"
+                shift 2
+                ;;
+            --libvirt-vcpus)
+                libvirt_vcpus="$2"
+                shift 2
+                ;;
+            --libvirt-network)
+                libvirt_network_bridge="$2"
+                shift 2
+                ;;
+            --libvirt-pool)
+                libvirt_disk_pool="$2"
+                shift 2
+                ;;
             --list-versions)
                 log_info "Available database versions:"
                 list_versions
@@ -320,6 +353,9 @@ cmd_init() {
         return 1
     fi
 
+    # Check provider-specific requirements
+    check_provider_requirements "$cloud_provider"
+
     # Set defaults
     if [[ -z "$deploy_dir" ]]; then
         deploy_dir="$(pwd)"
@@ -361,8 +397,13 @@ cmd_init() {
 
     # Set default instance type if not provided
     if [[ -z "$instance_type" ]]; then
-        instance_type=$(get_version_config "$db_version" "DEFAULT_INSTANCE_TYPE")
-        log_info "Using default instance type for AWS: $instance_type"
+        if [[ "$cloud_provider" == "libvirt" ]]; then
+            instance_type=$(get_version_config "$db_version" "DEFAULT_INSTANCE_TYPE_LIBVIRT" || echo "libvirt-custom")
+            log_info "Using default instance type for libvirt: $instance_type"
+        else
+            instance_type=$(get_version_config "$db_version" "DEFAULT_INSTANCE_TYPE")
+            log_info "Using default instance type for $cloud_provider: $instance_type"
+        fi
     fi
 
     # Generate passwords if not provided
@@ -407,6 +448,12 @@ cmd_init() {
             ;;
         digitalocean)
             log_info "  DigitalOcean Region: $digitalocean_region"
+            ;;
+        libvirt)
+            log_info "  Libvirt Memory: ${libvirt_memory_gb}GB"
+            log_info "  Libvirt vCPUs: $libvirt_vcpus"
+            log_info "  Libvirt Network: $libvirt_network_bridge"
+            log_info "  Libvirt Storage Pool: $libvirt_disk_pool"
             ;;
     esac
 
@@ -475,6 +522,7 @@ cmd_init() {
         "$gcp_region" "$gcp_zone" "$gcp_project" "$gcp_spot_instance" \
         "$hetzner_location" "$hetzner_network_zone" "$hetzner_token" \
         "$digitalocean_region" "$digitalocean_token" \
+        "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool" \
         "$instance_type" "$architecture" "$cluster_size" \
         "$data_volume_size" "$data_volumes_per_node" "$root_volume_size" \
         "$allowed_cidr" "$owner"
@@ -514,7 +562,8 @@ EOF
     # Create README
     progress_start "init" "generate_readme" "Generating deployment README"
     create_readme "$deploy_dir" "$cloud_provider" "$db_version" "$architecture" \
-        "$cluster_size" "$instance_type" "$aws_region" "$azure_region" "$gcp_region"
+        "$cluster_size" "$instance_type" "$aws_region" "$azure_region" "$gcp_region" \
+        "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool"
     progress_complete "init" "generate_readme" "README generated"
 
     # Mark initialization as complete
@@ -553,14 +602,18 @@ write_provider_variables() {
     local hetzner_token="${15}"
     local digitalocean_region="${16}"
     local digitalocean_token="${17}"
-    local instance_type="${18}"
-    local architecture="${19}"
-    local cluster_size="${20}"
-    local data_volume_size="${21}"
-    local data_volumes_per_node="${22}"
-    local root_volume_size="${23}"
-    local allowed_cidr="${24}"
-    local owner="${25}"
+    local libvirt_memory_gb="${18}"
+    local libvirt_vcpus="${19}"
+    local libvirt_network_bridge="${20}"
+    local libvirt_disk_pool="${21}"
+    local instance_type="${22}"
+    local architecture="${23}"
+    local cluster_size="${24}"
+    local data_volume_size="${25}"
+    local data_volumes_per_node="${26}"
+    local root_volume_size="${27}"
+    local allowed_cidr="${28}"
+    local owner="${29}"
 
     case "$cloud_provider" in
         aws)
@@ -633,6 +686,21 @@ write_provider_variables() {
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner"
             ;;
+        libvirt)
+            write_variables_file "$deploy_dir" \
+                "libvirt_memory_gb=$libvirt_memory_gb" \
+                "libvirt_vcpus=$libvirt_vcpus" \
+                "libvirt_network_bridge=$libvirt_network_bridge" \
+                "libvirt_disk_pool=$libvirt_disk_pool" \
+                "instance_type=$instance_type" \
+                "instance_architecture=$architecture" \
+                "node_count=$cluster_size" \
+                "data_volume_size=$data_volume_size" \
+                "data_volumes_per_node=$data_volumes_per_node" \
+                "root_volume_size=$root_volume_size" \
+                "allowed_cidr=$allowed_cidr" \
+                "owner=$owner"
+            ;;
     esac
 }
 
@@ -647,12 +715,27 @@ create_readme() {
     local aws_region="$7"
     local azure_region="$8"
     local gcp_region="$9"
+    local libvirt_memory_gb="${10}"
+    local libvirt_vcpus="${11}"
+    local libvirt_network_bridge="${12}"
+    local libvirt_disk_pool="${13}"
 
     local region_info=""
+    local additional_config=""
     case "$cloud_provider" in
-        aws) region_info="AWS Region: $aws_region" ;;
-        azure) region_info="Azure Region: $azure_region" ;;
-        gcp) region_info="GCP Region: $gcp_region" ;;
+        aws) 
+            region_info="AWS Region: $aws_region"
+            ;;
+        azure) 
+            region_info="Azure Region: $azure_region"
+            ;;
+        gcp) 
+            region_info="GCP Region: $gcp_region"
+            ;;
+        libvirt) 
+            region_info="Local KVM Deployment"
+            additional_config="- **Memory**: ${libvirt_memory_gb}GB per VM\n- **vCPUs**: $libvirt_vcpus per VM\n- **Network**: $libvirt_network_bridge\n- **Storage Pool**: $libvirt_disk_pool"
+            ;;
     esac
 
     cat > "$deploy_dir/README.md" <<EOF
@@ -668,6 +751,7 @@ This directory contains a deployment configuration for Exasol database.
 - **Cluster Size**: $cluster_size nodes
 - **Instance Type**: $instance_type
 - **$region_info**
+$([ -n "$additional_config" ] && echo -e "$additional_config")
 
 ## Credentials
 

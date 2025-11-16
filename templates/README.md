@@ -161,6 +161,7 @@ Each provider uses a different method to inject cloud-init, but the script conte
 | **GCP** | `metadata.startup-script` | Plain text |
 | **DigitalOcean** | `user_data` attribute | Plain text |
 | **Hetzner** | `user_data` attribute | Plain text |
+| **Libvirt** | `libvirt_cloudinit_disk.user_data` | Plain text |
 
 ## Benefits of This Structure
 

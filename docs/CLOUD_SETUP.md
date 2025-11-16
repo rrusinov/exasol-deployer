@@ -11,6 +11,7 @@ The Exasol Cloud Deployer supports the following cloud providers:
 - **[GCP (Google Cloud Platform)](CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
 - **[Hetzner Cloud](CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
 - **[DigitalOcean](CLOUD_SETUP_DIGITALOCEAN.md)** - Simple and affordable cloud provider
+- **[Libvirt/KVM](CLOUD_SETUP_LIBVIRT.md)** - Local development and testing with KVM virtualization
 
 ## Quick Start by Provider
 
