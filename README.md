@@ -320,10 +320,10 @@ Use the health command to verify SSH connectivity, COS endpoints, critical c4-ma
 
 ### 7. Stop and Start the Database (Optional)
 
-For cost optimization, you can stop the database. On AWS/Azure/GCP this also powers off the VMs via OpenTofu; on other providers the VMs are halted in-guest and must be powered on manually before start will succeed.
+For cost optimization, you can stop the database. On AWS/Azure/GCP/libvirt this also powers off the VMs via OpenTofu; on other providers (Hetzner/DigitalOcean) the VMs are halted in-guest and must be powered on manually before start will succeed.
 
 ```bash
-# Stop the database (and power off VMs on AWS/Azure/GCP)
+# Stop the database (and power off VMs on AWS/Azure/GCP/libvirt)
 ./exasol stop --deployment-dir ./my-deployment
 
 # Check status
@@ -481,8 +481,8 @@ Stop a running Exasol database deployment. This gracefully stops database servic
    - `c4.service` (main database service, stops Admin UI via PartOf)
    - `c4_cloud_command.service`
    - `exasol-admin-ui.service` (explicit ensure-stop)
-3. On AWS/Azure/GCP: powers off instances via `tofu apply -var infra_desired_state=stopped`
-4. On other providers: issues in-guest `shutdown -h` and warns that manual power-on is required before start
+3. On AWS/Azure/GCP/libvirt: powers off instances via `tofu apply -var infra_desired_state=stopped`
+4. On other providers (Hetzner/DigitalOcean): issues in-guest `shutdown -h` and warns that manual power-on is required before start
 5. Verifies services are stopped
 6. Updates state to `stopped` or `stop_failed`
 
