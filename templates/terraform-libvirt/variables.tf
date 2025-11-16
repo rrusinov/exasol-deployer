@@ -77,3 +77,14 @@ variable "owner" {
     type        = string
     # Value will be set in variables.auto.tfvars during initialization
 }
+
+variable "infra_desired_state" {
+    description = "Desired infrastructure power state ('running' or 'stopped')."
+    type        = string
+    default     = "running"
+
+    validation {
+        condition     = contains(["running", "stopped"], var.infra_desired_state)
+        error_message = "infra_desired_state must be either 'running' or 'stopped'."
+    }
+}

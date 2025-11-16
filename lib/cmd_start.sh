@@ -107,7 +107,7 @@ cmd_start() {
     cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
     local infra_power_supported="false"
     case "$cloud_provider" in
-        aws|azure|gcp)
+        aws|azure|gcp|libvirt)
             infra_power_supported="true"
             ;;
         *)
@@ -137,7 +137,7 @@ cmd_start() {
     # If provider supports infra power control, start instances via tofu first
     if [[ "$infra_power_supported" == "true" ]]; then
         progress_start "start" "tofu_start" "Starting infrastructure (powering on instances)"
-        if ! run_tofu_with_progress "start" "tofu_start" "Powering on instances" tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_on" -target="google_compute_instance.exasol_node" -var "infra_desired_state=running"; then
+        if ! run_tofu_with_progress "start" "tofu_start" "Powering on instances" tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_on" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=running"; then
             state_set_status "$deploy_dir" "$STATE_START_FAILED"
             progress_fail "start" "tofu_start" "Failed to start infrastructure (tofu apply)"
             die "Infrastructure start (tofu apply) failed"

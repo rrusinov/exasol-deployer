@@ -100,10 +100,11 @@ resource "libvirt_volume" "data_volume" {
 # ==============================================================================
 
 resource "libvirt_domain" "exasol_node" {
-  count  = var.node_count
-  name   = "n${count.index + 11}-${random_id.instance.hex}"
-  memory = var.libvirt_memory_gb * 1024  # Convert GB to MB
-  vcpu   = var.libvirt_vcpus
+  count   = var.node_count
+  name    = "n${count.index + 11}-${random_id.instance.hex}"
+  memory  = var.libvirt_memory_gb * 1024  # Convert GB to MB
+  vcpu    = var.libvirt_vcpus
+  running = var.infra_desired_state == "stopped" ? false : true
 
   # Use host CPU to ensure required instruction sets (e.g., SSSE3) are available
   cpu {

@@ -108,7 +108,7 @@ cmd_stop() {
     cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
     local infra_power_supported="false"
     case "$cloud_provider" in
-        aws|azure|gcp)
+        aws|azure|gcp|libvirt)
             infra_power_supported="true"
             ;;
         *)
@@ -151,7 +151,7 @@ cmd_stop() {
     # If provider supports infra power control, stop instances via tofu
     if [[ "$infra_power_supported" == "true" ]]; then
         progress_start "stop" "tofu_stop" "Stopping infrastructure (powering off instances)"
-        if ! run_tofu_with_progress "stop" "tofu_stop" "Powering off instances" tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_off" -target="google_compute_instance.exasol_node" -var "infra_desired_state=stopped"; then
+        if ! run_tofu_with_progress "stop" "tofu_stop" "Powering off instances" tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_off" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped"; then
             state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
             progress_fail "stop" "tofu_stop" "Failed to stop infrastructure (tofu apply)"
             die "Infrastructure stop (tofu apply) failed"
