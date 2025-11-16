@@ -5,6 +5,10 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 3.0"
     }
+    azapi = {
+      source  = "azure/azapi"
+      version = "~> 1.13"
+    }
     local = {
       source  = "hashicorp/local"
       version = "~> 2.0"
@@ -23,6 +27,10 @@ terraform {
 provider "azurerm" {
   features {}
   subscription_id = var.azure_subscription
+}
+
+provider "azapi" {
+  default_location = var.azure_region
 }
 
 # ==============================================================================
@@ -212,6 +220,25 @@ resource "azurerm_linux_virtual_machine" "exasol_node" {
     Cluster = "exasol-cluster"
     owner   = var.owner
   }
+}
+
+# Manage VM power state via azapi actions
+resource "azapi_resource_action" "vm_power_off" {
+  count       = var.infra_desired_state == "stopped" ? var.node_count : 0
+  type        = "Microsoft.Compute/virtualMachines@2022-08-01"
+  resource_id = azurerm_linux_virtual_machine.exasol_node[count.index].id
+  action      = "powerOff"
+  method      = "POST"
+  body        = jsonencode({})
+}
+
+resource "azapi_resource_action" "vm_power_on" {
+  count       = var.infra_desired_state == "running" ? var.node_count : 0
+  type        = "Microsoft.Compute/virtualMachines@2022-08-01"
+  resource_id = azurerm_linux_virtual_machine.exasol_node[count.index].id
+  action      = "start"
+  method      = "POST"
+  body        = jsonencode({})
 }
 
 # ==============================================================================

@@ -94,12 +94,8 @@ cmd_stop() {
     # Create lock
     lock_create "$deploy_dir" "stop" || die "Failed to create lock"
 
-    # Ensure trap can access the deployment directory after this function
-    # returns by copying it to a global variable that the trap will use.
-    _EXASOL_TRAP_DEPLOY_DIR="$deploy_dir"
-    # Use single quotes so ShellCheck won't warn; the variable is global so
-    # it will still be available when the trap runs.
-    trap 'lock_remove "$_EXASOL_TRAP_DEPLOY_DIR"' EXIT INT TERM
+    local stop_success="false"
+    setup_operation_guard "$deploy_dir" "$STATE_STOP_FAILED" "stop_success"
 
     # Update status
     state_set_status "$deploy_dir" "$STATE_STOP_IN_PROGRESS"
@@ -108,6 +104,18 @@ cmd_stop() {
 
     log_info "Stopping Exasol database cluster..."
     log_info "Current state: $current_state"
+
+    local cloud_provider
+    cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
+    local infra_power_supported="false"
+    case "$cloud_provider" in
+        aws|azure|gcp)
+            infra_power_supported="true"
+            ;;
+        *)
+            infra_power_supported="false"
+            ;;
+    esac
 
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"
@@ -131,15 +139,32 @@ cmd_stop() {
     # Run Ansible to stop the database
     progress_start "stop" "ansible_stop" "Stopping database services with Ansible"
 
-    if ! run_ansible_with_progress "stop" "ansible_stop" "Stopping database services" ansible-playbook -i inventory.ini .templates/stop-exasol-cluster.yml; then
+    local ansible_extra=(-i inventory.ini .templates/stop-exasol-cluster.yml)
+    [[ "$infra_power_supported" == "false" ]] && ansible_extra+=(-e "power_off_fallback=true")
+
+    if ! run_ansible_with_progress "stop" "ansible_stop" "Stopping database services" ansible-playbook "${ansible_extra[@]}"; then
         state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
         progress_fail "stop" "ansible_stop" "Failed to stop database services"
         die "Ansible stop operation failed"
     fi
     progress_complete "stop" "ansible_stop" "Database services stopped successfully"
 
+    # If provider supports infra power control, stop instances via tofu
+    if [[ "$infra_power_supported" == "true" ]]; then
+        progress_start "stop" "tofu_stop" "Stopping infrastructure (powering off instances)"
+        if ! run_tofu_with_progress "stop" "tofu_stop" "Powering off instances" tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_off" -target="google_compute_instance.exasol_node" -var "infra_desired_state=stopped"; then
+            state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
+            progress_fail "stop" "tofu_stop" "Failed to stop infrastructure (tofu apply)"
+            die "Infrastructure stop (tofu apply) failed"
+        fi
+        progress_complete "stop" "tofu_stop" "Infrastructure powered off"
+    else
+        log_warn "Provider '$cloud_provider' does not support power control via tofu. Instances were issued in-guest shutdown; manual power-on will be required for start."
+    fi
+
     # Update status to stopped
     state_set_status "$deploy_dir" "$STATE_STOPPED"
+    stop_success="true"
 
     # Display results
     progress_complete "stop" "complete" "Stop operation completed successfully"

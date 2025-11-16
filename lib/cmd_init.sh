@@ -275,9 +275,26 @@ cmd_init() {
                 return 0
                 ;;
             --list-providers)
-                log_info "Supported cloud providers:"
-                for provider in "${!SUPPORTED_PROVIDERS[@]}"; do
-                    log_info "  - $provider: ${SUPPORTED_PROVIDERS[$provider]}"
+                log_info "Supported cloud providers (stop/start capabilities):"
+                log_info "  provider       | services       | infra power"
+                log_info "  ------------------------------------------------------"
+                local ordered_providers=(aws azure gcp hetzner digitalocean)
+                for provider in "${ordered_providers[@]}"; do
+                    local name="${SUPPORTED_PROVIDERS[$provider]}"
+                    local services_box="[✓] services"
+                    local infra_box=""
+                    case "$provider" in
+                        aws|azure|gcp)
+                            infra_box="[✓] tofu power control"
+                            ;;
+                        hetzner|digitalocean)
+                            infra_box="[ ] manual power-on (in-guest shutdown)"
+                            ;;
+                        *)
+                            infra_box="[ ] manual"
+                            ;;
+                    esac
+                    log_info "  $(printf '%-13s | %-14s | %s' "$provider" "$services_box" "$infra_box")"
                 done
                 return 0
                 ;;

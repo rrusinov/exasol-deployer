@@ -21,7 +21,7 @@ if ! "$SHELLCHECK_BIN" --version >/dev/null 2>&1; then
     exit 0
 fi
 
-mapfile -t shell_scripts < <(git ls-files '*.sh' | sort)
+mapfile -t shell_scripts < <(git ls-files '*.sh' && git ls-files -o --exclude-standard '*.sh' | sort -u)
 
 if [[ ${#shell_scripts[@]} -eq 0 ]]; then
     echo "No shell scripts found."

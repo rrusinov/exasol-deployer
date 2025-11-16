@@ -93,12 +93,8 @@ cmd_start() {
     # Create lock
     lock_create "$deploy_dir" "start" || die "Failed to create lock"
 
-    # Ensure trap can access the deployment directory after this function
-    # returns by copying it to a global variable that the trap will use.
-    _EXASOL_TRAP_DEPLOY_DIR="$deploy_dir"
-    # Use single quotes so ShellCheck won't warn; the variable is global so
-    # it will still be available when the trap runs.
-    trap 'lock_remove "$_EXASOL_TRAP_DEPLOY_DIR"' EXIT INT TERM
+    local start_success="false"
+    setup_operation_guard "$deploy_dir" "$STATE_START_FAILED" "start_success"
 
     # Update status
     state_set_status "$deploy_dir" "$STATE_START_IN_PROGRESS"
@@ -107,6 +103,18 @@ cmd_start() {
 
     log_info "Starting Exasol database cluster..."
     log_info "Current state: $current_state"
+
+    local cloud_provider
+    cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
+    local infra_power_supported="false"
+    case "$cloud_provider" in
+        aws|azure|gcp)
+            infra_power_supported="true"
+            ;;
+        *)
+            infra_power_supported="false"
+            ;;
+    esac
 
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"
@@ -125,6 +133,25 @@ cmd_start() {
         state_set_status "$deploy_dir" "$STATE_START_FAILED"
         progress_fail "start" "inventory_missing" "Ansible inventory not found"
         die "Ansible inventory not found"
+    fi
+
+    # If provider supports infra power control, start instances via tofu first
+    if [[ "$infra_power_supported" == "true" ]]; then
+        progress_start "start" "tofu_start" "Starting infrastructure (powering on instances)"
+        if ! run_tofu_with_progress "start" "tofu_start" "Powering on instances" tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_on" -target="google_compute_instance.exasol_node" -var "infra_desired_state=running"; then
+            state_set_status "$deploy_dir" "$STATE_START_FAILED"
+            progress_fail "start" "tofu_start" "Failed to start infrastructure (tofu apply)"
+            die "Infrastructure start (tofu apply) failed"
+        fi
+        progress_complete "start" "tofu_start" "Infrastructure powered on"
+    else
+        log_warn "Provider '$cloud_provider' lacks tofu-based power control. Ensure instances are running before continuing; start will attempt services regardless."
+    fi
+
+    # Refresh IPs in inventory/ssh_config before Ansible (similar to deploy)
+    if command -v exasol >/dev/null 2>&1; then
+        log_info "Refreshing inventory and ssh_config via health --update"
+        cmd_health --deployment-dir "$deploy_dir" --update --quiet >/dev/null 2>&1 || true
     fi
 
     # Run Ansible to start the database
@@ -167,6 +194,7 @@ cmd_start() {
         log_warn "Database started but connectivity could not be fully validated"
         log_info "Run 'exasol health --deployment-dir $deploy_dir' to check database status"
     fi
+    start_success="true"
 
     # Display results
     progress_complete "start" "complete" "Start operation completed successfully"

@@ -35,6 +35,7 @@ Flags:
   --refresh-terraform       Run 'tofu refresh' to sync Terraform state
   --output-format <format>  Output format: text (default) or json
   --verbose                 Show detailed output
+  --update                  Refresh IPs (inventory/ssh_config/INFO.txt) based on detected IP changes
   --quiet                   Show only errors and final status
   -h, --help                Show help
 
@@ -47,6 +48,7 @@ Examples:
   exasol health --deployment-dir ./my-deployment --output-format json
   exasol health --deployment-dir ./my-deployment --refresh-terraform
   exasol health --deployment-dir ./my-deployment --verbose
+  exasol health --deployment-dir ./my-deployment --update
 EOF
 }
 
@@ -285,6 +287,18 @@ health_update_info_file() {
     # Move the temp file to the original
     mv "$temp_file" "$info_file"
     return 0  # updated
+}
+
+# Load public IPs from local Terraform state (outputs.node_public_ips)
+health_load_state_public_ips() {
+    local deploy_dir="$1"
+    local state_file="$deploy_dir/terraform.tfstate"
+
+    if [[ ! -f "$state_file" ]]; then
+        return 1
+    fi
+
+    jq -r '.outputs.node_public_ips.value[]?' "$state_file" 2>/dev/null || return 1
 }
 
 health_check_cloud_metadata_aws() {
@@ -558,8 +572,9 @@ health_check_single_host() {
     local ssh_timeout="$4"
     local cloud_provider="$5"
     local check_cluster_state="$6"  # "true" or "false"
+    local result_dir="$7"
 
-    local result_file="/tmp/health_${host_name}_$$.tmp"
+    local result_file="${result_dir}/health_${host_name}_$$.tmp"
     local -a local_issues=()
 
     # Initialize result
@@ -677,6 +692,7 @@ cmd_health() {
     local do_refresh_terraform="false"
     local output_format="text"
     local verbosity="normal"  # normal, verbose, quiet
+    local do_update_metadata="false"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -706,6 +722,10 @@ cmd_health() {
                 ;;
             --quiet)
                 verbosity="quiet"
+                shift
+                ;;
+            --update)
+                do_update_metadata="true"
                 shift
                 ;;
             *)
@@ -830,6 +850,51 @@ cmd_health() {
     local ssh_failed=0
     local services_active=0
     local services_failed=0
+    declare -A state_public_ip_map=()
+    declare -A tf_ip_by_host=()
+
+    # Preload public IPs from Terraform state (if available) keyed by host order
+    local -a state_public_ips=()
+    if mapfile -t state_public_ips < <(health_load_state_public_ips "$deploy_dir" 2>/dev/null); then
+        local idx=0
+        for entry in "${host_entries[@]}"; do
+            IFS='|' read -r host_name _ <<<"$entry"
+            host_name="${host_name//[[:space:]]/}"
+            [[ -z "$host_name" ]] && continue
+            if [[ -n "${state_public_ips[$idx]:-}" ]]; then
+                state_public_ip_map["$host_name"]="${state_public_ips[$idx]}"
+                tf_ip_by_host["$host_name"]="${state_public_ips[$idx]}"
+            fi
+            idx=$((idx + 1))
+        done
+    fi
+
+    # If update requested, rewrite inventory/ssh_config up front using TF state IPs
+    if [[ "$do_update_metadata" == "true" && ${#state_public_ip_map[@]} -gt 0 ]]; then
+        for i in "${!host_entries[@]}"; do
+            IFS='|' read -r host_name host_ip <<<"${host_entries[$i]}"
+            host_name="${host_name//[[:space:]]/}"
+            host_ip="${host_ip//[[:space:]]/}"
+            [[ -z "$host_name" ]] && continue
+
+            local tf_ip="${state_public_ip_map[$host_name]:-}"
+            if [[ -n "$tf_ip" && -n "$host_ip" && "$tf_ip" != "$host_ip" ]]; then
+                health_update_inventory_ip "$inventory_file" "$host_name" "$tf_ip" || true
+                health_update_ssh_config "$ssh_config_file" "$host_name" "$tf_ip" || true
+                health_update_info_file "$deploy_dir/INFO.txt" "$host_ip" "$tf_ip" || true
+                # Update host_entries so SSH checks use new IP
+                host_entries[i]="${host_name}|${tf_ip}"
+            elif [[ -n "$tf_ip" ]]; then
+                # Keep ssh_config in sync even if inventory already matches
+                health_update_inventory_ip "$inventory_file" "$host_name" "${host_ip:-$tf_ip}" || true
+                health_update_ssh_config "$ssh_config_file" "$host_name" "$tf_ip" || true
+                if [[ -n "$host_ip" && "$host_ip" != "$tf_ip" ]]; then
+                    health_update_info_file "$deploy_dir/INFO.txt" "$host_ip" "$tf_ip" || true
+                    host_entries[i]="${host_name}|${tf_ip}"
+                fi
+            fi
+        done
+    fi
 
     # Determine if we should show detailed output
     local show_details="true"
@@ -847,6 +912,16 @@ cmd_health() {
     if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
         echo "Running health checks on ${#host_entries[@]} host(s) in parallel..."
     fi
+
+    local result_dir
+    result_dir=$(get_runtime_temp_dir)
+    # Clean old health temp files for these hosts
+    for entry in "${host_entries[@]}"; do
+        IFS='|' read -r host_name _ <<<"$entry"
+        host_name="${host_name//[[:space:]]/}"
+        [[ -z "$host_name" ]] && continue
+        find "$result_dir" -maxdepth 1 -name "health_${host_name}_*.tmp" -delete 2>/dev/null || true
+    done
 
     local -a result_files=()
     local -a host_pids=()
@@ -866,7 +941,7 @@ cmd_health() {
 
         # Launch health check in background
         (
-            health_check_single_host "$ssh_config_file" "$host_name" "$host_ip" "$ssh_timeout" "$cloud_provider" "$check_cluster" >/dev/null
+            health_check_single_host "$ssh_config_file" "$host_name" "$host_ip" "$ssh_timeout" "$cloud_provider" "$check_cluster" "$result_dir" >/dev/null
         ) &
         host_pids+=($!)
 
@@ -908,7 +983,7 @@ cmd_health() {
 
         # Find the result file (may have different PID)
         local result_file
-        result_file=$(find /tmp -maxdepth 1 -name "health_${host_name}_*.tmp" 2>/dev/null | head -1)
+        result_file=$(find "$result_dir" -maxdepth 1 -name "health_${host_name}_*.tmp" 2>/dev/null | head -1)
         if [[ -n "$result_file" && -f "$result_file" ]]; then
             result_files+=("$result_file")
         fi
@@ -933,6 +1008,7 @@ cmd_health() {
         public_ip=$(jq -r '.public_ip' "$result_file" 2>/dev/null || echo "")
         port_8443_ok=$(jq -r '.port_8443_ok' "$result_file" 2>/dev/null || echo "false")
         port_8563_ok=$(jq -r '.port_8563_ok' "$result_file" 2>/dev/null || echo "false")
+        local host_changed="false"
 
         # Add issues from this host to global issues
         local host_issues
@@ -994,6 +1070,21 @@ cmd_health() {
             else
                 echo "    ✗ SSH: FAILED (host unreachable)"
                 failed_checks+=("$host_name: SSH unreachable")
+
+                # If we have public IPs from Terraform state, try to update inventory/ssh_config even when SSH failed
+                if [[ "$do_update_metadata" == "true" ]]; then
+                    local state_ip=""
+                    state_ip="${state_public_ip_map[$host_name]:-}"
+                    if [[ -n "$state_ip" && "$state_ip" != "$ansible_host" ]]; then
+                        if health_update_inventory_ip "$inventory_file" "$host_name" "$state_ip"; then
+                            health_update_ssh_config "$ssh_config_file" "$host_name" "$state_ip"
+                            health_update_info_file "$deploy_dir/INFO.txt" "$ansible_host" "$state_ip"
+                            echo "    ✓ IP updated from Terraform state: now $state_ip"
+                            host_changed="true"
+                        fi
+                    fi
+                fi
+
                 continue
             fi
 
@@ -1060,10 +1151,37 @@ cmd_health() {
                 echo "    ✓ Private IP: $private_ip"
             fi
 
-            # IP mismatch check (display only - already counted above)
-            # If public_ip == private_ip, it means we couldn't fetch public IP from cloud metadata
+            # Decide desired IP to use for metadata updates: prefer TF state, then detected public_ip, else ansible_host
+            local desired_ip="$ansible_host"
+            if [[ -n "${state_public_ip_map[$host_name]:-}" ]]; then
+                desired_ip="${state_public_ip_map[$host_name]}"
+            elif [[ -n "$public_ip" && "$public_ip" != "$private_ip" ]]; then
+                desired_ip="$public_ip"
+            fi
+
+            # Apply updates if requested
+            if [[ "$do_update_metadata" == "true" && -n "$desired_ip" ]]; then
+                local inv_changed="false"
+                local ssh_changed="false"
+
+                if health_update_inventory_ip "$inventory_file" "$host_name" "$desired_ip"; then
+                    inv_changed="true"
+                fi
+                if health_update_ssh_config "$ssh_config_file" "$host_name" "$desired_ip"; then
+                    ssh_changed="true"
+                fi
+                if health_update_info_file "$deploy_dir/INFO.txt" "$ansible_host" "$desired_ip"; then
+                    host_changed="true"
+                fi
+
+                if [[ "$inv_changed" == "true" || "$ssh_changed" == "true" || "$host_changed" == "true" ]]; then
+                    echo "    ✓ IP metadata updated to $desired_ip"
+                    ansible_host="$desired_ip"
+                fi
+            fi
+
+            # IP mismatch check (display only)
             if [[ -n "$public_ip" && -n "$ansible_host" && "$public_ip" != "$private_ip" ]]; then
-                # We have a real public IP from cloud metadata, compare it
                 if [[ "$public_ip" == "$ansible_host" ]]; then
                     echo "    ✓ Public IP: $public_ip (matches inventory)"
                 else
@@ -1071,7 +1189,6 @@ cmd_health() {
                     failed_checks+=("$host_name: IP mismatch (inventory=$ansible_host, actual=$public_ip)")
                 fi
             elif [[ -n "$public_ip" && "$public_ip" == "$private_ip" ]]; then
-                # Cloud metadata not available, show informational message
                 echo "    ⓘ Public IP: Cannot verify (cloud metadata not accessible, inventory shows $ansible_host)"
             fi
 
@@ -1094,6 +1211,9 @@ cmd_health() {
         # Clean up result file
         rm -f "$result_file"
     done
+
+    # Clean up any remaining health temp files for this run
+    find "$result_dir" -maxdepth 1 -name "health_*.tmp" -delete 2>/dev/null || true
 
     # Terraform state refresh if requested
     if [[ "$do_refresh_terraform" == "true" ]]; then

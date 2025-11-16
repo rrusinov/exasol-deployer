@@ -20,8 +20,14 @@ readonly LOG_LEVEL_INFO=1
 readonly LOG_LEVEL_WARN=2
 readonly LOG_LEVEL_ERROR=3
 
-# Current log level (default: INFO)
-CURRENT_LOG_LEVEL=${LOG_LEVEL_INFO}
+# Current log level (default: INFO, can be overridden via EXASOL_LOG_LEVEL env)
+case "${EXASOL_LOG_LEVEL:-}" in
+    debug|DEBUG|0) CURRENT_LOG_LEVEL=${LOG_LEVEL_DEBUG} ;;
+    info|INFO|1) CURRENT_LOG_LEVEL=${LOG_LEVEL_INFO} ;;
+    warn|WARN|warning|WARNING|2) CURRENT_LOG_LEVEL=${LOG_LEVEL_WARN} ;;
+    error|ERROR|3) CURRENT_LOG_LEVEL=${LOG_LEVEL_ERROR} ;;
+    *) CURRENT_LOG_LEVEL=${LOG_LEVEL_INFO} ;;
+esac
 
 # ==============================================================================
 # TEMP FILE HELPERS
@@ -90,6 +96,27 @@ log_error() {
 die() {
     log_error "$*"
     exit 1
+}
+
+# ==============================================================================
+# OPERATION GUARD
+# ==============================================================================
+# Sets a trap that marks the operation as failed (state) and removes lock unless
+# a success variable is set to "true" by the caller before exit.
+# Usage: setup_operation_guard <deploy_dir> <fail_status> <success_var_name>
+# The success variable must be declared in the caller's scope.
+setup_operation_guard() {
+    local deploy_dir="$1"
+    local fail_status="$2"
+    local success_var_name="$3"
+
+    # Use indirect expansion in the trap to read success_var_name at exit time
+    trap '
+        if [[ ${'"${success_var_name}"':-false} != "true" ]]; then
+            state_set_status "'"$deploy_dir"'" "'"$fail_status"'"
+        fi
+        lock_remove "'"$deploy_dir"'"
+    ' EXIT INT TERM
 }
 
 # ==============================================================================

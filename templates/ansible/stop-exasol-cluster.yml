@@ -103,6 +103,13 @@
       failed_when: false
       run_once: true
 
+    - name: Power off hosts via in-guest shutdown (fallback for unsupported providers)
+      ansible.builtin.shell: "shutdown now -h 'Exasol stop fallback'"
+      become: true
+      when: power_off_fallback | default(false)
+      ignore_errors: true
+      changed_when: true
+
     - name: Display stop summary
       ansible.builtin.debug:
         msg:

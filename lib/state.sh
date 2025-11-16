@@ -135,11 +135,29 @@ lock_create() {
 
     local lock_file="$deploy_dir/$LOCK_FILE"
 
-    if lock_exists "$deploy_dir"; then
-        log_error "Lock file already exists: $lock_file"
-        log_error "Another operation may be in progress."
-        return 1
+    if [[ "${EXASOL_LOG_LEVEL:-}" == "debug" ]]; then
+        log_debug "lock_create: attempting for $operation at $lock_file"
     fi
+
+    # Clean up stale locks before attempting to acquire
+    cleanup_stale_lock "$deploy_dir"
+
+    # Try to create lock atomically (noclobber); if it fails, attempt one cleanup + retry
+    if ! ( set -o noclobber; : > "$lock_file" ) 2>/dev/null; then
+        [[ "${EXASOL_LOG_LEVEL:-}" == "debug" ]] && log_debug "lock_create: first noclobber failed for $lock_file, running cleanup"
+        cleanup_stale_lock "$deploy_dir"
+        if ! ( set -o noclobber; : > "$lock_file" ) 2>/dev/null; then
+            if [[ -f "$lock_file" ]]; then
+                log_error "Lock file already exists: $lock_file"
+                log_error "Another operation may be in progress."
+                return 1
+            fi
+            log_error "Unable to create lock file (permission or FS error): $lock_file"
+            return 1
+        fi
+    fi
+
+    [[ "${EXASOL_LOG_LEVEL:-}" == "debug" ]] && log_debug "lock_create: noclobber succeeded for $lock_file"
 
     cat > "$lock_file" <<EOF
 {
@@ -149,6 +167,21 @@ lock_create() {
   "hostname": "$(hostname)"
 }
 EOF
+
+    # If another process removed our just-created lock, treat as failure
+    if [[ ! -f "$lock_file" ]]; then
+        log_error "Failed to persist lock file: $lock_file"
+        return 1
+    fi
+
+    # Verify the written JSON to ensure we own the lock and it matches the PID
+    local written_pid
+    written_pid=$(jq -r '.pid // empty' "$lock_file" 2>/dev/null || echo "")
+    if [[ -z "$written_pid" || "$written_pid" -ne $$ ]]; then
+        log_error "Lock file content mismatch, removing lock: $lock_file"
+        rm -f "$lock_file"
+        return 1
+    fi
 
     log_debug "Created lock file: $lock_file"
 }

@@ -658,12 +658,166 @@ test_invalid_operation_sequences() {
     cleanup_test_dir "$test_dir"
 }
 
+test_lock_permission_denied() {
+    echo ""
+    echo "Test: lock_create fails on non-writable directory"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+
+    chmod 500 "$test_dir"
+
+    if lock_create "$test_dir" "nop"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} lock_create should fail when directory not writable"
+        lock_remove "$test_dir"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} lock_create fails on permission error"
+    fi
+
+    chmod 700 "$test_dir"
+    cleanup_test_dir "$test_dir"
+}
+
+test_lock_race_and_cleanup() {
+    echo ""
+    echo "Test: lock contention and cleanup across processes"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+
+    # Hold lock in background
+    (
+        lock_create "$test_dir" "proc1" || exit 1
+        sleep 3
+    ) &
+    local holder=$!
+    sleep 1
+
+    # While lock held, second acquisition should fail
+    if lock_create "$test_dir" "proc2"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Second lock acquisition should fail while held"
+        lock_remove "$test_dir"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Second lock blocked while held"
+    fi
+
+    # Terminate holder and clean stale lock, then acquire
+    kill "$holder" 2>/dev/null || true
+    wait "$holder" 2>/dev/null || true
+
+    # Simulate stale lock with an unreachable PID to avoid PID reuse issues
+    local fake_pid
+    fake_pid=$(( $(cat /proc/sys/kernel/pid_max 2>/dev/null || echo 4194304) + 1000 ))
+    cat > "$test_dir/$LOCK_FILE" <<EOF
+{"operation":"proc1","pid":$fake_pid,"started_at":"","hostname":""}
+EOF
+
+    cleanup_stale_lock "$test_dir"
+
+    if lock_create "$test_dir" "proc3"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Lock acquired after stale cleanup"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Lock should be acquirable after cleanup"
+    fi
+
+    lock_remove "$test_dir"
+    cleanup_test_dir "$test_dir"
+}
+
+test_lock_retry_after_manual_stale() {
+    echo ""
+    echo "Test: lock_create retries after cleaning manual stale lock"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+
+    # Write a manual stale lock with dead PID
+    local fake_pid
+    fake_pid=$(( $(cat /proc/sys/kernel/pid_max 2>/dev/null || echo 4194304) + 123 ))
+    cat > "$test_dir/$LOCK_FILE" <<EOF
+{"operation":"manual","pid":$fake_pid,"started_at":"","hostname":""}
+EOF
+
+    if lock_create "$test_dir" "retry-op"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} lock_create succeeded after cleaning manual stale lock"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} lock_create should succeed after cleaning manual stale lock"
+    fi
+
+    lock_remove "$test_dir"
+    cleanup_test_dir "$test_dir"
+}
+
+test_lock_contention_transient() {
+    echo ""
+    echo "Test: lock_create fails while another process holds lock, then succeeds after release"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+
+    (
+        lock_create "$test_dir" "holder" || exit 1
+        sleep 2
+        lock_remove "$test_dir"
+    ) &
+    local holder=$!
+    sleep 0.5
+
+    # Should fail while held
+    if lock_create "$test_dir" "contender"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Lock should block while another process holds it"
+        lock_remove "$test_dir"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Lock blocked while held"
+    fi
+
+    wait "$holder" 2>/dev/null || true
+    cleanup_stale_lock "$test_dir"
+
+    # Should succeed after release
+    if lock_create "$test_dir" "after_release"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Lock acquired after holder released"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Lock should be acquirable after holder released"
+    fi
+
+    lock_remove "$test_dir"
+    cleanup_test_dir "$test_dir"
+}
+
 # Run all tests
 test_state_init
 test_is_deployment_directory
 test_state_set_status
 test_lock_operations
 test_stale_lock_cleanup
+test_lock_race_and_cleanup
+test_lock_retry_after_manual_stale
+test_lock_contention_transient
 test_write_variables_file
 test_status_constant_consistency
 test_status_command_integration
@@ -674,6 +828,7 @@ test_validate_stop_transition_invalid
 test_complete_deployment_lifecycle
 test_failure_and_retry_scenarios
 test_invalid_operation_sequences
+test_lock_permission_denied
 
 # Show summary
 test_summary

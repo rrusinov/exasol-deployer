@@ -269,17 +269,17 @@ Use the health command to verify SSH connectivity, COS endpoints, critical c4-ma
 
 ### 7. Stop and Start the Database (Optional)
 
-For cost optimization, you can stop the database without terminating instances:
+For cost optimization, you can stop the database. On AWS/Azure/GCP this also powers off the VMs via OpenTofu; on other providers the VMs are halted in-guest and must be powered on manually before start will succeed.
 
 ```bash
-# Stop the database (keeps instances running)
+# Stop the database (and power off VMs on AWS/Azure/GCP)
 ./exasol stop --deployment-dir ./my-deployment
 
 # Check status
 ./exasol status --deployment-dir ./my-deployment
 # Status will be: "stopped"
 
-# Start the database again
+# Start the database again (power on VMs via tofu when supported)
 ./exasol start --deployment-dir ./my-deployment
 
 # Verify it's running
@@ -393,14 +393,14 @@ Start a stopped Exasol database deployment. This starts the database services on
 
 **What it does:**
 1. Validates deployment state
-2. Starts systemd services via Ansible:
+2. On AWS/Azure/GCP: powers on instances via `tofu apply -var infra_desired_state=running` (other providers require manual power-on if previously halted)
+3. Starts systemd services via Ansible:
    - `exasol-data-symlinks.service`
    - `c4_cloud_command.service`
-   - `exasol-admin-ui.service`
-   - `c4.service` (main database service)
-3. Waits for database to boot (stage 'd')
-4. Validates cluster is online
-5. Updates state to `database_ready` or `database_connection_failed`
+   - `c4.service` (main database service, brings up Admin UI via PartOf)
+4. Waits for database to boot (stage 'd')
+5. Validates cluster is online
+6. Updates state to `database_ready` or `database_connection_failed`
 
 ### `stop`
 
@@ -421,13 +421,15 @@ Stop a running Exasol database deployment. This gracefully stops database servic
 **What it does:**
 1. Validates deployment state
 2. Stops systemd services via Ansible:
-   - `c4.service` (main database service)
+   - `c4.service` (main database service, stops Admin UI via PartOf)
    - `c4_cloud_command.service`
-   - `exasol-admin-ui.service`
-3. Verifies all services are stopped
-4. Updates state to `stopped` or `stop_failed`
+   - `exasol-admin-ui.service` (explicit ensure-stop)
+3. On AWS/Azure/GCP: powers off instances via `tofu apply -var infra_desired_state=stopped`
+4. On other providers: issues in-guest `shutdown -h` and warns that manual power-on is required before start
+5. Verifies services are stopped
+6. Updates state to `stopped` or `stop_failed`
 
-**Note:** Cloud instances remain running. Use `destroy` to terminate instances and release all resources.
+**Note:** Use `destroy` to terminate instances and release all resources.
 
 ### `status`
 
