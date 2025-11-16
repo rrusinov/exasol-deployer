@@ -26,11 +26,17 @@ readonly STATE_DATABASE_READY="database_ready"
 readonly STATE_DESTROY_IN_PROGRESS="destroy_in_progress"
 readonly STATE_DESTROY_FAILED="destroy_failed"
 readonly STATE_DESTROYED="destroyed"
+readonly STATE_STOPPED="stopped"
+readonly STATE_START_IN_PROGRESS="start_in_progress"
+readonly STATE_START_FAILED="start_failed"
+readonly STATE_STOP_IN_PROGRESS="stop_in_progress"
+readonly STATE_STOP_FAILED="stop_failed"
 
 # Export state constants for use in other scripts
 export STATE_INITIALIZED STATE_DEPLOY_IN_PROGRESS STATE_DEPLOYMENT_FAILED \
        STATE_DATABASE_CONNECTION_FAILED STATE_DATABASE_READY STATE_DESTROY_IN_PROGRESS \
-       STATE_DESTROY_FAILED STATE_DESTROYED
+       STATE_DESTROY_FAILED STATE_DESTROYED STATE_STOPPED STATE_START_IN_PROGRESS \
+       STATE_START_FAILED STATE_STOP_IN_PROGRESS STATE_STOP_FAILED
 
 # Initialize state file
 state_init() {
@@ -248,6 +254,71 @@ get_deployment_status() {
 
     # Otherwise, return status from state file
     state_get_status "$deploy_dir"
+}
+
+# Validate state transition for start command
+validate_start_transition() {
+    local current_state="$1"
+
+    case "$current_state" in
+        "$STATE_STOPPED"|"$STATE_START_FAILED")
+            # Valid states to start from
+            return 0
+            ;;
+        "$STATE_DEPLOY_IN_PROGRESS"|"$STATE_DESTROY_IN_PROGRESS"|"$STATE_STOP_IN_PROGRESS"|"$STATE_START_IN_PROGRESS")
+            log_error "Cannot start: another operation is in progress (state: $current_state)"
+            return 1
+            ;;
+        "$STATE_DESTROYED")
+            log_error "Cannot start: deployment has been destroyed"
+            return 1
+            ;;
+        "$STATE_DATABASE_READY")
+            log_error "Cannot start: database is already running (state: $current_state)"
+            return 1
+            ;;
+        "$STATE_INITIALIZED"|"$STATE_DEPLOYMENT_FAILED"|"$STATE_DATABASE_CONNECTION_FAILED")
+            log_error "Cannot start: deployment is not in a stoppable state (state: $current_state)"
+            log_info "Please run 'exasol deploy' first to fully deploy the database"
+            return 1
+            ;;
+        *)
+            log_error "Cannot start from unknown state: $current_state"
+            return 1
+            ;;
+    esac
+}
+
+# Validate state transition for stop command
+validate_stop_transition() {
+    local current_state="$1"
+
+    case "$current_state" in
+        "$STATE_DATABASE_READY"|"$STATE_DATABASE_CONNECTION_FAILED"|"$STATE_STOP_FAILED")
+            # Valid states to stop from
+            return 0
+            ;;
+        "$STATE_DEPLOY_IN_PROGRESS"|"$STATE_DESTROY_IN_PROGRESS"|"$STATE_STOP_IN_PROGRESS"|"$STATE_START_IN_PROGRESS")
+            log_error "Cannot stop: another operation is in progress (state: $current_state)"
+            return 1
+            ;;
+        "$STATE_DESTROYED")
+            log_error "Cannot stop: deployment has been destroyed"
+            return 1
+            ;;
+        "$STATE_STOPPED")
+            log_error "Cannot stop: database is already stopped (state: $current_state)"
+            return 1
+            ;;
+        "$STATE_INITIALIZED"|"$STATE_DEPLOYMENT_FAILED"|"$STATE_START_FAILED")
+            log_error "Cannot stop: database is not running (state: $current_state)"
+            return 1
+            ;;
+        *)
+            log_error "Cannot stop from unknown state: $current_state"
+            return 1
+            ;;
+    esac
 }
 
 # Write variables file

@@ -519,16 +519,34 @@ health_check_cluster_state() {
     local output_format="$5"
 
     # Check if c4 is available and can report cluster status
-    local cluster_check
-    cluster_check=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
-        "cd /home/exasol/exasol-release 2>/dev/null && sudo -u exasol ./c4 cluster status 2>/dev/null | grep -c 'cluster is online'" 2>/dev/null || echo "0")
+    # Get unique stages from all nodes
+    local stages
+    stages=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+        "sudo -u exasol c4 ps -e '.[].Instances.Configs | to_entries | map(.value.ground.boot_stage) | unique | join(\",\")' 2>/dev/null" 2>/dev/null || echo "")
 
-    if [[ "$cluster_check" == "0" ]]; then
+    if [[ -z "$stages" ]]; then
         echo "cluster_state_unknown"
         return 0  # Don't count as failure - might not be fully deployed yet
     fi
 
-    echo "cluster_state_ok"
+    # Normalise output: remove quotes, collapse whitespace/newlines to commas, deduplicate, and drop empties
+    stages=$(echo "$stages" | tr -d '"' | tr '\r\n' ',' | tr -d ' ' | sed 's/,,*/,/g; s/^,//; s/,$//')
+    if [[ -n "$stages" ]]; then
+        stages=$(printf "%s\n" "$stages" | tr ',' '\n' | sort -u | paste -sd ',' -)
+    fi
+
+    # Check if all nodes are at the same stage
+    if [[ "$stages" == "d" ]]; then
+        echo "cluster_stage_d"  # Database ready
+    elif [[ "$stages" =~ ^(a|a1)(,(a|a1))*$ ]]; then
+        echo "cluster_stage_a"  # Stopped (SSH reachable, c4 service not ready)
+    elif [[ "$stages" =~ ^(b|b1)(,(b|b1))*$ ]]; then
+        echo "cluster_stage_b"  # Boot stage
+    elif [[ "$stages" == "c" ]]; then
+        echo "cluster_stage_c"  # COS ready
+    else
+        echo "cluster_stage_mixed:$stages"  # Mixed stages across nodes
+    fi
     return 0
 }
 
@@ -1019,10 +1037,22 @@ cmd_health() {
             fi
 
             # Cluster state
-            if [[ "$cluster_status" == "cluster_state_ok" ]]; then
-                echo "    ✓ Cluster state: OK (cluster online)"
+            if [[ "$cluster_status" == "cluster_stage_d" ]]; then
+                echo "    ✓ Cluster state: Stage 'd' - Database ready (all nodes)"
+            elif [[ "$cluster_status" == "cluster_stage_a" ]]; then
+                echo "    ○ Cluster state: Stage 'a/a1' - Stopped (instances running, database stopped)"
+            elif [[ "$cluster_status" == "cluster_stage_b" ]]; then
+                echo "    ⚠ Cluster state: Stage 'b/b1' - Boot stage (services starting)"
+                failed_checks+=("$host_name: Cluster in boot stage")
+            elif [[ "$cluster_status" == "cluster_stage_c" ]]; then
+                echo "    ⚠ Cluster state: Stage 'c' - COS ready (database not started)"
+                failed_checks+=("$host_name: Cluster at COS stage, database not ready")
+            elif [[ "$cluster_status" == cluster_stage_mixed:* ]]; then
+                local stages="${cluster_status#cluster_stage_mixed:}"
+                echo "    ✗ Cluster state: Mixed stages across nodes ($stages)"
+                failed_checks+=("$host_name: Cluster has mixed stages: $stages")
             elif [[ "$cluster_status" == "cluster_state_unknown" ]]; then
-                echo "    Cluster state: Unable to verify (c4 cluster status unavailable)"
+                echo "    Cluster state: Unable to verify (c4 ps unavailable)"
             fi
 
             # IP information
