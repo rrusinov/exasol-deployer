@@ -280,15 +280,8 @@ locals {
   provider_code = "azure"
   region_name   = var.azure_region
 
-  # Azure firewall rules with priorities
-  azure_firewall_rules = {
-    100 = { port = 22, name = "SSH" }
-    110 = { port = 8563, name = "Exasol-Database" }
-    120 = { port = 8443, name = "Exasol-AdminUI" }
-    130 = { port = 2581, name = "Exasol-BucketFS" }
-    140 = { port = 20002, name = "Exasol-ContainerSSH" }
-    150 = { port = 20003, name = "Exasol-ConfdAPI" }
-  }
+  # Azure firewall rules with priorities (references common definitions)
+  azure_firewall_rules = local.exasol_firewall_rules
 
   # Group volume IDs by node for Ansible inventory
   node_volumes = {

@@ -93,7 +93,6 @@ cmd_start() {
     # Create lock
     lock_create "$deploy_dir" "start" || die "Failed to create lock"
 
-    local start_success="false"
     setup_operation_guard "$deploy_dir" "$STATE_START_FAILED" "start_success"
 
     # Update status
@@ -194,7 +193,7 @@ cmd_start() {
         log_warn "Database started but connectivity could not be fully validated"
         log_info "Run 'exasol health --deployment-dir $deploy_dir' to check database status"
     fi
-    start_success="true"
+    operation_success
 
     # Display results
     progress_complete "start" "complete" "Start operation completed successfully"

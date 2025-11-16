@@ -98,7 +98,6 @@ cmd_destroy() {
 
     # Create lock
     lock_create "$deploy_dir" "destroy" || die "Failed to create lock"
-    local destroy_success="false"
     setup_operation_guard "$deploy_dir" "$STATE_DESTROY_FAILED" "destroy_success"
 
     progress_start "destroy" "begin" "Starting Exasol deployment destruction"
@@ -165,7 +164,7 @@ cmd_destroy() {
         progress_complete "destroy" "cleanup" "Deployment files cleaned up"
 
         progress_complete "destroy" "complete" "All resources destroyed successfully"
-        destroy_success="true"
+        operation_success
     else
         # Keep the lock removal as we already removed it on failure above.
         log_warn "Some resources may not have been destroyed. Manual inspection and cleanup are required."

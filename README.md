@@ -456,17 +456,16 @@ Get the current status of a deployment in JSON format.
 
 ### `health`
 
-Run connectivity and service health checks for an existing deployment. The command verifies SSH access to every node, COS endpoints, key systemd services (c4 stack, Admin UI, symlink initializer), and IP consistency between live infrastructure and local metadata. Use `--update` to refresh `inventory.ini`, `ssh_config`, and `INFO.txt` if the provider changed public IPs. Use `--try-fix` to restart failed services automatically.
+Run connectivity and service health checks for an existing deployment. The command verifies SSH access to every node, COS endpoints, key systemd services (c4 stack, Admin UI, symlink initializer), cluster state, and IP consistency between live infrastructure and local metadata.
+
+Use `--update` to refresh `inventory.ini`, `ssh_config`, and `INFO.txt` when IPs change, and to correct deployment status from failure states to `database_ready` if all health checks pass and the cluster is confirmed operational.
 
 ```bash
 # Basic health check
 ./exasol health --deployment-dir ./my-deployment
 
-# Refresh local metadata files when IPs drift
+# Refresh metadata and correct status if cluster is healthy
 ./exasol health --deployment-dir ./my-deployment --update
-
-# Attempt automatic remediation
-./exasol health --deployment-dir ./my-deployment --try-fix
 ```
 
 ### `destroy`

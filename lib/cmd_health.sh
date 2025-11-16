@@ -27,6 +27,10 @@ key systemd services installed by the c4 deployer, volume attachments,
 and cluster state. Health checks run in parallel for faster execution
 on large deployments.
 
+With --update flag, also refreshes IP addresses in inventory/ssh_config/INFO.txt
+and can correct deployment status from failure states to 'database_ready' if all
+health checks pass and the cluster is confirmed to be operational.
+
 Usage:
   exasol health [flags]
 
@@ -35,7 +39,7 @@ Flags:
   --refresh-terraform       Run 'tofu refresh' to sync Terraform state
   --output-format <format>  Output format: text (default) or json
   --verbose                 Show detailed output
-  --update                  Refresh IPs (inventory/ssh_config/INFO.txt) based on detected IP changes
+  --update                  Refresh IPs and correct deployment status if cluster is healthy
   --quiet                   Show only errors and final status
   -h, --help                Show help
 
@@ -694,6 +698,8 @@ cmd_health() {
     local verbosity="normal"  # normal, verbose, quiet
     local do_update_metadata="false"
 
+
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help)
@@ -988,6 +994,35 @@ cmd_health() {
             result_files+=("$result_file")
         fi
     done
+
+    # Update deployment status if health checks pass and --update is used
+    if [[ "$do_update_metadata" == "true" && "$overall_issues" -eq 0 ]]; then
+        local current_status
+        current_status=$(state_get_status "$deploy_dir")
+
+        # Check if cluster is database-ready (any host reports cluster_stage_d)
+        local cluster_ready="false"
+        for result_file in "${result_files[@]}"; do
+            if [[ -f "$result_file" ]]; then
+                local cluster_status
+                cluster_status=$(jq -r '.cluster_status' "$result_file" 2>/dev/null || echo "")
+                if [[ "$cluster_status" == "cluster_stage_d" ]]; then
+                    cluster_ready="true"
+                    break
+                fi
+            fi
+        done
+
+        # Update status from failure states to database_ready if cluster is healthy
+        if [[ "$current_status" == "deployment_failed" || "$current_status" == "database_connection_failed" || "$current_status" == "start_failed" || "$current_status" == "stop_failed" ]]; then
+            if [[ "$cluster_ready" == "true" ]]; then
+                state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
+                if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
+                    log_info "✅ Deployment status updated to 'database_ready' (cluster is healthy)"
+                fi
+            fi
+        fi
+    fi
 
     # Process results and display output
     for result_file in "${result_files[@]}"; do

@@ -81,7 +81,6 @@ cmd_deploy() {
     # Create lock
     lock_create "$deploy_dir" "deploy" || die "Failed to create lock"
 
-    local deploy_success="false"
     setup_operation_guard "$deploy_dir" "$STATE_DEPLOYMENT_FAILED" "deploy_success"
 
     # Update status
@@ -150,7 +149,7 @@ cmd_deploy() {
     if [[ ! -f "$deploy_dir/.templates/setup-exasol-cluster.yml" ]]; then
         log_warn "Ansible playbook not found, skipping configuration"
         state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
-        deploy_success="true"
+        operation_success
         log_info ""
         log_info "✅ Infrastructure deployed successfully!"
         log_info ""
@@ -165,7 +164,7 @@ cmd_deploy() {
     if [[ ! -f "$deploy_dir/inventory.ini" ]]; then
         log_warn "Ansible inventory not found, skipping configuration"
         state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
-        deploy_success="true"
+        operation_success
         progress_complete "deploy" "ansible_config" "Infrastructure deployed (Ansible skipped)"
         progress_complete "deploy" "complete" "Deployment completed successfully"
         log_info ""
@@ -182,7 +181,7 @@ cmd_deploy() {
 
     # Update status to success
     state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
-    deploy_success="true"
+    operation_success
 
     # Display results
     progress_complete "deploy" "complete" "Deployment completed successfully"

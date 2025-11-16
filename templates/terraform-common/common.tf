@@ -35,16 +35,6 @@ resource "local_file" "exasol_private_key_pem" {
 # ==============================================================================
 
 locals {
-  # Common firewall ports for Exasol cluster
-  exasol_firewall_ports = {
-    22    = "SSH access"
-    2581  = "Default bucketfs"
-    8443  = "Exasol Admin UI"
-    8563  = "Default Exasol database connection"
-    20002 = "Exasol container ssh"
-    20003 = "Exasol confd API"
-  }
-
   # Standard cloud-init script for creating exasol user
   # Works across all Linux distributions (Ubuntu, Debian, RHEL, Amazon Linux, etc.)
   cloud_init_script = <<-EOF

@@ -105,18 +105,37 @@ die() {
 # a success variable is set to "true" by the caller before exit.
 # Usage: setup_operation_guard <deploy_dir> <fail_status> <success_var_name>
 # The success variable must be declared in the caller's scope.
+
+# Global variables for trap cleanup (set by setup_operation_guard)
+declare -g _OPERATION_GUARD_DEPLOY_DIR=""
+declare -g _OPERATION_GUARD_FAIL_STATUS=""
+declare -g _OPERATION_GUARD_SUCCESS="false"
+
+# Cleanup function called by trap
+cleanup_operation_guard() {
+    if [[ "$_OPERATION_GUARD_SUCCESS" != "true" ]]; then
+        state_set_status "$_OPERATION_GUARD_DEPLOY_DIR" "$_OPERATION_GUARD_FAIL_STATUS"
+    fi
+    lock_remove "$_OPERATION_GUARD_DEPLOY_DIR"
+}
+
 setup_operation_guard() {
     local deploy_dir="$1"
     local fail_status="$2"
-    local success_var_name="$3"
+    local success_var_name="$3"  # Kept for compatibility but not used
 
-    # Use indirect expansion in the trap to read success_var_name at exit time
-    trap '
-        if [[ ${'"${success_var_name}"':-false} != "true" ]]; then
-            state_set_status "'"$deploy_dir"'" "'"$fail_status"'"
-        fi
-        lock_remove "'"$deploy_dir"'"
-    ' EXIT INT TERM
+    # Set global variables for the cleanup function
+    _OPERATION_GUARD_DEPLOY_DIR="$deploy_dir"
+    _OPERATION_GUARD_FAIL_STATUS="$fail_status"
+    _OPERATION_GUARD_SUCCESS="false"
+
+    # Set trap to call the cleanup function
+    trap 'cleanup_operation_guard' EXIT INT TERM
+}
+
+# Function to mark operation as successful
+operation_success() {
+    _OPERATION_GUARD_SUCCESS="true"
 }
 
 # ==============================================================================

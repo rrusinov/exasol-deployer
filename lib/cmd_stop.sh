@@ -94,7 +94,6 @@ cmd_stop() {
     # Create lock
     lock_create "$deploy_dir" "stop" || die "Failed to create lock"
 
-    local stop_success="false"
     setup_operation_guard "$deploy_dir" "$STATE_STOP_FAILED" "stop_success"
 
     # Update status
@@ -164,7 +163,7 @@ cmd_stop() {
 
     # Update status to stopped
     state_set_status "$deploy_dir" "$STATE_STOPPED"
-    stop_success="true"
+    operation_success
 
     # Display results
     progress_complete "stop" "complete" "Stop operation completed successfully"
