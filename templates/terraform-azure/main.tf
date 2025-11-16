@@ -5,6 +5,10 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 3.0"
     }
+    azapi = {
+      source  = "azure/azapi"
+      version = "~> 1.13"
+    }
     local = {
       source  = "hashicorp/local"
       version = "~> 2.0"
@@ -23,6 +27,10 @@ terraform {
 provider "azurerm" {
   features {}
   subscription_id = var.azure_subscription
+}
+
+provider "azapi" {
+  default_location = var.azure_region
 }
 
 # ==============================================================================
@@ -214,6 +222,25 @@ resource "azurerm_linux_virtual_machine" "exasol_node" {
   }
 }
 
+# Manage VM power state via azapi actions
+resource "azapi_resource_action" "vm_power_off" {
+  count       = var.infra_desired_state == "stopped" ? var.node_count : 0
+  type        = "Microsoft.Compute/virtualMachines@2022-08-01"
+  resource_id = azurerm_linux_virtual_machine.exasol_node[count.index].id
+  action      = "powerOff"
+  method      = "POST"
+  body        = jsonencode({})
+}
+
+resource "azapi_resource_action" "vm_power_on" {
+  count       = var.infra_desired_state == "running" ? var.node_count : 0
+  type        = "Microsoft.Compute/virtualMachines@2022-08-01"
+  resource_id = azurerm_linux_virtual_machine.exasol_node[count.index].id
+  action      = "start"
+  method      = "POST"
+  body        = jsonencode({})
+}
+
 # ==============================================================================
 # Data Disks
 # ==============================================================================
@@ -253,15 +280,8 @@ locals {
   provider_code = "azure"
   region_name   = var.azure_region
 
-  # Azure firewall rules with priorities
-  azure_firewall_rules = {
-    100 = { port = 22, name = "SSH" }
-    110 = { port = 8563, name = "Exasol-Database" }
-    120 = { port = 8443, name = "Exasol-AdminUI" }
-    130 = { port = 2581, name = "Exasol-BucketFS" }
-    140 = { port = 20002, name = "Exasol-ContainerSSH" }
-    150 = { port = 20003, name = "Exasol-ConfdAPI" }
-  }
+  # Azure firewall rules with priorities (references common definitions)
+  azure_firewall_rules = local.exasol_firewall_rules
 
   # Group volume IDs by node for Ansible inventory
   node_volumes = {

@@ -308,9 +308,26 @@ cmd_init() {
                 return 0
                 ;;
             --list-providers)
-                log_info "Supported cloud providers:"
-                for provider in "${!SUPPORTED_PROVIDERS[@]}"; do
-                    log_info "  - $provider: ${SUPPORTED_PROVIDERS[$provider]}"
+                log_info "Supported cloud providers (stop/start capabilities):"
+                log_info "  provider       | services       | infra power"
+                log_info "  ------------------------------------------------------"
+                local ordered_providers=(aws azure gcp hetzner digitalocean)
+                for provider in "${ordered_providers[@]}"; do
+                    local name="${SUPPORTED_PROVIDERS[$provider]}"
+                    local services_box="[✓] services"
+                    local infra_box=""
+                    case "$provider" in
+                        aws|azure|gcp)
+                            infra_box="[✓] tofu power control"
+                            ;;
+                        hetzner|digitalocean)
+                            infra_box="[ ] manual power-on (in-guest shutdown)"
+                            ;;
+                        *)
+                            infra_box="[ ] manual"
+                            ;;
+                    esac
+                    log_info "  $(printf '%-13s | %-14s | %s' "$provider" "$services_box" "$infra_box")"
                 done
                 return 0
                 ;;
@@ -467,9 +484,10 @@ cmd_init() {
     # Note: common-variables.tf is documentation only, not copied
     if [[ -d "$script_root/templates/terraform-common" ]]; then
         cp "$script_root/templates/terraform-common/common.tf" "$templates_dir/" 2>/dev/null || true
+        cp "$script_root/templates/terraform-common/common-firewall.tf" "$templates_dir/" 2>/dev/null || true
         cp "$script_root/templates/terraform-common/common-outputs.tf" "$templates_dir/" 2>/dev/null || true
         cp "$script_root/templates/terraform-common/inventory.tftpl" "$templates_dir/" 2>/dev/null || true
-        log_debug "Copied common Terraform resources (common.tf, common-outputs.tf, inventory.tftpl)"
+        log_debug "Copied common Terraform resources (common.tf, common-firewall.tf, common-outputs.tf, inventory.tftpl)"
     fi
 
     # Then, copy cloud-provider-specific terraform templates
@@ -765,6 +783,7 @@ create_terraform_files() {
     local templates_dir="$deploy_dir/.templates"
 
     ln -sf ".templates/common.tf" "$deploy_dir/common.tf"
+    ln -sf ".templates/common-firewall.tf" "$deploy_dir/common-firewall.tf"
     ln -sf ".templates/common-outputs.tf" "$deploy_dir/common-outputs.tf"
     ln -sf ".templates/main.tf" "$deploy_dir/main.tf"
     ln -sf ".templates/variables.tf" "$deploy_dir/variables.tf"

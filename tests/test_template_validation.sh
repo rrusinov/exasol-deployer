@@ -16,6 +16,33 @@ source "$LIB_DIR/cmd_init.sh"
 echo "Testing template validation (Terraform + Ansible)"
 echo "================================================="
 
+tofu_init_strict() {
+    local label="$1"
+    local tmp
+    tmp=$(mktemp)
+    if tofu init >"$tmp" 2>&1; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} ${label}: tofu init successful"
+        rm -f "$tmp"
+        return 0
+    fi
+
+    if grep -qi "snap-confine has elevated permissions" "$tmp" || grep -qi "snapd.apparmor" "$tmp"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        echo -e "${YELLOW}⊘${NC} ${label}: tofu init skipped (snap sandbox/apparmor not available)"
+        rm -f "$tmp"
+        return 2
+    fi
+
+    TESTS_TOTAL=$((TESTS_TOTAL + 1))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    echo -e "${RED}✗${NC} ${label}: tofu init failed"
+    cat "$tmp"
+    rm -f "$tmp"
+    return 1
+}
+
 # Check if required tools are available
 check_tool_availability() {
     echo ""
@@ -72,16 +99,12 @@ test_aws_template_validation() {
 
     # Run tofu init
     cd "$test_dir/.templates" || exit 1
-    if tofu init >/dev/null 2>&1; then
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_PASSED=$((TESTS_PASSED + 1))
-        echo -e "${GREEN}✓${NC} AWS: tofu init successful"
-    else
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} AWS: tofu init failed"
+    local rc=0
+    if ! tofu_init_strict "AWS"; then
+        rc=$?
         cd - >/dev/null
         cleanup_test_dir "$test_dir"
+        [[ $rc -eq 2 ]] && return 0
         return
     fi
 
@@ -126,16 +149,11 @@ test_azure_template_validation() {
 
     # Run tofu init
     cd "$test_dir/.templates" || exit 1
-    if tofu init >/dev/null 2>&1; then
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_PASSED=$((TESTS_PASSED + 1))
-        echo -e "${GREEN}✓${NC} Azure: tofu init successful"
-    else
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} Azure: tofu init failed"
+    if ! tofu_init_strict "Azure"; then
+        rc=$?
         cd - >/dev/null
         cleanup_test_dir "$test_dir"
+        [[ $rc -eq 2 ]] && return 0
         return
     fi
 
@@ -180,16 +198,11 @@ test_gcp_template_validation() {
 
     # Run tofu init
     cd "$test_dir/.templates" || exit 1
-    if tofu init >/dev/null 2>&1; then
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_PASSED=$((TESTS_PASSED + 1))
-        echo -e "${GREEN}✓${NC} GCP: tofu init successful"
-    else
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} GCP: tofu init failed"
+    if ! tofu_init_strict "GCP"; then
+        rc=$?
         cd - >/dev/null
         cleanup_test_dir "$test_dir"
+        [[ $rc -eq 2 ]] && return 0
         return
     fi
 
@@ -234,16 +247,11 @@ test_hetzner_template_validation() {
 
     # Run tofu init
     cd "$test_dir/.templates" || exit 1
-    if tofu init >/dev/null 2>&1; then
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_PASSED=$((TESTS_PASSED + 1))
-        echo -e "${GREEN}✓${NC} Hetzner: tofu init successful"
-    else
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} Hetzner: tofu init failed"
+    if ! tofu_init_strict "Hetzner"; then
+        rc=$?
         cd - >/dev/null
         cleanup_test_dir "$test_dir"
+        [[ $rc -eq 2 ]] && return 0
         return
     fi
 
@@ -288,16 +296,11 @@ test_digitalocean_template_validation() {
 
     # Run tofu init
     cd "$test_dir/.templates" || exit 1
-    if tofu init >/dev/null 2>&1; then
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_PASSED=$((TESTS_PASSED + 1))
-        echo -e "${GREEN}✓${NC} DigitalOcean: tofu init successful"
-    else
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} DigitalOcean: tofu init failed"
+    if ! tofu_init_strict "DigitalOcean"; then
+        rc=$?
         cd - >/dev/null
         cleanup_test_dir "$test_dir"
+        [[ $rc -eq 2 ]] && return 0
         return
     fi
 
@@ -628,11 +631,7 @@ test_symlinks_with_tofu() {
 
     # Run tofu init from deployment directory (not .templates)
     cd "$test_dir" || exit 1
-    if tofu init >/dev/null 2>&1; then
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_PASSED=$((TESTS_PASSED + 1))
-        echo -e "${GREEN}✓${NC} tofu init works from deployment directory"
-
+    if tofu_init_strict "tofu init from deployment directory"; then
         # Run tofu validate from deployment directory
         if tofu validate >/dev/null 2>&1; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -644,9 +643,12 @@ test_symlinks_with_tofu() {
             echo -e "${RED}✗${NC} tofu validate failed from deployment directory"
         fi
     else
-        TESTS_TOTAL=$((TESTS_TOTAL + 2))
-        TESTS_FAILED=$((TESTS_FAILED + 2))
-        echo -e "${RED}✗${NC} tofu init failed from deployment directory"
+        rc=$?
+        if [[ $rc -eq 2 ]]; then
+            cd - >/dev/null
+            cleanup_test_dir "$test_dir"
+            return
+        fi
     fi
 
     cd - >/dev/null

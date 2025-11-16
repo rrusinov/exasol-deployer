@@ -168,9 +168,8 @@ test_summary() {
 setup_test_dir() {
     # Create unique test directory in /var/tmp for persistence
     local username=$(whoami)
-    local test_id=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 8)
-    local test_dir="/var/tmp/exasol-deployer-utest-${username}-${TEST_RUN_ID}-${test_id}"
-    mkdir -p "$test_dir"
+    local test_dir
+    test_dir=$(mktemp -d "/var/tmp/exasol-deployer-utest-${username}-${TEST_RUN_ID}-XXXXXX" 2>/dev/null || mktemp -d "/tmp/exasol-deployer-utest-${username}-${TEST_RUN_ID}-XXXXXX")
     CREATED_TEST_DIRS+=("$test_dir")
     echo "$test_dir"
 }
@@ -178,16 +177,29 @@ setup_test_dir() {
 cleanup_test_dir() {
     local test_dir="$1"
     # Only cleanup directories that match our unit test pattern and belong to this user
-    if [[ -n "$test_dir" && "$test_dir" =~ ^/var/tmp/exasol-deployer-utest-$(whoami)-[a-zA-Z0-9]{6}-[a-zA-Z0-9]{8}$ ]]; then
+    local username=$(whoami)
+    if [[ -n "$test_dir" && "$test_dir" =~ ^/(var/tmp|tmp)/exasol-deployer-utest-${username}(-[a-zA-Z0-9]+)?-[a-zA-Z0-9-]+$ ]]; then
         rm -rf "$test_dir"
     fi
 }
 
 # Global cleanup for any test directories that might be left behind
 global_cleanup() {
+    # Cleanup tracked unit test directories
     for test_dir in "${CREATED_TEST_DIRS[@]}"; do
         cleanup_test_dir "$test_dir"
     done
+    
+    # Broad cleanup for e2e and legacy directories (not tracked)
+    local username=$(whoami)
+    
+    # Clean up any e2e test directories in /var/tmp that belong to this user
+    find /var/tmp -maxdepth 1 -name "exasol-deployer-e2e-${username}-*" -type d -exec rm -rf {} + 2>/dev/null || true
+    
+    # Also clean up any old directories in /tmp (legacy cleanup)
+    find /tmp -maxdepth 1 -name "exasol-test-${username}-*" -type d -exec rm -rf {} + 2>/dev/null || true
+    find /tmp -maxdepth 1 -name "exasol_e2e_${username}_*" -type d -exec rm -rf {} + 2>/dev/null || true
+    find /tmp -maxdepth 1 -name "exasol_test_results_*" -type d -exec rm -rf {} + 2>/dev/null || true
 }
 
 # Register global cleanup to run on script exit

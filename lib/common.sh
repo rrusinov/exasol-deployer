@@ -20,8 +20,14 @@ readonly LOG_LEVEL_INFO=1
 readonly LOG_LEVEL_WARN=2
 readonly LOG_LEVEL_ERROR=3
 
-# Current log level (default: INFO)
-CURRENT_LOG_LEVEL=${LOG_LEVEL_INFO}
+# Current log level (default: INFO, can be overridden via EXASOL_LOG_LEVEL env)
+case "${EXASOL_LOG_LEVEL:-}" in
+    debug|DEBUG|0) CURRENT_LOG_LEVEL=${LOG_LEVEL_DEBUG} ;;
+    info|INFO|1) CURRENT_LOG_LEVEL=${LOG_LEVEL_INFO} ;;
+    warn|WARN|warning|WARNING|2) CURRENT_LOG_LEVEL=${LOG_LEVEL_WARN} ;;
+    error|ERROR|3) CURRENT_LOG_LEVEL=${LOG_LEVEL_ERROR} ;;
+    *) CURRENT_LOG_LEVEL=${LOG_LEVEL_INFO} ;;
+esac
 
 # ==============================================================================
 # TEMP FILE HELPERS
@@ -90,6 +96,46 @@ log_error() {
 die() {
     log_error "$*"
     exit 1
+}
+
+# ==============================================================================
+# OPERATION GUARD
+# ==============================================================================
+# Sets a trap that marks the operation as failed (state) and removes lock unless
+# a success variable is set to "true" by the caller before exit.
+# Usage: setup_operation_guard <deploy_dir> <fail_status> <success_var_name>
+# The success variable must be declared in the caller's scope.
+
+# Global variables for trap cleanup (set by setup_operation_guard)
+declare -g _OPERATION_GUARD_DEPLOY_DIR=""
+declare -g _OPERATION_GUARD_FAIL_STATUS=""
+declare -g _OPERATION_GUARD_SUCCESS="false"
+
+# Cleanup function called by trap
+cleanup_operation_guard() {
+    if [[ "$_OPERATION_GUARD_SUCCESS" != "true" ]]; then
+        state_set_status "$_OPERATION_GUARD_DEPLOY_DIR" "$_OPERATION_GUARD_FAIL_STATUS"
+    fi
+    lock_remove "$_OPERATION_GUARD_DEPLOY_DIR"
+}
+
+setup_operation_guard() {
+    local deploy_dir="$1"
+    local fail_status="$2"
+    local success_var_name="$3"  # Kept for compatibility but not used
+
+    # Set global variables for the cleanup function
+    _OPERATION_GUARD_DEPLOY_DIR="$deploy_dir"
+    _OPERATION_GUARD_FAIL_STATUS="$fail_status"
+    _OPERATION_GUARD_SUCCESS="false"
+
+    # Set trap to call the cleanup function
+    trap 'cleanup_operation_guard' EXIT INT TERM
+}
+
+# Function to mark operation as successful
+operation_success() {
+    _OPERATION_GUARD_SUCCESS="true"
 }
 
 # ==============================================================================

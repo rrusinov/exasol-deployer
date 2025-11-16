@@ -96,6 +96,10 @@ cmd_destroy() {
         die "Another operation is in progress: $lock_op (PID: $lock_pid)"
     fi
 
+    # Create lock
+    lock_create "$deploy_dir" "destroy" || die "Failed to create lock"
+    setup_operation_guard "$deploy_dir" "$STATE_DESTROY_FAILED" "destroy_success"
+
     progress_start "destroy" "begin" "Starting Exasol deployment destruction"
 
     log_info "Deployment directory: $deploy_dir"
@@ -123,18 +127,8 @@ cmd_destroy() {
         progress_complete "destroy" "confirm" "Destruction confirmed"
     fi
 
-    # Create lock
-    lock_create "$deploy_dir" "destroy" || die "Failed to create lock"
-
     # Update status to destroy in progress
     state_set_status "$deploy_dir" "$STATE_DESTROY_IN_PROGRESS"
-
-    # Ensure trap can access the deployment directory after this function
-    # returns by copying it to a global variable that the trap will use.
-    _EXASOL_TRAP_DEPLOY_DIR="$deploy_dir"
-    # Use single quotes so ShellCheck won't warn; the variable is global so
-    # it will still be available when the trap runs.
-    trap 'lock_remove "$_EXASOL_TRAP_DEPLOY_DIR"' EXIT INT TERM
 
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"
@@ -146,7 +140,6 @@ cmd_destroy() {
     if ! run_tofu_with_progress "destroy" "tofu_destroy" "Destroying cloud infrastructure" tofu destroy -auto-approve; then
         destroy_rc=$?
         state_set_status "$deploy_dir" "$STATE_DESTROY_FAILED"
-        lock_remove "$deploy_dir"
         progress_fail "destroy" "tofu_destroy" "Infrastructure destruction failed"
         log_error "Terraform destroy failed"
         # Do not exit here with die() because we want to reach the final
@@ -168,12 +161,10 @@ cmd_destroy() {
         # Update deployment status to destroyed
         state_set_status "$deploy_dir" "$STATE_DESTROYED"
 
-        # Remove lock
-        lock_remove "$deploy_dir"
-
         progress_complete "destroy" "cleanup" "Deployment files cleaned up"
 
         progress_complete "destroy" "complete" "All resources destroyed successfully"
+        operation_success
     else
         # Keep the lock removal as we already removed it on failure above.
         log_warn "Some resources may not have been destroyed. Manual inspection and cleanup are required."

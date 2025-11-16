@@ -565,11 +565,161 @@ EOF
     cleanup_test_dir "$deploy_dir"
 }
 
+test_health_status_update_from_failed() {
+    echo ""
+    echo "Test: health --update corrects status from deployment_failed to database_ready"
+
+    MOCK_BIN_DIR="$(mktemp -d)"
+    PATH="$MOCK_BIN_DIR:$ORIGINAL_PATH"
+
+    # Create mock commands
+    cat > "$MOCK_BIN_DIR/ssh" <<'EOF'
+#!/bin/bash
+# Mock SSH that handles different commands
+if [[ "$*" == *"true"* ]]; then
+    # Basic connectivity test
+    exit 0
+elif [[ "$*" == *"systemctl"* ]]; then
+    # Service check
+    echo "active"
+elif [[ "$*" == *"bash -lc"* ]] && [[ "$*" == *"exasol_data_"* ]]; then
+    # Volume check - return success with 1 volume
+    echo "1||100GB"
+elif [[ "$*" == *"c4 ps"* ]]; then
+    # Cluster state check - return "d" for database ready
+    echo '"d"'
+elif [[ "$*" == *"hostname -I"* ]]; then
+    # Private IP check
+    echo "10.0.0.11"
+elif [[ "$*" == *"curl -sk"* ]] && [[ "$*" == *"ip.me"* ]]; then
+    # Public IP check
+    echo "1.2.3.4"
+elif [[ "$*" == *"curl -sk"* ]] && [[ "$*" == *"localhost:8563"* ]]; then
+    # DB port check
+    echo '{"status": "ok"}'
+elif [[ "$*" == *"timeout 3 bash"* ]]; then
+    # Alternative DB port check
+    exit 0
+else
+    # Default success for other commands
+    echo "ok"
+fi
+EOF
+    chmod +x "$MOCK_BIN_DIR/ssh"
+
+    cat > "$MOCK_BIN_DIR/sleep" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+    chmod +x "$MOCK_BIN_DIR/sleep"
+
+    local deploy_dir
+    deploy_dir=$(setup_test_dir)
+
+    # Initialize deployment
+    cmd_init --cloud-provider aws --deployment-dir "$deploy_dir" >/dev/null 2>&1
+
+    # Set status to deployment_failed (simulating a failed deployment)
+    state_set_status "$deploy_dir" "deployment_failed"
+
+    # Create inventory and SSH config
+    cat > "$deploy_dir/inventory.ini" <<'EOF'
+[exasol_nodes]
+n11 ansible_host=1.2.3.4
+EOF
+
+    cat > "$deploy_dir/ssh_config" <<'EOF'
+Host n11
+    HostName 1.2.3.4
+    User exasol
+    IdentityFile /dev/null
+    StrictHostKeyChecking no
+EOF
+
+    # Mock systemctl to return active for all services
+    cat > "$MOCK_BIN_DIR/systemctl" <<'EOF'
+#!/bin/bash
+echo "active"
+EOF
+    chmod +x "$MOCK_BIN_DIR/systemctl"
+
+    # Mock lsblk for volume check
+    cat > "$MOCK_BIN_DIR/lsblk" <<'EOF'
+#!/bin/bash
+echo "1073741824"  # 1GB
+EOF
+    chmod +x "$MOCK_BIN_DIR/lsblk"
+
+    # Mock readlink for volume symlink check
+    cat > "$MOCK_BIN_DIR/readlink" <<'EOF'
+#!/bin/bash
+echo "/dev/nvme1n1"
+EOF
+    chmod +x "$MOCK_BIN_DIR/readlink"
+
+    # Mock shopt for volume check
+    cat > "$MOCK_BIN_DIR/shopt" <<'EOF'
+#!/bin/bash
+# Just succeed
+exit 0
+EOF
+    chmod +x "$MOCK_BIN_DIR/shopt"
+
+    # Run health check with --update
+    cmd_health --deployment-dir "$deploy_dir" --update --quiet
+
+    # Verify status was updated to database_ready
+    local final_status
+    final_status=$(state_get_status "$deploy_dir")
+    assert_equals "database_ready" "$final_status" "Status should be updated from deployment_failed to database_ready"
+
+    cleanup_mock_env
+    cleanup_test_dir "$deploy_dir"
+}
+
+test_health_temp_files_removed() {
+    echo ""
+    echo "Test: health cleans up temp files"
+
+    setup_mock_env
+    local deploy_dir
+    deploy_dir=$(create_deployment_dir "1.2.3.4")
+
+    export MOCK_HEALTH_MODE="stable"
+    export MOCK_HEALTH_ORIGINAL_IP="1.2.3.4"
+    export MOCK_HEALTH_REMOTE_PRIVATE_IP="10.0.0.11"
+
+    # Force temp dir usage and leave a stale file
+    local tmp_dir
+    tmp_dir=$(get_runtime_temp_dir)
+    echo "stale" > "$tmp_dir/health_stale.tmp"
+
+    cmd_health --deployment-dir "$deploy_dir" >/dev/null
+
+    # Ensure no health_*.tmp remain in /tmp or /var/tmp
+    local leftover
+    leftover=$(find /tmp /var/tmp -maxdepth 1 -name "health_*.tmp" 2>/dev/null | head -1 || true)
+    TESTS_TOTAL=$((TESTS_TOTAL + 1))
+    if [[ -n "$leftover" ]]; then
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Temp files should be cleaned: found $leftover"
+    else
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Temp files cleaned up"
+    fi
+
+    cleanup_mock_env
+    cleanup_test_dir "$deploy_dir"
+    unset MOCK_HEALTH_MODE MOCK_HEALTH_ORIGINAL_IP MOCK_HEALTH_REMOTE_PRIVATE_IP
+}
+
 test_health_succeeds_when_all_checks_pass
 test_health_updates_metadata_when_ip_changes
 test_health_json_output_with_ssh_failure
 test_health_json_output_with_service_failures
 test_health_json_output_healthy_state
 test_health_multihost_mixed_results
+test_health_temp_files_removed
+test_health_status_update_from_failed
 
 test_summary

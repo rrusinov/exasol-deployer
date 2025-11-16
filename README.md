@@ -318,7 +318,31 @@ Use the health command to verify SSH connectivity, COS endpoints, critical c4-ma
 ./exasol health --deployment-dir ./my-deployment --try-fix
 ```
 
-### 7. Destroy the Deployment
+### 7. Stop and Start the Database (Optional)
+
+For cost optimization, you can stop the database. On AWS/Azure/GCP this also powers off the VMs via OpenTofu; on other providers the VMs are halted in-guest and must be powered on manually before start will succeed.
+
+```bash
+# Stop the database (and power off VMs on AWS/Azure/GCP)
+./exasol stop --deployment-dir ./my-deployment
+
+# Check status
+./exasol status --deployment-dir ./my-deployment
+# Status will be: "stopped"
+
+# Start the database again (power on VMs via tofu when supported)
+./exasol start --deployment-dir ./my-deployment
+
+# Verify it's running
+./exasol health --deployment-dir ./my-deployment
+```
+
+**Cost Savings Example:**
+- Running cluster: ~$2/hour (c7a.16xlarge x 4 nodes)
+- Stopped cluster: ~$0.50/hour (EBS volumes + instance charges)
+- Savings: ~75% during non-working hours
+
+### 8. Destroy the Deployment
 
 ```bash
 # With confirmation prompts
@@ -407,6 +431,63 @@ Deploy infrastructure using an existing deployment directory.
 ./exasol deploy --deployment-dir ./my-deployment
 ```
 
+### `start`
+
+Start a stopped Exasol database deployment. This starts the database services on existing cloud instances that were previously stopped.
+
+```bash
+./exasol start --deployment-dir ./my-deployment
+```
+
+**Use Cases:**
+- Restart database after a planned stop
+- Resume operations after cost-saving stop period
+- Recover from start_failed state (retry)
+
+**Prerequisites:**
+- Deployment must be in `stopped` or `start_failed` state
+- Cloud instances must still be running
+
+**What it does:**
+1. Validates deployment state
+2. On AWS/Azure/GCP: powers on instances via `tofu apply -var infra_desired_state=running` (other providers require manual power-on if previously halted)
+3. Starts systemd services via Ansible:
+   - `exasol-data-symlinks.service`
+   - `c4_cloud_command.service`
+   - `c4.service` (main database service, brings up Admin UI via PartOf)
+4. Waits for database to boot (stage 'd')
+5. Validates cluster is online
+6. Updates state to `database_ready` or `database_connection_failed`
+
+### `stop`
+
+Stop a running Exasol database deployment. This gracefully stops database services without terminating cloud instances, useful for cost optimization.
+
+```bash
+./exasol stop --deployment-dir ./my-deployment
+```
+
+**Use Cases:**
+- Pause database during non-working hours to save costs
+- Perform maintenance on the underlying infrastructure
+- Troubleshoot database issues
+
+**Prerequisites:**
+- Deployment must be in `database_ready`, `database_connection_failed`, or `stop_failed` state
+
+**What it does:**
+1. Validates deployment state
+2. Stops systemd services via Ansible:
+   - `c4.service` (main database service, stops Admin UI via PartOf)
+   - `c4_cloud_command.service`
+   - `exasol-admin-ui.service` (explicit ensure-stop)
+3. On AWS/Azure/GCP: powers off instances via `tofu apply -var infra_desired_state=stopped`
+4. On other providers: issues in-guest `shutdown -h` and warns that manual power-on is required before start
+5. Verifies services are stopped
+6. Updates state to `stopped` or `stop_failed`
+
+**Note:** Use `destroy` to terminate instances and release all resources.
+
 ### `status`
 
 Get the current status of a deployment in JSON format.
@@ -421,23 +502,27 @@ Get the current status of a deployment in JSON format.
 - `deployment_failed`: Deployment failed (check logs)
 - `database_connection_failed`: Infrastructure deployed but database connection failed
 - `database_ready`: Deployment complete and database is ready
+- `stopped`: Database services are stopped (instances still running)
+- `start_in_progress`: Database start operation in progress
+- `start_failed`: Database start operation failed
+- `stop_in_progress`: Database stop operation in progress
+- `stop_failed`: Database stop operation failed
 - `destroy_in_progress`: Destroy operation is currently running
 - `destroy_failed`: Destroy operation failed (check logs)
 - `destroyed`: All resources have been destroyed successfully
 
 ### `health`
 
-Run connectivity and service health checks for an existing deployment. The command verifies SSH access to every node, COS endpoints, key systemd services (c4 stack, Admin UI, symlink initializer), and IP consistency between live infrastructure and local metadata. Use `--update` to refresh `inventory.ini`, `ssh_config`, and `INFO.txt` if the provider changed public IPs. Use `--try-fix` to restart failed services automatically.
+Run connectivity and service health checks for an existing deployment. The command verifies SSH access to every node, COS endpoints, key systemd services (c4 stack, Admin UI, symlink initializer), cluster state, and IP consistency between live infrastructure and local metadata.
+
+Use `--update` to refresh `inventory.ini`, `ssh_config`, and `INFO.txt` when IPs change, and to correct deployment status from failure states to `database_ready` if all health checks pass and the cluster is confirmed operational.
 
 ```bash
 # Basic health check
 ./exasol health --deployment-dir ./my-deployment
 
-# Refresh local metadata files when IPs drift
+# Refresh metadata and correct status if cluster is healthy
 ./exasol health --deployment-dir ./my-deployment --update
-
-# Attempt automatic remediation
-./exasol health --deployment-dir ./my-deployment --try-fix
 ```
 
 ### `destroy`

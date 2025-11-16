@@ -26,11 +26,17 @@ readonly STATE_DATABASE_READY="database_ready"
 readonly STATE_DESTROY_IN_PROGRESS="destroy_in_progress"
 readonly STATE_DESTROY_FAILED="destroy_failed"
 readonly STATE_DESTROYED="destroyed"
+readonly STATE_STOPPED="stopped"
+readonly STATE_START_IN_PROGRESS="start_in_progress"
+readonly STATE_START_FAILED="start_failed"
+readonly STATE_STOP_IN_PROGRESS="stop_in_progress"
+readonly STATE_STOP_FAILED="stop_failed"
 
 # Export state constants for use in other scripts
 export STATE_INITIALIZED STATE_DEPLOY_IN_PROGRESS STATE_DEPLOYMENT_FAILED \
        STATE_DATABASE_CONNECTION_FAILED STATE_DATABASE_READY STATE_DESTROY_IN_PROGRESS \
-       STATE_DESTROY_FAILED STATE_DESTROYED
+       STATE_DESTROY_FAILED STATE_DESTROYED STATE_STOPPED STATE_START_IN_PROGRESS \
+       STATE_START_FAILED STATE_STOP_IN_PROGRESS STATE_STOP_FAILED
 
 # Initialize state file
 state_init() {
@@ -129,11 +135,29 @@ lock_create() {
 
     local lock_file="$deploy_dir/$LOCK_FILE"
 
-    if lock_exists "$deploy_dir"; then
-        log_error "Lock file already exists: $lock_file"
-        log_error "Another operation may be in progress."
-        return 1
+    if [[ "${EXASOL_LOG_LEVEL:-}" == "debug" ]]; then
+        log_debug "lock_create: attempting for $operation at $lock_file"
     fi
+
+    # Clean up stale locks before attempting to acquire
+    cleanup_stale_lock "$deploy_dir"
+
+    # Try to create lock atomically (noclobber); if it fails, attempt one cleanup + retry
+    if ! ( set -o noclobber; : > "$lock_file" ) 2>/dev/null; then
+        [[ "${EXASOL_LOG_LEVEL:-}" == "debug" ]] && log_debug "lock_create: first noclobber failed for $lock_file, running cleanup"
+        cleanup_stale_lock "$deploy_dir"
+        if ! ( set -o noclobber; : > "$lock_file" ) 2>/dev/null; then
+            if [[ -f "$lock_file" ]]; then
+                log_error "Lock file already exists: $lock_file"
+                log_error "Another operation may be in progress."
+                return 1
+            fi
+            log_error "Unable to create lock file (permission or FS error): $lock_file"
+            return 1
+        fi
+    fi
+
+    [[ "${EXASOL_LOG_LEVEL:-}" == "debug" ]] && log_debug "lock_create: noclobber succeeded for $lock_file"
 
     cat > "$lock_file" <<EOF
 {
@@ -143,6 +167,21 @@ lock_create() {
   "hostname": "$(hostname)"
 }
 EOF
+
+    # If another process removed our just-created lock, treat as failure
+    if [[ ! -f "$lock_file" ]]; then
+        log_error "Failed to persist lock file: $lock_file"
+        return 1
+    fi
+
+    # Verify the written JSON to ensure we own the lock and it matches the PID
+    local written_pid
+    written_pid=$(jq -r '.pid // empty' "$lock_file" 2>/dev/null || echo "")
+    if [[ -z "$written_pid" || "$written_pid" -ne $$ ]]; then
+        log_error "Lock file content mismatch, removing lock: $lock_file"
+        rm -f "$lock_file"
+        return 1
+    fi
 
     log_debug "Created lock file: $lock_file"
 }
@@ -248,6 +287,71 @@ get_deployment_status() {
 
     # Otherwise, return status from state file
     state_get_status "$deploy_dir"
+}
+
+# Validate state transition for start command
+validate_start_transition() {
+    local current_state="$1"
+
+    case "$current_state" in
+        "$STATE_STOPPED"|"$STATE_START_FAILED")
+            # Valid states to start from
+            return 0
+            ;;
+        "$STATE_DEPLOY_IN_PROGRESS"|"$STATE_DESTROY_IN_PROGRESS"|"$STATE_STOP_IN_PROGRESS"|"$STATE_START_IN_PROGRESS")
+            log_error "Cannot start: another operation is in progress (state: $current_state)"
+            return 1
+            ;;
+        "$STATE_DESTROYED")
+            log_error "Cannot start: deployment has been destroyed"
+            return 1
+            ;;
+        "$STATE_DATABASE_READY")
+            log_error "Cannot start: database is already running (state: $current_state)"
+            return 1
+            ;;
+        "$STATE_INITIALIZED"|"$STATE_DEPLOYMENT_FAILED"|"$STATE_DATABASE_CONNECTION_FAILED")
+            log_error "Cannot start: deployment is not in a stoppable state (state: $current_state)"
+            log_info "Please run 'exasol deploy' first to fully deploy the database"
+            return 1
+            ;;
+        *)
+            log_error "Cannot start from unknown state: $current_state"
+            return 1
+            ;;
+    esac
+}
+
+# Validate state transition for stop command
+validate_stop_transition() {
+    local current_state="$1"
+
+    case "$current_state" in
+        "$STATE_DATABASE_READY"|"$STATE_DATABASE_CONNECTION_FAILED"|"$STATE_STOP_FAILED")
+            # Valid states to stop from
+            return 0
+            ;;
+        "$STATE_DEPLOY_IN_PROGRESS"|"$STATE_DESTROY_IN_PROGRESS"|"$STATE_STOP_IN_PROGRESS"|"$STATE_START_IN_PROGRESS")
+            log_error "Cannot stop: another operation is in progress (state: $current_state)"
+            return 1
+            ;;
+        "$STATE_DESTROYED")
+            log_error "Cannot stop: deployment has been destroyed"
+            return 1
+            ;;
+        "$STATE_STOPPED")
+            log_error "Cannot stop: database is already stopped (state: $current_state)"
+            return 1
+            ;;
+        "$STATE_INITIALIZED"|"$STATE_DEPLOYMENT_FAILED"|"$STATE_START_FAILED")
+            log_error "Cannot stop: database is not running (state: $current_state)"
+            return 1
+            ;;
+        *)
+            log_error "Cannot stop from unknown state: $current_state"
+            return 1
+            ;;
+    esac
 }
 
 # Write variables file
