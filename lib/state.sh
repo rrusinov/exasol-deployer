@@ -9,6 +9,7 @@ readonly __EXASOL_STATE_SH_INCLUDED__=1
 
 # Source common functions
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
 source "$LIB_DIR/common.sh"
 
 # State file names
@@ -184,7 +185,7 @@ cleanup_stale_lock() {
 # Get lock info
 lock_info() {
     local deploy_dir="$1"
-    local key="$2"
+    local key="${2:-}"
 
     local lock_file="$deploy_dir/$LOCK_FILE"
 
@@ -192,7 +193,13 @@ lock_info() {
         return 1
     fi
 
-    jq -r ".$key // empty" "$lock_file"
+    if [[ -z "$key" ]]; then
+        # If no key specified, return entire lock file
+        cat "$lock_file"
+    else
+        # Return specific key value
+        jq -r ".$key // empty" "$lock_file"
+    fi
 }
 
 # Wait for lock to be released (with timeout)

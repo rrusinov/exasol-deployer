@@ -123,6 +123,26 @@ assert_failure() {
     fi
 }
 
+assert_greater_than() {
+    local actual="$1"
+    local threshold="$2"
+    local message="${3:-Value should be greater than threshold}"
+
+    TESTS_TOTAL=$((TESTS_TOTAL + 1))
+
+    if [[ "$actual" -gt "$threshold" ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} $message"
+        return 0
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} $message"
+        echo -e "  Actual: ${YELLOW}$actual${NC}"
+        echo -e "  Threshold: ${YELLOW}$threshold${NC}"
+        return 1
+    fi
+}
+
 # Test summary
 test_summary() {
     echo ""
@@ -194,7 +214,8 @@ extract_command_options() {
     local function_name="$2"
     
     # Get the directory where this script is located
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     local python_helper="$script_dir/lib/python/extract_function_options.py"
     
     if [[ ! -f "$python_helper" ]]; then

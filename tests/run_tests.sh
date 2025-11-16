@@ -25,7 +25,8 @@ FAILED_TEST_FILES=0
 # Function to run a test file
 run_test_file() {
     local test_file="$1"
-    local test_name=$(basename "$test_file")
+    local test_name
+    test_name=$(basename "$test_file")
 
     echo -e "${BLUE}Running: $test_name${NC}"
     echo ""
@@ -44,6 +45,7 @@ run_test_file() {
 }
 
 # Run all test files
+run_test_file "$TEST_DIR/test_shellcheck.sh"
 run_test_file "$TEST_DIR/test_common.sh"
 run_test_file "$TEST_DIR/test_versions.sh"
 run_test_file "$TEST_DIR/test_state.sh"

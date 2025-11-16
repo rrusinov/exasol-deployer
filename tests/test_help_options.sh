@@ -43,5 +43,6 @@ validate_help_matches_code "init"
 validate_help_matches_code "deploy"
 validate_help_matches_code "destroy"
 validate_help_matches_code "status"
+validate_help_matches_code "health"
 
 test_summary

@@ -20,7 +20,8 @@ extract_readme_init_flags() {
     local readme_path="$1"
     
     # Get the directory where this script is located
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     local python_helper="$script_dir/lib/python/extract_readme_flags.py"
     
     if [[ ! -f "$python_helper" ]]; then

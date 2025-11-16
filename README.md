@@ -2,6 +2,13 @@
 
 A bash-based multi-cloud deployer for Exasol database that uses OpenTofu (Terraform) and Ansible to provision and configure Exasol clusters. This tool provides a simple command-line interface for managing Exasol deployments with full control over the deployment process.
 
+**Why bash and not Go/another compiled binary?**
+- Zero build toolchain required on the operator side; bash is ubiquitous on Linux/macOS runners and CI agents.
+- Tight integration with existing shell/Ansible/OpenTofu workflows (no cross-language shims needed).
+- Easier to vendor and tweak in-line with the Terraform/Ansible templates without rebuilding binaries.
+- Fast iteration for cloud releases; no cross-compilation or packaging pipeline to maintain for each platform.
+- Proven portability for the surrounding scripts (init/deploy/destroy/status) and test harness.
+
 ## Features
 
 - **Multi-Cloud Support**: Deploy on AWS, Azure, GCP, Hetzner Cloud, and DigitalOcean
@@ -27,6 +34,7 @@ Before using this deployer, ensure you have the following installed:
 
 **For Development/Testing Only:**
 - **Python 3.6+** (required only for running unit tests in `tests/` directory)
+- **ShellCheck** (used by the shell lint test suite)
 
 **Note:** Cloud provider CLI tools (aws, az, gcloud) are **not required** for deployment. OpenTofu reads credentials from standard configuration files or environment variables.
 
@@ -244,7 +252,22 @@ Output (JSON):
 }
 ```
 
-### 6. Destroy the Deployment
+### 6. Run a Health Check
+
+Use the health command to verify SSH connectivity, COS endpoints, critical c4-managed services, and metadata consistency. Optional flags allow the command to refresh local files or attempt basic remediation such as restarting failed services.
+
+```bash
+# Read-only checks (default)
+./exasol health --deployment-dir ./my-deployment
+
+# Update inventory/ssh_config/INFO.txt if the cloud provider reassigned IPs
+./exasol health --deployment-dir ./my-deployment --update
+
+# Try to restart failed services automatically
+./exasol health --deployment-dir ./my-deployment --try-fix
+```
+
+### 7. Destroy the Deployment
 
 ```bash
 # With confirmation prompts
@@ -344,6 +367,21 @@ Get the current status of a deployment in JSON format.
 - `destroy_in_progress`: Destroy operation is currently running
 - `destroy_failed`: Destroy operation failed (check logs)
 - `destroyed`: All resources have been destroyed successfully
+
+### `health`
+
+Run connectivity and service health checks for an existing deployment. The command verifies SSH access to every node, COS endpoints, key systemd services (c4 stack, Admin UI, symlink initializer), and IP consistency between live infrastructure and local metadata. Use `--update` to refresh `inventory.ini`, `ssh_config`, and `INFO.txt` if the provider changed public IPs. Use `--try-fix` to restart failed services automatically.
+
+```bash
+# Basic health check
+./exasol health --deployment-dir ./my-deployment
+
+# Refresh local metadata files when IPs drift
+./exasol health --deployment-dir ./my-deployment --update
+
+# Attempt automatic remediation
+./exasol health --deployment-dir ./my-deployment --try-fix
+```
 
 ### `destroy`
 
@@ -514,6 +552,8 @@ The project includes a comprehensive unit test suite:
 ./tests/test_common.sh
 ./tests/test_versions.sh
 ./tests/test_state.sh
+# Lint all shell scripts
+./tests/test_shellcheck.sh
 ```
 
 Test coverage includes:
@@ -521,6 +561,7 @@ Test coverage includes:
 - Version management (version validation, config parsing)
 - State management (initialization, locking, status updates)
 - Variable file generation
+- ShellCheck linting for all bash scripts
 
 ### Continuous Integration
 

@@ -3,7 +3,9 @@
 
 # Source dependencies
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
 source "$LIB_DIR/common.sh"
+# shellcheck source=lib/state.sh
 source "$LIB_DIR/state.sh"
 
 # Show help for destroy command
@@ -112,7 +114,7 @@ cmd_destroy() {
         log_warn "⚠️  WARNING: This will destroy all resources including data!"
         log_warn "⚠️  Make sure you have backups of any important data."
         echo ""
-        read -p "Are you sure you want to destroy all resources? (yes/no): " confirm
+        read -r -p "Are you sure you want to destroy all resources? (yes/no): " confirm
         if [[ "$confirm" != "yes" ]]; then
             progress_complete "destroy" "confirm" "Destruction cancelled by user"
             log_info "Destruction cancelled"
