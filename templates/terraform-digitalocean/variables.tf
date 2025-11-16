@@ -83,3 +83,14 @@ variable "enable_spot_instances" {
   # DigitalOcean does not have spot/preemptible instances
   # This variable is kept for consistency with other cloud providers
 }
+
+variable "infra_desired_state" {
+  description = "Desired infrastructure power state ('running' or 'stopped')."
+  type        = string
+  default     = "running"
+
+  validation {
+    condition     = contains(["running", "stopped"], var.infra_desired_state)
+    error_message = "infra_desired_state must be either 'running' or 'stopped'."
+  }
+}

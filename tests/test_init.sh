@@ -209,6 +209,19 @@ test_credentials_file() {
     cleanup_test_dir "$test_dir"
 }
 
+test_list_providers_shows_capabilities() {
+    echo ""
+    echo "Test: --list-providers shows capabilities"
+
+    local output
+    output=$(cmd_init --list-providers 2>&1)
+
+    assert_contains "$output" "aws" "List should include aws"
+    assert_contains "$output" "[✓] tofu power control" "List should mention infra power control"
+    assert_contains "$output" "hetzner" "List should include hetzner"
+    assert_contains "$output" "manual power-on (in-guest shutdown)" "List should mention manual power-on for unsupported providers"
+}
+
 # Test: README generation includes cloud provider
 test_readme_generation() {
     echo ""
@@ -597,6 +610,7 @@ test_aws_initialization
 test_template_directory_selection
 test_inventory_cloud_provider
 test_credentials_file
+test_list_providers_shows_capabilities
 test_readme_generation
 test_data_volumes_per_node
 test_root_volume_size

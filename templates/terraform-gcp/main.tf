@@ -133,6 +133,7 @@ resource "google_compute_instance" "exasol_node" {
   name         = "n${count.index + 11}"
   machine_type = var.instance_type
   zone         = local.selected_gcp_zone
+  desired_status = var.infra_desired_state == "stopped" ? "TERMINATED" : "RUNNING"
 
   # Spot (preemptible) instance configuration
   scheduling {

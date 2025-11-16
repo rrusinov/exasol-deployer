@@ -1,0 +1,133 @@
+---
+# ==============================================================================
+# START EXASOL CLUSTER
+# Starts a previously stopped Exasol database cluster.
+# This playbook starts database services and waits for the cluster to be ready.
+# ==============================================================================
+
+# ==============================================================================
+# PLAY 1: GATHER FACTS FROM ALL HOSTS
+# ==============================================================================
+- name: Play 1 - Gather Host Facts
+  hosts: exasol_nodes
+  become: yes
+  tasks:
+    - name: Ensure all host facts are gathered
+      ansible.builtin.setup:
+
+# ==============================================================================
+# PLAY 2: START EXASOL DATABASE ON ALL NODES
+# ==============================================================================
+- name: Play 2 - Start Exasol Database
+  hosts: exasol_nodes
+  become: yes
+  gather_facts: no
+
+  vars:
+    exa_user: "exasol"
+
+  tasks:
+    # ==============================================================================
+    # START OPERATION
+    # ==============================================================================
+    - name: Display start operation information
+      ansible.builtin.debug:
+        msg: "Starting Exasol database cluster on {{ inventory_hostname }}..."
+      run_once: true
+
+    # ==============================================================================
+    # VERIFY PREREQUISITES
+    # ==============================================================================
+    - name: Check current status of c4.service
+      ansible.builtin.systemd:
+        name: c4.service
+      register: c4_service_status
+      failed_when: false
+
+    - name: Display current service status
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: c4.service is {{ c4_service_status.status.ActiveState }}"
+      when: c4_service_status.status is defined
+
+    - name: Warn if service is already active
+      ansible.builtin.debug:
+        msg: "WARNING: {{ inventory_hostname }}: c4.service is already active. Proceeding with start anyway..."
+      when:
+        - c4_service_status.status is defined
+        - c4_service_status.status.ActiveState == "active"
+
+    # ==============================================================================
+    # START DATABASE SERVICES VIA SYSTEMD ON ALL NODES
+    # ==============================================================================
+    - name: Start exasol-data-symlinks.service (if exists)
+      ansible.builtin.systemd:
+        name: exasol-data-symlinks.service
+        state: started
+      register: start_data_symlinks
+      failed_when: false
+
+    - name: Start c4_cloud_command.service
+      ansible.builtin.systemd:
+        name: c4_cloud_command.service
+        state: started
+      register: start_cloud_command
+      failed_when: false
+
+    - name: Start c4.service (main Exasol database service)
+      ansible.builtin.systemd:
+        name: c4.service
+        state: started
+      register: start_c4
+
+    - name: Wait for c4.service to be fully active
+      ansible.builtin.wait_for:
+        timeout: 60
+      when: start_c4.changed
+      failed_when: false
+
+    # ==============================================================================
+    # WAIT FOR ALL NODES TO REACH STAGE d
+    # ==============================================================================
+    - name: Wait for all nodes to reach stage 'd' (database ready)
+      ansible.builtin.command:
+        cmd: "c4 ps -e '.[].Instances.Configs | to_entries | all(.value.ground.boot_stage == \"d\")'"
+      become_user: "{{ exa_user }}"
+      register: stage_check
+      until: stage_check.stdout | regex_search('true')
+      retries: 60
+      delay: 5
+      changed_when: false
+      failed_when: stage_check.stdout is not regex('true')
+      run_once: true
+
+    - name: Display database boot status
+      ansible.builtin.debug:
+        msg: "✓ All cluster nodes reached stage 'd' (database ready)"
+      run_once: true
+
+    # ==============================================================================
+    # VERIFY DATABASE IS RUNNING
+    # ==============================================================================
+    - name: Verify all services are active
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: service_status
+      failed_when:
+        - service_status.status is defined
+        - service_status.status.ActiveState != "active"
+      loop:
+        - c4.service
+        - c4_cloud_command.service
+        - exasol-admin-ui.service
+
+    - name: Display start summary
+      ansible.builtin.debug:
+        msg:
+          - "✓ {{ inventory_hostname }}: exasol-data-symlinks.service started: {{ start_data_symlinks.changed | default(false) }}"
+          - "✓ {{ inventory_hostname }}: c4_cloud_command.service started: {{ start_cloud_command.changed | default(false) }}"
+          - "✓ {{ inventory_hostname }}: c4.service started: {{ start_c4.changed }}"
+
+    - name: Confirm successful start
+      ansible.builtin.debug:
+        msg: "✓ Exasol database cluster started successfully on all nodes (stage 'd')"
+      run_once: true

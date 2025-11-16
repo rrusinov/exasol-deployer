@@ -55,12 +55,12 @@ def extract_function_options(file_path, function_name):
     case_found = False
     for case_match in re.finditer(r'case\s+"?\$1"?\s+in(.*?)esac', body, re.DOTALL):
         case_found = True
-        for opt in re.findall(r'--[a-z0-9-]+', case_match.group(1)):
+        for opt in re.findall(r'--[a-z0-9][a-z0-9-]*', case_match.group(1)):
             options.add(opt)
 
     # If no case statements found, look for any --option pattern
     if not case_found:
-        for opt in re.findall(r'--[a-z0-9-]+', body):
+        for opt in re.findall(r'--[a-z0-9][a-z0-9-]*', body):
             options.add(opt)
 
     return sorted(options)

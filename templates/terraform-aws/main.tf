@@ -269,6 +269,13 @@ resource "aws_instance" "exasol_node" {
   }
 }
 
+# Manage instance power state via OpenTofu when requested
+resource "aws_ec2_instance_state" "exasol_node_state" {
+  count       = var.node_count
+  instance_id = aws_instance.exasol_node[count.index].id
+  state       = var.infra_desired_state == "stopped" ? "stopped" : "running"
+}
+
 # EBS Data Volumes
 # Creates data_volumes_per_node volumes for each node
 resource "aws_ebs_volume" "data_volume" {

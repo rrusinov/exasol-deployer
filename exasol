@@ -25,6 +25,8 @@ source "$SCRIPT_DIR/lib/cmd_deploy.sh"
 source "$SCRIPT_DIR/lib/cmd_destroy.sh"
 source "$SCRIPT_DIR/lib/cmd_status.sh"
 source "$SCRIPT_DIR/lib/cmd_health.sh"
+source "$SCRIPT_DIR/lib/cmd_start.sh"
+source "$SCRIPT_DIR/lib/cmd_stop.sh"
 
 # Global flags
 DEPLOYMENT_DIR="."
@@ -47,6 +49,8 @@ Usage:
 Available Commands:
   init        Initialize a new deployment directory
   deploy      Deploy using an existing deployment directory
+  start       Start a stopped database deployment
+  stop        Stop a running database deployment
   destroy     Destroy an active deployment
   status      Get the status of a deployment
   health      Run connectivity and service health checks
@@ -75,6 +79,15 @@ Examples:
 
   # Check deployment status
   exasol status --deployment-dir ./my-deployment
+
+  # Stop the database (keeps instances running)
+  exasol stop --deployment-dir ./my-deployment
+
+  # Start a stopped database
+  exasol start --deployment-dir ./my-deployment
+
+  # Check health status
+  exasol health --deployment-dir ./my-deployment
 
   # Destroy the deployment
   exasol destroy --deployment-dir ./my-deployment
@@ -170,6 +183,22 @@ main() {
             fi
             check_required_commands
             cmd_destroy --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        start)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_start_help
+                exit 0
+            fi
+            check_required_commands
+            cmd_start --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        stop)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_stop_help
+                exit 0
+            fi
+            check_required_commands
+            cmd_stop --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         status)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then

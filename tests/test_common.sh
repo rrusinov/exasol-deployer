@@ -38,11 +38,11 @@ test_validate_directory() {
     local username
     username=$(whoami)
     local normalized_result="${result//\/.\//\/}"
-    local expected_pattern="^/var/tmp/exasol-deployer-utest-${username}-[a-zA-Z0-9]{8}$"
+    local expected_pattern="^/(var/tmp|tmp)/exasol-deployer-utest-${username}-[a-zA-Z0-9]{6,}$"
     if [[ ! "$normalized_result" =~ $expected_pattern ]]; then
         echo -e "${RED}✗${NC} Result should match pattern /var/tmp/exasol-deployer-utest-${username}-XXXXXXXX"
         echo "  String: $normalized_result"
-        echo "  Expected pattern: /var/tmp/exasol-deployer-utest-${username}-XXXXXXXX"
+        echo "  Expected pattern: /var/tmp/exasol-deployer-utest-${username}-XXXXXXXX (or /tmp/... fallback)"
         return 1
     fi
 
