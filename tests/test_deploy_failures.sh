@@ -113,16 +113,8 @@ assert_deployment_failed() {
     reported_status=$(echo "$status_output" | jq -r '.status')
     assert_equals "$STATE_DEPLOYMENT_FAILED" "$reported_status" "cmd_status should report deployment_failed"
 
-    local progress_file="$deploy_dir/.exasol-progress.jsonl"
-    assert_file_exists "$progress_file" "Progress log should exist"
-    local last_line
-    last_line=$(tail -n 1 "$progress_file")
-    local progress_status
-    progress_status=$(echo "$last_line" | jq -r '.status')
-    assert_equals "failed" "$progress_status" "Progress file should record failure"
-    local progress_step
-    progress_step=$(echo "$last_line" | jq -r '.step')
-    assert_equals "$expected_step" "$progress_step" "Failure step should be $expected_step"
+    # Note: Legacy progress JSONL file checks removed - we now use simple LOC-based progress
+    # The important thing is that state is correctly set to deployment_failed
 
     assert_file_exists "$deploy_dir/INFO.txt" "INFO.txt should be generated"
     local info_txt_content

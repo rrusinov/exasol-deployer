@@ -98,7 +98,18 @@ cmd_start() {
     # Update status
     state_set_status "$deploy_dir" "$STATE_START_IN_PROGRESS"
 
-    progress_start "start" "begin" "Starting Exasol database start operation"
+    # Get cluster size for progress estimation
+    local cluster_size
+    cluster_size=$(state_read "$deploy_dir" "cluster_size")
+    cluster_size=${cluster_size:-1}
+
+    # Calculate total estimated lines for start operation
+    local total_lines
+    total_lines=$(estimate_lines "start" "$cluster_size")
+
+    # Initialize cumulative progress tracking
+    progress_init_cumulative "$total_lines"
+    export PROGRESS_CUMULATIVE_MODE=1
 
     log_info "Starting Exasol database cluster..."
     log_info "Current state: $current_state"
@@ -122,7 +133,6 @@ cmd_start() {
     if [[ ! -f "$deploy_dir/.templates/start-exasol-cluster.yml" ]]; then
         log_error "Ansible playbook not found: .templates/start-exasol-cluster.yml"
         state_set_status "$deploy_dir" "$STATE_START_FAILED"
-        progress_fail "start" "playbook_missing" "Start playbook not found"
         die "Start playbook not found"
     fi
 
@@ -130,21 +140,26 @@ cmd_start() {
     if [[ ! -f "$deploy_dir/inventory.ini" ]]; then
         log_error "Ansible inventory not found: inventory.ini"
         state_set_status "$deploy_dir" "$STATE_START_FAILED"
-        progress_fail "start" "inventory_missing" "Ansible inventory not found"
         die "Ansible inventory not found"
     fi
 
     # If provider supports infra power control, start instances via tofu first
     if [[ "$infra_power_supported" == "true" ]]; then
-        progress_start "start" "tofu_start" "Starting infrastructure (powering on instances)"
-        if ! run_tofu_with_progress "start" "tofu_start" "Powering on instances" tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_on" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=running"; then
+        # Split progress 50/50 between tofu and ansible
+        local tofu_lines ansible_lines
+        tofu_lines=$((total_lines * 50 / 100))
+        ansible_lines=$((total_lines * 50 / 100))
+
+        if ! tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_on" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=running" 2>&1 | \
+            progress_prefix_cumulative "$tofu_lines"; then
             state_set_status "$deploy_dir" "$STATE_START_FAILED"
-            progress_fail "start" "tofu_start" "Failed to start infrastructure (tofu apply)"
             die "Infrastructure start (tofu apply) failed"
         fi
-        progress_complete "start" "tofu_start" "Infrastructure powered on"
     else
         log_warn "Provider '$cloud_provider' lacks tofu-based power control. Ensure instances are running before continuing; start will attempt services regardless."
+        # If no tofu operation, allocate all progress to ansible
+        local ansible_lines
+        ansible_lines="$total_lines"
     fi
 
     # Refresh IPs in inventory/ssh_config before Ansible (similar to deploy)
@@ -154,17 +169,13 @@ cmd_start() {
     fi
 
     # Run Ansible to start the database
-    progress_start "start" "ansible_start" "Starting database services with Ansible"
-
-    if ! run_ansible_with_progress "start" "ansible_start" "Starting database services" ansible-playbook -i inventory.ini .templates/start-exasol-cluster.yml; then
+    if ! ansible-playbook -i inventory.ini .templates/start-exasol-cluster.yml 2>&1 | \
+        progress_prefix_cumulative "$ansible_lines"; then
         state_set_status "$deploy_dir" "$STATE_START_FAILED"
-        progress_fail "start" "ansible_start" "Failed to start database services"
         die "Ansible start operation failed"
     fi
-    progress_complete "start" "ansible_start" "Database services started successfully"
 
     # Validate database connectivity (optional - best effort)
-    progress_start "start" "validation" "Validating database connectivity"
 
     local validation_passed=true
     if [[ -f "$deploy_dir/inventory.ini" ]] && [[ -f "$deploy_dir/ssh_config" ]]; then
@@ -185,10 +196,8 @@ cmd_start() {
     fi
 
     if $validation_passed; then
-        progress_complete "start" "validation" "Database connectivity validated"
         state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
     else
-        progress_complete "start" "validation" "Database started but connectivity validation incomplete"
         state_set_status "$deploy_dir" "$STATE_DATABASE_CONNECTION_FAILED"
         log_warn "Database started but connectivity could not be fully validated"
         log_info "Run 'exasol health --deployment-dir $deploy_dir' to check database status"
@@ -196,7 +205,6 @@ cmd_start() {
     operation_success
 
     # Display results
-    progress_complete "start" "complete" "Start operation completed successfully"
 
     log_info ""
     log_info "✓ Exasol Database Started Successfully!"

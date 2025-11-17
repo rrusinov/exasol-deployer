@@ -30,8 +30,13 @@ Examples:
 EOF
 }
 
-# Destroy command
+# Destroy command - entry point
 cmd_destroy() {
+    cmd_destroy_confirm "$@"
+}
+
+# Destroy confirmation phase - handles validation and user confirmation
+cmd_destroy_confirm() {
     local deploy_dir=""
     local auto_approve=false
 
@@ -96,12 +101,6 @@ cmd_destroy() {
         die "Another operation is in progress: $lock_op (PID: $lock_pid)"
     fi
 
-    # Create lock
-    lock_create "$deploy_dir" "destroy" || die "Failed to create lock"
-    setup_operation_guard "$deploy_dir" "$STATE_DESTROY_FAILED" "destroy_success"
-
-    progress_start "destroy" "begin" "Starting Exasol deployment destruction"
-
     log_info "Deployment directory: $deploy_dir"
 
     # Get deployment info
@@ -114,45 +113,66 @@ cmd_destroy() {
 
     # Confirmation prompt
     if [[ "$auto_approve" == false ]]; then
-        progress_update "destroy" "confirm" "Waiting for user confirmation"
         log_warn "⚠️  WARNING: This will destroy all resources including data!"
         log_warn "⚠️  Make sure you have backups of any important data."
         echo ""
         read -r -p "Are you sure you want to destroy all resources? (yes/no): " confirm
         if [[ "$confirm" != "yes" ]]; then
-            progress_complete "destroy" "confirm" "Destruction cancelled by user"
             log_info "Destruction cancelled"
             return 0
         fi
-        progress_complete "destroy" "confirm" "Destruction confirmed"
     fi
+
+    # Proceed to execution phase
+    cmd_destroy_execute "$deploy_dir" "$db_version" "$architecture"
+}
+
+# Destroy execution phase - performs the actual destruction
+cmd_destroy_execute() {
+    local deploy_dir="$1"
+    local db_version="$2"
+    local architecture="$3"
 
     # Update status to destroy in progress
     state_set_status "$deploy_dir" "$STATE_DESTROY_IN_PROGRESS"
 
+    # Create lock
+    lock_create "$deploy_dir" "destroy" || die "Failed to create lock"
+    setup_operation_guard "$deploy_dir" "$STATE_DESTROY_FAILED" "destroy_success"
+
+    # Get cluster size for progress estimation
+    local cluster_size
+    cluster_size=$(state_read "$deploy_dir" "cluster_size")
+    cluster_size=${cluster_size:-1}
+
+    # Calculate total estimated lines for destroy operation
+    local total_lines
+    total_lines=$(estimate_lines "destroy" "$cluster_size")
+
+    # Initialize cumulative progress tracking
+    progress_init_cumulative "$total_lines"
+    export PROGRESS_CUMULATIVE_MODE=1
+
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"
 
-    # Run Terraform destroy
-    progress_start "destroy" "tofu_destroy" "Destroying cloud infrastructure"
+    # Run Terraform destroy with progress tracking
+    log_info "Destroying cloud infrastructure..."
 
     local destroy_rc=0
-    if ! run_tofu_with_progress "destroy" "tofu_destroy" "Destroying cloud infrastructure" tofu destroy -auto-approve; then
+    if ! tofu destroy -auto-approve 2>&1 | progress_prefix_cumulative "$total_lines"; then
         destroy_rc=$?
         state_set_status "$deploy_dir" "$STATE_DESTROY_FAILED"
-        progress_fail "destroy" "tofu_destroy" "Infrastructure destruction failed"
         log_error "Terraform destroy failed"
         # Do not exit here with die() because we want to reach the final
         # inspection/notification block and inform the user that manual
         # cleanup is required before removing the deployment directory.
     else
         destroy_rc=0
-        progress_complete "destroy" "tofu_destroy" "Cloud infrastructure destroyed"
     fi
 
     # Clean up generated files only if destroy succeeded
     if [[ $destroy_rc -eq 0 ]]; then
-        progress_start "destroy" "cleanup" "Cleaning up deployment files"
         rm -f inventory.ini ssh_config tfplan exasol-key.pem
         # Remove Terraform state and caches so subsequent destroy runs are no-ops
         rm -f terraform.tfstate terraform.tfstate.backup
@@ -161,10 +181,15 @@ cmd_destroy() {
         # Update deployment status to destroyed
         state_set_status "$deploy_dir" "$STATE_DESTROYED"
 
-        progress_complete "destroy" "cleanup" "Deployment files cleaned up"
-
-        progress_complete "destroy" "complete" "All resources destroyed successfully"
         operation_success
+
+        # Display success message
+        log_info ""
+        log_info "✓ Exasol Deployment Destroyed Successfully!"
+        log_info ""
+        log_info "All cloud resources have been destroyed."
+        log_info "The deployment directory has been preserved: $deploy_dir"
+        log_info "You can safely delete it manually when ready."
     else
         # Keep the lock removal as we already removed it on failure above.
         log_warn "Some resources may not have been destroyed. Manual inspection and cleanup are required."

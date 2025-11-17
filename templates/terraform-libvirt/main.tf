@@ -149,5 +149,12 @@ resource "libvirt_domain" "exasol_node" {
   }
 }
 
+# ==============================================================================
+# DISK CLEANUP
+# ==============================================================================
+# Terraform libvirt provider handles volume cleanup automatically during destroy.
+# No manual cleanup is needed - volumes defined as resources will be destroyed
+# when their dependent domains are destroyed.
+
 # Ansible inventory is generated in common.tf
 # SSH config is generated in common.tf

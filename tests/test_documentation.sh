@@ -22,7 +22,7 @@ extract_readme_init_flags() {
     # Get the directory where this script is located
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-    local python_helper="$script_dir/lib/python/extract_readme_flags.py"
+    local python_helper="$script_dir/python-helpers/extract_readme_flags.py"
     
     if [[ ! -f "$python_helper" ]]; then
         echo "Error: Python helper not found: $python_helper" >&2

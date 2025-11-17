@@ -427,6 +427,58 @@ test_libvirt_template_validation() {
     cleanup_test_dir "$test_dir"
 }
 
+# Test: YAML syntax validation for all YAML files
+test_yaml_syntax_validation() {
+    echo ""
+    echo "Test: YAML syntax validation for all YAML files"
+
+    if ! command -v yamllint >/dev/null 2>&1; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        echo -e "${YELLOW}⊘${NC} Skipping (yamllint not available)"
+        return
+    fi
+
+    # Find all YAML files in the project
+    local yaml_files
+    mapfile -t yaml_files < <(find "$TEST_DIR/.." -name "*.yml" -o -name "*.yaml" | sort)
+
+    if [[ ${#yaml_files[@]} -eq 0 ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} No YAML files found"
+        return
+    fi
+
+    local total_files=${#yaml_files[@]}
+
+    # Use yamllint with relaxed rules (focus on syntax errors, not style)
+    # We disable line-length, comments-indentation, and truthy to focus on actual syntax errors
+    local yamllint_config="{extends: default, rules: {line-length: disable, comments-indentation: disable, truthy: disable}}"
+    local yamllint_output
+    yamllint_output=$(yamllint -f parsable -d "$yamllint_config" "${yaml_files[@]}" 2>&1)
+    local yamllint_exit=$?
+
+    # Check for syntax errors (not warnings)
+    local syntax_errors
+    syntax_errors=$(echo "$yamllint_output" | grep -c "\[error\]" || true)
+
+    if [[ $yamllint_exit -eq 0 ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} All YAML files have valid syntax ($total_files files)"
+    elif [[ $syntax_errors -gt 0 ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Found $syntax_errors syntax error(s) in YAML files:"
+        echo "$yamllint_output" | grep "\[error\]"
+    else
+        # Only warnings, no errors - still pass
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} All YAML files have valid syntax ($total_files files, some warnings)"
+    fi
+}
+
 # Test: Ansible playbook syntax validation
 test_ansible_playbook_validation() {
     echo ""
@@ -665,6 +717,7 @@ test_symlinks_with_tofu() {
 
 # Run all tests
 check_tool_availability
+test_yaml_syntax_validation
 test_aws_template_validation
 test_azure_template_validation
 test_gcp_template_validation

@@ -47,6 +47,7 @@ run_test_file() {
 # Run all test files
 run_test_file "$TEST_DIR/test_shellcheck.sh"
 run_test_file "$TEST_DIR/test_common.sh"
+run_test_file "$TEST_DIR/test_progress.sh"
 run_test_file "$TEST_DIR/test_versions.sh"
 run_test_file "$TEST_DIR/test_state.sh"
 run_test_file "$TEST_DIR/test_init.sh"

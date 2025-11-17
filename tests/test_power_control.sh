@@ -10,17 +10,60 @@ source "$LIB_DIR/state.sh"
 source "$LIB_DIR/cmd_stop.sh"
 source "$LIB_DIR/cmd_start.sh"
 
-declare -a MOCK_ANSIBLE_CALLS=()
-declare -a MOCK_TOFU_CALLS=()
+MOCK_BIN_DIR=""
+ANSIBLE_LOG=""
+TOFU_LOG=""
 
-run_ansible_with_progress() {
-    MOCK_ANSIBLE_CALLS+=("$*")
-    return 0
+setup_mock_bins() {
+    MOCK_BIN_DIR=$(mktemp -d)
+    ANSIBLE_LOG="$MOCK_BIN_DIR/ansible.log"
+    TOFU_LOG="$MOCK_BIN_DIR/tofu.log"
+
+    # Create mock ansible-playbook
+    cat > "$MOCK_BIN_DIR/ansible-playbook" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >> "$ANSIBLE_LOG"
+echo "PLAY [Mock play]"
+echo "TASK [Mock task]"
+echo "ok: [n11]"
+echo "PLAY RECAP"
+echo "n11 : ok=1 changed=0"
+exit 0
+EOF
+    chmod +x "$MOCK_BIN_DIR/ansible-playbook"
+
+    # Create mock tofu
+    cat > "$MOCK_BIN_DIR/tofu" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >> "$TOFU_LOG"
+echo "Mock tofu output"
+exit 0
+EOF
+    chmod +x "$MOCK_BIN_DIR/tofu"
+
+    export PATH="$MOCK_BIN_DIR:$PATH"
 }
 
-run_tofu_with_progress() {
-    MOCK_TOFU_CALLS+=("$*")
-    return 0
+cleanup_mock_bins() {
+    if [[ -n "$MOCK_BIN_DIR" && -d "$MOCK_BIN_DIR" ]]; then
+        rm -rf "$MOCK_BIN_DIR"
+    fi
+}
+
+get_ansible_call_count() {
+    [[ -f "$ANSIBLE_LOG" ]] && wc -l < "$ANSIBLE_LOG" || echo "0"
+}
+
+get_tofu_call_count() {
+    [[ -f "$TOFU_LOG" ]] && wc -l < "$TOFU_LOG" || echo "0"
+}
+
+get_ansible_calls() {
+    [[ -f "$ANSIBLE_LOG" ]] && cat "$ANSIBLE_LOG" || echo ""
+}
+
+get_tofu_calls() {
+    [[ -f "$TOFU_LOG" ]] && cat "$TOFU_LOG" || echo ""
 }
 
 setup_mock_deployment_dir() {
@@ -44,18 +87,20 @@ test_stop_aws_runs_tofu_and_no_fallback() {
     echo ""
     echo "Test: stop uses tofu for AWS and no fallback"
 
-    MOCK_ANSIBLE_CALLS=()
-    MOCK_TOFU_CALLS=()
+    setup_mock_bins
     local dir
     dir=$(setup_mock_deployment_dir "aws" "$STATE_DATABASE_READY")
 
-    cmd_stop --deployment-dir "$dir" >/dev/null
+    cmd_stop --deployment-dir "$dir" >/dev/null 2>&1
 
-    assert_greater_than "${#MOCK_TOFU_CALLS[@]}" 0 "Should call tofu for AWS stop"
+    local tofu_count
+    tofu_count=$(get_tofu_call_count)
+    assert_greater_than "$tofu_count" 0 "Should call tofu for AWS stop"
     assert_equals "$STATE_STOPPED" "$(state_get_status "$dir")" "State should be stopped after stop"
 
-    local joined="${MOCK_ANSIBLE_CALLS[*]}"
-    if [[ "$joined" == *"power_off_fallback=true"* ]]; then
+    local ansible_calls
+    ansible_calls=$(get_ansible_calls)
+    if [[ "$ansible_calls" == *"power_off_fallback=true"* ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
         echo -e "${RED}✗${NC} AWS stop should not use power_off_fallback"
     else
@@ -64,74 +109,81 @@ test_stop_aws_runs_tofu_and_no_fallback() {
     fi
 
     cleanup_test_dir "$dir"
+    cleanup_mock_bins
 }
 
 test_stop_hetzner_fallback_no_tofu() {
     echo ""
     echo "Test: stop uses fallback shutdown for Hetzner (no tofu)"
 
-    MOCK_ANSIBLE_CALLS=()
-    MOCK_TOFU_CALLS=()
+    setup_mock_bins
     local dir
     dir=$(setup_mock_deployment_dir "hetzner" "$STATE_DATABASE_READY")
 
-    cmd_stop --deployment-dir "$dir" >/dev/null
+    cmd_stop --deployment-dir "$dir" >/dev/null 2>&1
 
-    assert_equals "0" "${#MOCK_TOFU_CALLS[@]}" "Hetzner stop should not call tofu power control"
+    local tofu_count
+    tofu_count=$(get_tofu_call_count)
+    assert_equals "0" "$tofu_count" "Hetzner stop should not call tofu power control"
 
-    local joined="${MOCK_ANSIBLE_CALLS[*]}"
-    assert_contains "$joined" "power_off_fallback=true" "Hetzner stop should enable power_off_fallback"
+    local ansible_calls
+    ansible_calls=$(get_ansible_calls)
+    assert_contains "$ansible_calls" "power_off_fallback=true" "Hetzner stop should enable power_off_fallback"
 
     cleanup_test_dir "$dir"
+    cleanup_mock_bins
 }
 
 test_start_aws_runs_tofu_before_ansible() {
     echo ""
     echo "Test: start powers on infra via tofu for AWS"
 
-    MOCK_ANSIBLE_CALLS=()
-    MOCK_TOFU_CALLS=()
+    setup_mock_bins
     local dir
     dir=$(setup_mock_deployment_dir "aws" "$STATE_STOPPED")
 
-    local mock_bin
-    mock_bin=$(mktemp -d)
-    cat > "$mock_bin/ssh" <<'EOF'
+    # Create mock ssh
+    cat > "$MOCK_BIN_DIR/ssh" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
-    chmod +x "$mock_bin/ssh"
-    PATH="$mock_bin:$PATH" cmd_start --deployment-dir "$dir" >/dev/null
+    chmod +x "$MOCK_BIN_DIR/ssh"
 
-    assert_greater_than "${#MOCK_TOFU_CALLS[@]}" 0 "AWS start should call tofu power on"
-    assert_contains "${MOCK_TOFU_CALLS[*]}" "infra_desired_state=running" "AWS start should request running state"
+    cmd_start --deployment-dir "$dir" >/dev/null 2>&1
+
+    local tofu_count tofu_calls
+    tofu_count=$(get_tofu_call_count)
+    tofu_calls=$(get_tofu_calls)
+    assert_greater_than "$tofu_count" 0 "AWS start should call tofu power on"
+    assert_contains "$tofu_calls" "infra_desired_state=running" "AWS start should request running state"
 
     cleanup_test_dir "$dir"
-    rm -rf "$mock_bin"
+    cleanup_mock_bins
 }
 
 test_start_hetzner_warns_and_skips_tofu() {
     echo ""
     echo "Test: start warns and skips tofu for Hetzner"
 
-    MOCK_ANSIBLE_CALLS=()
-    MOCK_TOFU_CALLS=()
+    setup_mock_bins
     local dir
     dir=$(setup_mock_deployment_dir "hetzner" "$STATE_STOPPED")
 
-    local mock_bin
-    mock_bin=$(mktemp -d)
-    cat > "$mock_bin/ssh" <<'EOF'
+    # Create mock ssh
+    cat > "$MOCK_BIN_DIR/ssh" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
-    chmod +x "$mock_bin/ssh"
-    PATH="$mock_bin:$PATH" cmd_start --deployment-dir "$dir" >/dev/null
+    chmod +x "$MOCK_BIN_DIR/ssh"
 
-    assert_equals "0" "${#MOCK_TOFU_CALLS[@]}" "Hetzner start should not call tofu power on"
+    cmd_start --deployment-dir "$dir" >/dev/null 2>&1
+
+    local tofu_count
+    tofu_count=$(get_tofu_call_count)
+    assert_equals "0" "$tofu_count" "Hetzner start should not call tofu power on"
 
     cleanup_test_dir "$dir"
-    rm -rf "$mock_bin"
+    cleanup_mock_bins
 }
 
 test_stop_aws_runs_tofu_and_no_fallback

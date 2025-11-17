@@ -99,7 +99,18 @@ cmd_stop() {
     # Update status
     state_set_status "$deploy_dir" "$STATE_STOP_IN_PROGRESS"
 
-    progress_start "stop" "begin" "Starting Exasol database stop operation"
+    # Get cluster size for progress estimation
+    local cluster_size
+    cluster_size=$(state_read "$deploy_dir" "cluster_size")
+    cluster_size=${cluster_size:-1}
+
+    # Calculate total estimated lines for stop operation
+    local total_lines
+    total_lines=$(estimate_lines "stop" "$cluster_size")
+
+    # Initialize cumulative progress tracking
+    progress_init_cumulative "$total_lines"
+    export PROGRESS_CUMULATIVE_MODE=1
 
     log_info "Stopping Exasol database cluster..."
     log_info "Current state: $current_state"
@@ -123,7 +134,6 @@ cmd_stop() {
     if [[ ! -f "$deploy_dir/.templates/stop-exasol-cluster.yml" ]]; then
         log_error "Ansible playbook not found: .templates/stop-exasol-cluster.yml"
         state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
-        progress_fail "stop" "playbook_missing" "Stop playbook not found"
         die "Stop playbook not found"
     fi
 
@@ -131,32 +141,36 @@ cmd_stop() {
     if [[ ! -f "$deploy_dir/inventory.ini" ]]; then
         log_error "Ansible inventory not found: inventory.ini"
         state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
-        progress_fail "stop" "inventory_missing" "Ansible inventory not found"
         die "Ansible inventory not found"
     fi
 
     # Run Ansible to stop the database
-    progress_start "stop" "ansible_stop" "Stopping database services with Ansible"
+    # Split progress 50/50 between ansible and tofu (if tofu is used)
+    local ansible_lines tofu_lines
+    if [[ "$infra_power_supported" == "true" ]]; then
+        ansible_lines=$((total_lines * 50 / 100))
+        tofu_lines=$((total_lines * 50 / 100))
+    else
+        # If no tofu operation, allocate all progress to ansible
+        ansible_lines="$total_lines"
+    fi
 
     local ansible_extra=(-i inventory.ini .templates/stop-exasol-cluster.yml)
     [[ "$infra_power_supported" == "false" ]] && ansible_extra+=(-e "power_off_fallback=true")
 
-    if ! run_ansible_with_progress "stop" "ansible_stop" "Stopping database services" ansible-playbook "${ansible_extra[@]}"; then
+    if ! ansible-playbook "${ansible_extra[@]}" 2>&1 | \
+        progress_prefix_cumulative "$ansible_lines"; then
         state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
-        progress_fail "stop" "ansible_stop" "Failed to stop database services"
         die "Ansible stop operation failed"
     fi
-    progress_complete "stop" "ansible_stop" "Database services stopped successfully"
 
     # If provider supports infra power control, stop instances via tofu
     if [[ "$infra_power_supported" == "true" ]]; then
-        progress_start "stop" "tofu_stop" "Stopping infrastructure (powering off instances)"
-        if ! run_tofu_with_progress "stop" "tofu_stop" "Powering off instances" tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_off" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped"; then
+        if ! tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_off" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped" 2>&1 | \
+            progress_prefix_cumulative "$tofu_lines"; then
             state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
-            progress_fail "stop" "tofu_stop" "Failed to stop infrastructure (tofu apply)"
             die "Infrastructure stop (tofu apply) failed"
         fi
-        progress_complete "stop" "tofu_stop" "Infrastructure powered off"
     else
         log_warn "Provider '$cloud_provider' does not support power control via tofu. Instances were issued in-guest shutdown; manual power-on will be required for start."
     fi
@@ -166,7 +180,6 @@ cmd_stop() {
     operation_success
 
     # Display results
-    progress_complete "stop" "complete" "Stop operation completed successfully"
 
     log_info ""
     log_info "✓ Exasol Database Stopped Successfully!"

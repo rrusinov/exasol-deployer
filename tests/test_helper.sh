@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Test helper functions for unit testing
 
+# Enable pipefail so pipeline failures are caught
+set -o pipefail
+
 # Colors for test output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -222,7 +225,7 @@ extract_command_options() {
     # Get the directory where this script is located
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-    local python_helper="$script_dir/lib/python/extract_function_options.py"
+    local python_helper="$script_dir/python-helpers/extract_function_options.py"
     
     if [[ ! -f "$python_helper" ]]; then
         echo "Error: Python helper not found: $python_helper" >&2

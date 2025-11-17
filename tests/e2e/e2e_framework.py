@@ -26,7 +26,7 @@ import sys
 import tempfile
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set, Tuple, Callable
 
@@ -77,14 +77,14 @@ class NotificationManager:
             'success': result.get('success', False),
             'duration': result.get('duration', 0),
             'error': result.get('error'),
-            'timestamp': datetime.utcnow().isoformat() + 'Z'
+            'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
         }
         self.events.append(event)
 
     def flush_to_disk(self) -> Optional[Dict[str, Any]]:
         if not self.enabled or not self.events:
             return None
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         notifications_file = self.results_dir / f"notifications_{timestamp}.json"
         log_file = self.results_dir / 'notifications.log'
         with open(notifications_file, 'w', encoding='utf-8') as handle:
@@ -304,7 +304,13 @@ class E2ETestFramework:
         # Configure logger specifically for this module instead of basicConfig
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
-        
+
+        # Remove any existing file handlers for this logger
+        for handler in self.logger.handlers[:]:
+            if isinstance(handler, logging.FileHandler):
+                handler.close()
+                self.logger.removeHandler(handler)
+
         # Create formatter
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         

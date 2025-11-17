@@ -88,21 +88,34 @@ health_fetch_remote_ips() {
     local host_name="$2"
     local ssh_timeout="$3"
     local cloud_provider="$4"
+    local deploy_dir="${5:-.}"  # Optional deploy_dir parameter
 
     local private_ip=""
     private_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" hostname -I 2>/dev/null | awk '{print $1}' || true)
 
-    # Try to get public IP using ip.me (works for all cloud providers)
+    # Extract node index from host_name (e.g., "n11" -> 0, "n12" -> 1)
+    local node_index
+    if [[ "$host_name" =~ ^n([0-9]+)$ ]]; then
+        node_index=$((BASH_REMATCH[1] - 11))
+    else
+        node_index=-1
+    fi
+
+    # Try to get public IP from tofu output first (works for all providers, including libvirt and isolated environments)
     local public_ip=""
-    public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
-        "curl -s --max-time 3 ip.me 2>/dev/null" 2>/dev/null || true)
+    if [[ -n "$deploy_dir" ]] && [[ -d "$deploy_dir" ]] && [[ $node_index -ge 0 ]]; then
+        if cd "$deploy_dir" 2>/dev/null; then
+            public_ip=$(tofu output -json node_public_ips 2>/dev/null | jq -r ".[$node_index] // empty" 2>/dev/null || true)
+            cd - >/dev/null 2>&1 || true
+        fi
+    fi
 
     # Clean up the result (remove any whitespace/newlines)
     public_ip=$(echo "$public_ip" | tr -d '\r\n' | xargs)
 
-    # Validate that we got a valid IP address (basic check)
+    # If tofu output failed or returned invalid data, fall back to cloud-specific metadata services
     if [[ ! "$public_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        # If ip.me failed or returned invalid data, fall back to cloud metadata
+        # Try cloud provider metadata services first (more reliable than ip.me)
         case "$cloud_provider" in
             aws)
                 public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
@@ -118,6 +131,13 @@ health_fetch_remote_ips() {
                 ;;
         esac
         public_ip=$(echo "$public_ip" | tr -d '\r\n' | xargs)
+
+        # If metadata services failed, try ip.me as last resort (may return incorrect IP for libvirt/NAT)
+        if [[ ! "$public_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                "curl -s --max-time 3 ip.me 2>/dev/null" 2>/dev/null || true)
+            public_ip=$(echo "$public_ip" | tr -d '\r\n' | xargs)
+        fi
     fi
 
     # If still no valid public IP, fall back to private IP
@@ -577,6 +597,7 @@ health_check_single_host() {
     local cloud_provider="$5"
     local check_cluster_state="$6"  # "true" or "false"
     local result_dir="$7"
+    local deploy_dir="${8:-.}"  # Optional deploy_dir parameter
 
     local result_file="${result_dir}/health_${host_name}_$$.tmp"
     local -a local_issues=()
@@ -627,7 +648,7 @@ health_check_single_host() {
 
         # Fetch IPs
         local ip_info
-        ip_info=$(health_fetch_remote_ips "$ssh_config" "$host_name" "$ssh_timeout" "$cloud_provider")
+        ip_info=$(health_fetch_remote_ips "$ssh_config" "$host_name" "$ssh_timeout" "$cloud_provider" "$deploy_dir")
         IFS='|' read -r private_ip public_ip <<<"$ip_info"
         [[ -z "$public_ip" ]] && public_ip="$private_ip"
 
@@ -843,7 +864,6 @@ cmd_health() {
     fi
 
     # Progress tracking
-    progress_start "health" "checks" "Running health checks"
 
     local ssh_timeout=10
     local overall_issues=0
@@ -856,6 +876,7 @@ cmd_health() {
     local ssh_failed=0
     local services_active=0
     local services_failed=0
+    local cluster_ready="false"
     declare -A state_public_ip_map=()
     declare -A tf_ip_by_host=()
 
@@ -947,7 +968,7 @@ cmd_health() {
 
         # Launch health check in background
         (
-            health_check_single_host "$ssh_config_file" "$host_name" "$host_ip" "$ssh_timeout" "$cloud_provider" "$check_cluster" "$result_dir" >/dev/null
+            health_check_single_host "$ssh_config_file" "$host_name" "$host_ip" "$ssh_timeout" "$cloud_provider" "$check_cluster" "$result_dir" "$deploy_dir" >/dev/null
         ) &
         host_pids+=($!)
 
@@ -994,35 +1015,6 @@ cmd_health() {
             result_files+=("$result_file")
         fi
     done
-
-    # Update deployment status if health checks pass and --update is used
-    if [[ "$do_update_metadata" == "true" && "$overall_issues" -eq 0 ]]; then
-        local current_status
-        current_status=$(state_get_status "$deploy_dir")
-
-        # Check if cluster is database-ready (any host reports cluster_stage_d)
-        local cluster_ready="false"
-        for result_file in "${result_files[@]}"; do
-            if [[ -f "$result_file" ]]; then
-                local cluster_status
-                cluster_status=$(jq -r '.cluster_status' "$result_file" 2>/dev/null || echo "")
-                if [[ "$cluster_status" == "cluster_stage_d" ]]; then
-                    cluster_ready="true"
-                    break
-                fi
-            fi
-        done
-
-        # Update status from failure states to database_ready if cluster is healthy
-        if [[ "$current_status" == "deployment_failed" || "$current_status" == "database_connection_failed" || "$current_status" == "start_failed" || "$current_status" == "stop_failed" ]]; then
-            if [[ "$cluster_ready" == "true" ]]; then
-                state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
-                if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
-                    log_info "✅ Deployment status updated to 'database_ready' (cluster is healthy)"
-                fi
-            fi
-        fi
-    fi
 
     # Process results and display output
     for result_file in "${result_files[@]}"; do
@@ -1095,6 +1087,11 @@ cmd_health() {
             overall_issues=$((overall_issues + 1))
         fi
 
+        # Track cluster readiness (for status update logic)
+        if [[ "$cluster_status" == "cluster_stage_d" ]]; then
+            cluster_ready="true"
+        fi
+
         # Now display (only for text output)
         if [[ "$output_format" == "text" && "$show_details" == "true" ]]; then
             echo "- Host: $host_name (ansible_host=${ansible_host})"
@@ -1165,6 +1162,7 @@ cmd_health() {
             # Cluster state
             if [[ "$cluster_status" == "cluster_stage_d" ]]; then
                 echo "    ✓ Cluster state: Stage 'd' - Database ready (all nodes)"
+                cluster_ready="true"
             elif [[ "$cluster_status" == "cluster_stage_a" ]]; then
                 echo "    ○ Cluster state: Stage 'a/a1' - Stopped (instances running, database stopped)"
             elif [[ "$cluster_status" == "cluster_stage_b" ]]; then
@@ -1250,6 +1248,21 @@ cmd_health() {
     # Clean up any remaining health temp files for this run
     find "$result_dir" -maxdepth 1 -name "health_*.tmp" -delete 2>/dev/null || true
 
+    # Update deployment status if health checks pass and --update is used
+    # This must happen AFTER all issues are counted above
+    if [[ "$do_update_metadata" == "true" && "$overall_issues" -eq 0 && "$cluster_ready" == "true" ]]; then
+        local current_status
+        current_status=$(state_get_status "$deploy_dir")
+
+        # Update status from failure states to database_ready if cluster is healthy
+        if [[ "$current_status" == "deployment_failed" || "$current_status" == "database_connection_failed" || "$current_status" == "start_failed" || "$current_status" == "stop_failed" || "$current_status" == "destroy_failed" ]]; then
+            state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
+            if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
+                log_info "✅ Deployment status updated to 'database_ready' (cluster is healthy)"
+            fi
+        fi
+    fi
+
     # Terraform state refresh if requested
     if [[ "$do_refresh_terraform" == "true" ]]; then
         if [[ "$output_format" == "text" ]]; then
@@ -1286,13 +1299,6 @@ EOF
     local health_status="healthy"
     [[ "$overall_issues" -gt 0 ]] && health_status="unhealthy"
     state_update "$deploy_dir" "health_status" "$health_status"
-
-    # Progress tracking
-    if [[ "$overall_issues" -eq 0 ]]; then
-        progress_complete "health" "checks" "Health check completed successfully"
-    else
-        progress_fail "health" "checks" "Health check detected $overall_issues issue(s)"
-    fi
 
     # Generate output based on format
     if [[ "$output_format" == "json" ]]; then
