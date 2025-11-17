@@ -1,0 +1,200 @@
+{
+  "test_suites": {
+    "libvirt_failsafety_basic": {
+      "provider": "libvirt",
+      "test_type": "workflow",
+      "description": "Basic failsafety testing with start/stop operations",
+      "parameters": {
+        "cluster_size": 3,
+        "libvirt_memory_gb": 8,
+        "libvirt_vcpus": 4,
+        "data_volumes_per_node": 1,
+        "data_volume_size": 100,
+        "root_volume_size": 50
+      },
+      "requirements": {
+        "libvirt_available": true,
+        "kvm_available": true,
+        "min_memory_gb": 32
+      },
+      "workflow": [
+        {
+          "step": "init",
+          "description": "Initialize deployment"
+        },
+        {
+          "step": "deploy",
+          "description": "Deploy cluster"
+        },
+        {
+          "step": "validate",
+          "description": "Validate initial deployment",
+          "checks": [
+            "cluster_status",
+            "ssh_connectivity",
+            "database_running",
+            "admin_ui_accessible"
+          ]
+        },
+        {
+          "step": "stop_cluster",
+          "description": "Stop entire cluster",
+          "command": "stop"
+        },
+        {
+          "step": "validate",
+          "description": "Validate cluster stopped",
+          "checks": [
+            "cluster_status_stopped",
+            "vms_powered_off"
+          ]
+        },
+        {
+          "step": "start_cluster",
+          "description": "Start entire cluster",
+          "command": "start"
+        },
+        {
+          "step": "validate",
+          "description": "Validate cluster restarted",
+          "checks": [
+            "cluster_status",
+            "ssh_connectivity",
+            "database_running",
+            "admin_ui_accessible",
+            "data_integrity"
+          ]
+        },
+        {
+          "step": "restart_node",
+          "description": "Restart single node n12",
+          "target_node": "n12",
+          "method": "graceful"
+        },
+        {
+          "step": "validate",
+          "description": "Validate after node restart",
+          "checks": [
+            "cluster_status",
+            "node_status:n12",
+            "database_running"
+          ]
+        },
+        {
+          "step": "stop_node",
+          "description": "Stop node n13",
+          "target_node": "n13"
+        },
+        {
+          "step": "validate",
+          "description": "Validate cluster with one node down",
+          "checks": [
+            "cluster_degraded",
+            "node_status:n11:running",
+            "node_status:n12:running",
+            "node_status:n13:stopped"
+          ]
+        },
+        {
+          "step": "start_node",
+          "description": "Start node n13",
+          "target_node": "n13"
+        },
+        {
+          "step": "validate",
+          "description": "Validate cluster recovered",
+          "checks": [
+            "cluster_status",
+            "all_nodes_running",
+            "database_running"
+          ]
+        }
+      ]
+    },
+    "libvirt_failsafety_crash": {
+      "provider": "libvirt",
+      "test_type": "workflow",
+      "description": "Crash scenario testing",
+      "parameters": {
+        "cluster_size": 3,
+        "libvirt_memory_gb": 8,
+        "libvirt_vcpus": 4,
+        "data_volumes_per_node": 1,
+        "data_volume_size": 100
+      },
+      "requirements": {
+        "libvirt_available": true,
+        "kvm_available": true,
+        "min_memory_gb": 32
+      },
+      "workflow": [
+        {
+          "step": "init",
+          "description": "Initialize deployment"
+        },
+        {
+          "step": "deploy",
+          "description": "Deploy cluster"
+        },
+        {
+          "step": "validate",
+          "description": "Validate initial deployment",
+          "checks": ["cluster_status", "database_running"]
+        },
+        {
+          "step": "crash_node",
+          "description": "Simulate crash on n11",
+          "target_node": "n11",
+          "method": "destroy"
+        },
+        {
+          "step": "validate",
+          "description": "Validate cluster with crashed node",
+          "checks": [
+            "cluster_degraded",
+            "node_status:n11:stopped",
+            "database_degraded"
+          ],
+          "allow_failures": ["database_degraded"]
+        },
+        {
+          "step": "crash_node",
+          "description": "Simulate crash on n12",
+          "target_node": "n12",
+          "method": "destroy"
+        },
+        {
+          "step": "validate",
+          "description": "Validate cluster with two nodes crashed",
+          "checks": [
+            "cluster_critical",
+            "node_status:n13:running"
+          ],
+          "allow_failures": ["cluster_critical", "database_down"]
+        },
+        {
+          "step": "start_node",
+          "description": "Recover n11",
+          "target_node": "n11"
+        },
+        {
+          "step": "start_node",
+          "description": "Recover n12",
+          "target_node": "n12"
+        },
+        {
+          "step": "validate",
+          "description": "Validate cluster recovered",
+          "checks": [
+            "all_nodes_running",
+            "database_running"
+          ],
+          "retry": {
+            "max_attempts": 5,
+            "delay_seconds": 30
+          }
+        }
+      ]
+    }
+  }
+}
