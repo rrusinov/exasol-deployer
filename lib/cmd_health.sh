@@ -1250,15 +1250,46 @@ cmd_health() {
 
     # Update deployment status if health checks pass and --update is used
     # This must happen AFTER all issues are counted above
-    if [[ "$do_update_metadata" == "true" && "$overall_issues" -eq 0 && "$cluster_ready" == "true" ]]; then
+    if [[ "$do_update_metadata" == "true" ]]; then
         local current_status
         current_status=$(state_get_status "$deploy_dir")
 
-        # Update status from failure states to database_ready if cluster is healthy
-        if [[ "$current_status" == "deployment_failed" || "$current_status" == "database_connection_failed" || "$current_status" == "start_failed" || "$current_status" == "stop_failed" || "$current_status" == "destroy_failed" ]]; then
-            state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
+        # Auto-correction transition table:
+        # +----------------------+---------------------------------------------+---------------------------+------------------------------------------------+
+        # | Current Status       | Health Check Result                        | New Status                | Rationale                                      |
+        # +----------------------+---------------------------------------------+---------------------------+------------------------------------------------+
+        # | database_ready       | cluster_status != "cluster_stage_d"        | database_connection_failed| Database should be ready (stage d) but isn't   |
+        # | stopped              | ssh_passed > 0                              | stop_failed               | Claims stopped but SSH still reachable          |
+        # | deployment_failed    | overall_issues == 0 && cluster_ready == "true"| database_ready           | Claims failed but cluster is healthy            |
+        # | database_connection_failed | overall_issues == 0 && cluster_ready == "true"| database_ready           | Claims connection failed but cluster is healthy |
+        # | start_failed         | overall_issues == 0 && cluster_ready == "true"| database_ready           | Claims start failed but cluster is running     |
+        # | stop_failed          | overall_issues == 0 && cluster_ready == "true"| database_ready           | Claims stop failed but cluster is running      |
+        # | destroy_failed       | overall_issues == 0 && cluster_ready == "true"| database_ready           | Claims destroy failed but cluster is running    |
+        # +----------------------+---------------------------------------------+---------------------------+------------------------------------------------+
+
+        # Update status to database_ready if cluster is healthy and running
+        if [[ "$overall_issues" -eq 0 && "$cluster_ready" == "true" ]]; then
+            # Update from failure states to database_ready
+            # Transition: deployment_failed/database_connection_failed/start_failed/stop_failed/destroy_failed -> database_ready
+            if [[ "$current_status" == "deployment_failed" || "$current_status" == "database_connection_failed" || "$current_status" == "start_failed" || "$current_status" == "stop_failed" || "$current_status" == "destroy_failed" ]]; then
+                state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
+                if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
+                    log_info "✅ Deployment status updated to 'database_ready' (cluster is healthy and running)"
+                fi
+            fi
+        # Update to database_connection_failed if database_ready but cluster not in stage d
+        # Transition: database_ready -> database_connection_failed
+        elif [[ "$current_status" == "database_ready" && "$cluster_status" != "cluster_stage_d" ]]; then
+            state_set_status "$deploy_dir" "$STATE_DATABASE_CONNECTION_FAILED"
             if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
-                log_info "✅ Deployment status updated to 'database_ready' (cluster is healthy)"
+                log_info "✅ Deployment status updated to 'database_connection_failed' (database not in ready stage)"
+            fi
+        # Update to stop_failed if stopped but SSH reachable
+        # Transition: stopped -> stop_failed
+        elif [[ "$current_status" == "stopped" && "$ssh_passed" -gt 0 ]]; then
+            state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
+            if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
+                log_info "✅ Deployment status updated to 'stop_failed' (instances reachable via SSH but should be stopped)"
             fi
         fi
     fi

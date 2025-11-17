@@ -129,20 +129,6 @@ cmd_deploy() {
         die "Infrastructure deployment failed"
     fi
 
-    # Wait for instances to be ready
-    log_info "Waiting for instances to be ready..."
-    sleep 60
-
-    # Show deployment summary before Ansible configuration
-    if tofu output summary >/dev/null 2>&1; then
-        log_info ""
-        log_info "🚀 Deployment Summary (Infrastructure Ready):"
-        tofu output summary
-        log_info ""
-        log_info "📋 Next: Configuring cluster with Ansible..."
-        log_info ""
-    fi
-
     # Check if Ansible playbook exists
     if [[ ! -f "$deploy_dir/.templates/setup-exasol-cluster.yml" ]]; then
         log_warn "Ansible playbook not found, skipping configuration"

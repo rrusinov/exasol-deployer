@@ -166,7 +166,9 @@ cmd_stop() {
 
     # If provider supports infra power control, stop instances via tofu
     if [[ "$infra_power_supported" == "true" ]]; then
-        if ! tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_off" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped" 2>&1 | \
+        # Note: We enable refresh to ensure Terraform sees the current state (running=true)
+        # This is important for all providers to detect state drift and apply changes correctly
+        if ! tofu apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_off" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped" 2>&1 | \
             progress_prefix_cumulative "$tofu_lines"; then
             state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
             die "Infrastructure stop (tofu apply) failed"
@@ -175,16 +177,71 @@ cmd_stop() {
         log_warn "Provider '$cloud_provider' does not support power control via tofu. Instances were issued in-guest shutdown; manual power-on will be required for start."
     fi
 
-    # Update status to stopped
+    # Verify VMs are actually powered off by checking SSH connectivity
+    # If we can SSH to any VM, the power-off failed
+    log_info "Verifying VMs are powered off..."
+
+    # Get all hosts from inventory
+    local -a hosts=()
+    while IFS= read -r line; do
+        [[ -z "$line" || "$line" =~ ^\[.*\] ]] && continue
+        local host
+        host=$(echo "$line" | awk '{print $1}')
+        [[ -n "$host" ]] && hosts+=("$host")
+    done < <(awk '/^\[exasol_nodes\]/,/^\[/ {print}' "$deploy_dir/inventory.ini")
+
+    # Check all nodes in parallel - if SSH succeeds, VM is still running
+    local -a check_pids=()
+    local temp_dir
+    temp_dir=$(mktemp -d)
+
+    for host in "${hosts[@]}"; do
+        (
+            if ssh -F "$deploy_dir/ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$host" \
+                "true" >/dev/null 2>&1; then
+                echo "running" > "$temp_dir/$host"
+            else
+                echo "stopped" > "$temp_dir/$host"
+            fi
+        ) &
+        check_pids+=($!)
+    done
+
+    # Wait for all checks to complete
+    for pid in "${check_pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+
+    # Check results - if any VM is still reachable via SSH, stop failed
+    local any_running=false
+    for host in "${hosts[@]}"; do
+        if [[ -f "$temp_dir/$host" ]] && [[ "$(cat "$temp_dir/$host")" == "running" ]]; then
+            log_warn "VM $host is still reachable via SSH"
+            any_running=true
+        fi
+    done
+
+    rm -rf "$temp_dir"
+
+    if [[ "$any_running" == true ]]; then
+        state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
+        operation_success  # Remove lock
+        log_error ""
+        log_error "✗ Stop operation completed but VMs are still running"
+        log_error ""
+        log_error "Status set to 'stop_failed'. Please check the logs and try again."
+        return 1
+    fi
+
+    # All VMs powered off successfully
     state_set_status "$deploy_dir" "$STATE_STOPPED"
     operation_success
 
     # Display results
-
     log_info ""
     log_info "✓ Exasol Database Stopped Successfully!"
     log_info ""
-    log_info "The database services have been stopped. Cloud instances are still running."
+    log_info "VMs have been powered off."
     log_info "To restart the database, run: exasol start --deployment-dir $deploy_dir"
     log_info "To terminate cloud instances, run: exasol destroy --deployment-dir $deploy_dir"
 }

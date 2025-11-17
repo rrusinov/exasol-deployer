@@ -150,7 +150,9 @@ cmd_start() {
         tofu_lines=$((total_lines * 50 / 100))
         ansible_lines=$((total_lines * 50 / 100))
 
-        if ! tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_on" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=running" 2>&1 | \
+        # Note: We enable refresh to ensure Terraform sees the current state (running=false)
+        # This is important for all providers to detect state drift and apply changes correctly
+        if ! tofu apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_on" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=running" 2>&1 | \
             progress_prefix_cumulative "$tofu_lines"; then
             state_set_status "$deploy_dir" "$STATE_START_FAILED"
             die "Infrastructure start (tofu apply) failed"

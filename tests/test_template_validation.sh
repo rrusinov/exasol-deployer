@@ -102,7 +102,7 @@ test_aws_template_validation() {
     local rc=0
     if ! tofu_init_strict "AWS"; then
         rc=$?
-        cd - >/dev/null
+        cd - >/dev/null || exit 1
         cleanup_test_dir "$test_dir"
         [[ $rc -eq 2 ]] && return 0
         return

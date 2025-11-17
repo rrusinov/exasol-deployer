@@ -147,7 +147,7 @@ validate_output_format() {
 
         # Strip ANSI color codes for validation
         local clean_line
-        clean_line=$(echo "$line" | sed 's/\x1b\[[0-9;]*m//g')
+        clean_line=$(echo "$line" | sed 's/\x1b\[[0-9;]*m//g; s/\x1b\[[0-9]*m//g')
 
         if ! echo "$clean_line" | grep -qE '(^\s*[0-9]+%\s+\||^\[INFO\]|^\[WARN\]|^\[ERROR\]|^Are you sure)'; then
             valid=false
