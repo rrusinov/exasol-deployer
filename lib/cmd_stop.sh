@@ -119,7 +119,7 @@ cmd_stop() {
     cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
     local infra_power_supported="false"
     case "$cloud_provider" in
-        aws|azure|gcp|libvirt)
+        aws|azure|gcp)
             infra_power_supported="true"
             ;;
         *)
@@ -160,8 +160,13 @@ cmd_stop() {
 
     if ! ansible-playbook "${ansible_extra[@]}" 2>&1 | \
         progress_prefix_cumulative "$ansible_lines"; then
-        state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
-        die "Ansible stop operation failed"
+        # For providers without infra power control, unreachable hosts after shutdown are expected
+        if [[ "$infra_power_supported" == "false" ]]; then
+            log_warn "Ansible reported unreachable hosts after shutdown; this is expected if VMs are powered off."
+        else
+            state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
+            die "Ansible stop operation failed"
+        fi
     fi
 
     # If provider supports infra power control, stop instances via tofu
@@ -174,14 +179,15 @@ cmd_stop() {
             die "Infrastructure stop (tofu apply) failed"
         fi
     else
-        log_warn "Provider '$cloud_provider' does not support power control via tofu. Instances were issued in-guest shutdown; manual power-on will be required for start."
+        log_warn "Provider '$cloud_provider' does not support power control via tofu."
+        log_info ""
+        log_info "Instances have been issued an in-guest shutdown command."
+        log_info ""
     fi
 
     # Verify VMs are actually powered off by checking SSH connectivity
     # If we can SSH to any VM, the power-off failed
     log_info "Verifying VMs are powered off..."
-
-    # Get all hosts from inventory
     local -a hosts=()
     while IFS= read -r line; do
         [[ -z "$line" || "$line" =~ ^\[.*\] ]] && continue
@@ -190,7 +196,6 @@ cmd_stop() {
         [[ -n "$host" ]] && hosts+=("$host")
     done < <(awk '/^\[exasol_nodes\]/,/^\[/ {print}' "$deploy_dir/inventory.ini")
 
-    # Check all nodes in parallel - if SSH succeeds, VM is still running
     local -a check_pids=()
     local temp_dir
     temp_dir=$(mktemp -d)
@@ -207,10 +212,29 @@ cmd_stop() {
         check_pids+=($!)
     done
 
-    # Wait for all checks to complete
     for pid in "${check_pids[@]}"; do
         wait "$pid" 2>/dev/null || true
     done
+
+    # For providers without infra power control, unreachable hosts after shutdown are success
+    if [[ "$infra_power_supported" == "false" ]]; then
+        local all_stopped=true
+        for host in "${hosts[@]}"; do
+            if [[ -f "$temp_dir/$host" ]] && grep -q "running" "$temp_dir/$host"; then
+                all_stopped=false
+                break
+            fi
+        done
+        if [[ "$all_stopped" == "true" ]]; then
+            state_set_status "$deploy_dir" "$STATE_STOPPED"
+            operation_success
+            log_info "✓ All VMs are powered off and unreachable. Stop operation successful."
+            return 0
+        else
+            state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
+            die "Some VMs are still reachable after stop operation."
+        fi
+    fi
 
     # Check results - if any VM is still reachable via SSH, stop failed
     local any_running=false
