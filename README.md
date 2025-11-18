@@ -568,7 +568,28 @@ Use `--wait-for` to wait until the deployment reaches a specific status, useful 
   - Format: `status,timeout` (e.g., `database_ready,15m`)
   - If timeout omitted, defaults to 15m
   - Status values: `database_ready`, `stopped`, `started`
-  - Timeout formats: `15m`, `1h`, `60s`
+   - Timeout formats: `15m`, `1h`, `60s`
+
+### `add-metrics`
+
+Copy freshly calibrated progress tracking metrics from a deployment directory to the global metrics repository. This command helps integrate newly calibrated metrics into the shared repository, making them available for all users and deployments.
+
+```bash
+# Copy metrics from deployment to global repository
+./exasol add-metrics --deployment-dir ./my-deployment
+
+# Preview what would be copied (dry-run)
+./exasol add-metrics --deployment-dir ./my-deployment --dry-run
+```
+
+**Flags:**
+- `--deployment-dir string`: Directory with deployment files and metrics (default: ".")
+- `--dry-run`: Show what would be copied without actually copying
+
+**Use Cases:**
+- After running `PROGRESS_CALIBRATE=true ./exasol deploy`
+- To share calibration data with team members
+- To update global metrics with new provider/operation data
 
 ### `destroy`
 

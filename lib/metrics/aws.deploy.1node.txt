@@ -1,6 +1,0 @@
-total_lines=994
-provider=aws
-operation=deploy
-nodes=1
-timestamp=2025-01-18T10:00:00Z
-duration=180

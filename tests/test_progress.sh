@@ -58,16 +58,16 @@ test_progress_load_metrics() {
     assert_equals "2" "${#aws_deploy_metrics[@]}" "Should find 2 AWS deploy metric files"
     
     # Check that files contain expected node counts
-    local found_1node=false found_4node=false
+    local found_1=false found_4=false
     for file in "${aws_deploy_metrics[@]}"; do
-        if [[ "$file" == *"1node.txt" ]]; then
-            found_1node=true
-        elif [[ "$file" == *"4nodes.txt" ]]; then
-            found_4node=true
+        if [[ "$file" == *"aws.deploy.1.txt" ]]; then
+            found_1=true
+        elif [[ "$file" == *"aws.deploy.4.txt" ]]; then
+            found_4=true
         fi
     done
-    
-    if [[ "$found_1node" == true ]]; then
+
+    if [[ "$found_1" == true ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "${GREEN}✓${NC} Should find 1-node metric file"
     else
@@ -75,7 +75,7 @@ test_progress_load_metrics() {
         echo -e "${RED}✗${NC} Should find 1-node metric file"
     fi
 
-    if [[ "$found_4node" == true ]]; then
+    if [[ "$found_4" == true ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "${GREEN}✓${NC} Should find 4-node metric file"
     else
@@ -103,7 +103,7 @@ test_progress_parse_metric_file() {
     echo "Test: progress_parse_metric_file extracts values correctly"
 
     # Parse a known metric file
-    local metric_file="$LIB_DIR/metrics/aws.deploy.1node.txt"
+    local metric_file="$LIB_DIR/metrics/aws.deploy.1.txt"
     local parsed_output
     parsed_output=$(progress_parse_metric_file "$metric_file")
     

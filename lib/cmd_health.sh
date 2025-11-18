@@ -850,7 +850,7 @@ cmd_health() {
             fi
 
             iteration=$((iteration + 1))
-            log_debug "Health check iteration $iteration..."
+            log_info "Health check remaining time: $((end_time - current_time))s ..."
 
             # Wait for any existing health check lock to be released
             local lock_wait_seconds=0

@@ -371,7 +371,7 @@ progress_wrap_command() {
     local record_file=""
     if [[ "${PROGRESS_CALIBRATE:-}" == "true" ]]; then
         mkdir -p "$deploy_dir/metrics"
-        record_file="$deploy_dir/metrics/${provider}.${operation}.${nodes}nodes.txt"
+        record_file="$deploy_dir/metrics/${provider}.${operation}.${nodes}.txt"
         export PROGRESS_RECORD_FILE="$record_file"
 
         # Add metadata

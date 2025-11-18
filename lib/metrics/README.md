@@ -2,17 +2,19 @@
 
 This directory contains calibration data for progress tracking across different cloud providers, operations, and cluster sizes.
 
+> **📖 For detailed calibration instructions, see [METRICS_CALIBRATION.md](../docs/METRICS_CALIBRATION.md)**
+
 ## Metric File Format
 
 Each metric file follows the naming convention:
 ```
-<provider>.<operation>.<nodes>node(s).txt
+<provider>.<operation>.<nodes>.txt
 ```
 
 Examples:
-- `aws.deploy.1node.txt`
-- `aws.deploy.4nodes.txt`
-- `libvirt.start.2nodes.txt`
+- `aws.deploy.1.txt`
+- `aws.deploy.4.txt`
+- `libvirt.start.2.txt`
 
 ### File Contents
 

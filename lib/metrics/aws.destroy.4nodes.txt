@@ -1,6 +1,0 @@
-total_lines=1797
-provider=aws
-operation=destroy
-nodes=4
-timestamp=2025-01-18T10:00:00Z
-duration=350
