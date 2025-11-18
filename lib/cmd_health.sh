@@ -987,7 +987,7 @@ cmd_health() {
     local history_file="$deploy_dir/.health_history.jsonl"
     local history_entry
     history_entry=$(cat <<EOF
-{"timestamp": "$timestamp", "status": "$([ $overall_issues -eq 0 ] && echo healthy || echo unhealthy)", "issues_count": $overall_issues, "ssh_passed": $ssh_passed, "ssh_failed": $ssh_failed, "services_active": $services_active, "services_failed": $services_failed}
+{"timestamp": "$timestamp", "status": "$([ "$overall_issues" -eq 0 ] && echo healthy || echo unhealthy)", "issues_count": $overall_issues, "ssh_passed": $ssh_passed, "ssh_failed": $ssh_failed, "services_active": $services_active, "services_failed": $services_failed}
 EOF
     )
     echo "$history_entry" >> "$history_file"

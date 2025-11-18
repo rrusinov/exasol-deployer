@@ -104,14 +104,6 @@ cmd_stop() {
     cluster_size=$(state_read "$deploy_dir" "cluster_size")
     cluster_size=${cluster_size:-1}
 
-    # Calculate total estimated lines for stop operation
-    local total_lines
-    total_lines=$(estimate_lines "stop" "$cluster_size")
-
-    # Initialize cumulative progress tracking
-    progress_init_cumulative "$total_lines"
-    export PROGRESS_CUMULATIVE_MODE=1
-
     log_info "Stopping Exasol database cluster..."
     log_info "Current state: $current_state"
 
@@ -145,21 +137,10 @@ cmd_stop() {
     fi
 
     # Run Ansible to stop the database
-    # Split progress 50/50 between ansible and tofu (if tofu is used)
-    local ansible_lines tofu_lines
-    if [[ "$infra_power_supported" == "true" ]]; then
-        ansible_lines=$((total_lines * 50 / 100))
-        tofu_lines=$((total_lines * 50 / 100))
-    else
-        # If no tofu operation, allocate all progress to ansible
-        ansible_lines="$total_lines"
-    fi
-
     local ansible_extra=(-i inventory.ini .templates/stop-exasol-cluster.yml)
     [[ "$infra_power_supported" == "false" ]] && ansible_extra+=(-e "power_off_fallback=true")
 
-    if ! ansible-playbook "${ansible_extra[@]}" 2>&1 | \
-        progress_prefix_cumulative "$ansible_lines"; then
+    if ! ansible-playbook "${ansible_extra[@]}"; then
         # For providers without infra power control, unreachable hosts after shutdown are expected
         if [[ "$infra_power_supported" == "false" ]]; then
             log_warn "Ansible reported unreachable hosts after shutdown; this is expected if VMs are powered off."
@@ -173,8 +154,7 @@ cmd_stop() {
     if [[ "$infra_power_supported" == "true" ]]; then
         # Note: We enable refresh to ensure Terraform sees the current state (running=true)
         # This is important for all providers to detect state drift and apply changes correctly
-        if ! tofu apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_off" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped" 2>&1 | \
-            progress_prefix_cumulative "$tofu_lines"; then
+        if ! tofu apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_off" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped"; then
             state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
             die "Infrastructure stop (tofu apply) failed"
         fi

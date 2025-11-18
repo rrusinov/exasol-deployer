@@ -174,7 +174,7 @@ main() {
                 exit 0
             fi
             check_required_commands
-            cmd_deploy --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            progress_wrap_command "deploy" "$DEPLOYMENT_DIR" cmd_deploy --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         destroy)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
@@ -182,7 +182,7 @@ main() {
                 exit 0
             fi
             check_required_commands
-            cmd_destroy --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            progress_wrap_command "destroy" "$DEPLOYMENT_DIR" cmd_destroy --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         start)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
@@ -190,7 +190,7 @@ main() {
                 exit 0
             fi
             check_required_commands
-            cmd_start --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            progress_wrap_command "start" "$DEPLOYMENT_DIR" cmd_start --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         stop)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
@@ -198,7 +198,7 @@ main() {
                 exit 0
             fi
             check_required_commands
-            cmd_stop --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            progress_wrap_command "stop" "$DEPLOYMENT_DIR" cmd_stop --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         status)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then

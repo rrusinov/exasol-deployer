@@ -145,22 +145,14 @@ cmd_destroy_execute() {
     cluster_size=$(state_read "$deploy_dir" "cluster_size")
     cluster_size=${cluster_size:-1}
 
-    # Calculate total estimated lines for destroy operation
-    local total_lines
-    total_lines=$(estimate_lines "destroy" "$cluster_size")
-
-    # Initialize cumulative progress tracking
-    progress_init_cumulative "$total_lines"
-    export PROGRESS_CUMULATIVE_MODE=1
-
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"
 
-    # Run Terraform destroy with progress tracking
+    # Run Terraform destroy
     log_info "Destroying cloud infrastructure..."
 
     local destroy_rc=0
-    if ! tofu destroy -auto-approve 2>&1 | progress_prefix_cumulative "$total_lines"; then
+    if ! tofu destroy -auto-approve; then
         destroy_rc=$?
         state_set_status "$deploy_dir" "$STATE_DESTROY_FAILED"
         log_error "Terraform destroy failed"

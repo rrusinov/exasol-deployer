@@ -9,7 +9,7 @@ readonly __EXASOL_COMMON_SH_INCLUDED__=1
 
 # Source progress tracking utilities
 _COMMON_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${_COMMON_LIB_DIR}/progress_pipe.sh"
+source "${_COMMON_LIB_DIR}/progress_tracker.sh"
 
 # Colors for output
 readonly COLOR_RED='\033[0;31m'
