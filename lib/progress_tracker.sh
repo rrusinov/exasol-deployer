@@ -252,8 +252,9 @@ progress_display_with_eta() {
                 eta_str = eta_hours "h" eta_min "m"
             }
         }
-        # Method 2: Fallback to line-based rate if no duration data
-        else if (line_count > 10 && elapsed > 0) {
+        # Method 2: Fallback to line-based rate if no duration data AND
+        # the operation is calibrated. If not calibrated, always show ???
+        else if (ENVIRON["PROGRESS_CALIBRATED"] == "true" && line_count > 10 && elapsed > 0) {
             lines_per_sec = line_count / elapsed
             if (lines_per_sec > 0) {
                 remaining_lines = estimated - line_count
@@ -271,6 +272,9 @@ progress_display_with_eta() {
                 }
             }
         }
+        else {
+            eta_str = "   ???"
+        }
 
         printf "[%3d%%] [ETA: %6s] %s\n", percent, eta_str, $0
         fflush()
@@ -282,6 +286,13 @@ progress_display_with_eta() {
             duration = final_time - start_time
             print "total_lines=" line_count > ENVIRON["PROGRESS_RECORD_FILE"]
             print "duration=" duration >> ENVIRON["PROGRESS_RECORD_FILE"]
+            # Also write per-line offsets: line_offset_<n>=<seconds_since_start>
+            for (i = 1; i <= line_count; i++) {
+                # Store approximate offset as fraction of duration
+                # We do not have per-line timestamps here; approximate by linear spacing
+                offset = int((i - 1) * (duration / (line_count > 1 ? (line_count - 1) : 1)))
+                printf("line_offset_%d=%d\n", i, offset) >> ENVIRON["PROGRESS_RECORD_FILE"]
+            }
             close(ENVIRON["PROGRESS_RECORD_FILE"])
         }
     }
@@ -303,9 +314,9 @@ progress_wrap_command() {
     local provider="unknown"
     local nodes=1
 
-    if [[ -f "$deploy_dir/state.json" ]]; then
-        provider=$(jq -r '.cloud_provider // "unknown"' "$deploy_dir/state.json" 2>/dev/null || echo "unknown")
-        nodes=$(jq -r '.cluster_size // 1' "$deploy_dir/state.json" 2>/dev/null || echo "1")
+    if [[ -f "$deploy_dir/.exasol.json" ]]; then
+        provider=$(jq -r '.cloud_provider // "unknown"' "$deploy_dir/.exasol.json" 2>/dev/null || echo "unknown")
+        nodes=$(jq -r '.cluster_size // 1' "$deploy_dir/.exasol.json" 2>/dev/null || echo "1")
     fi
 
     # Calculate estimated lines
@@ -319,9 +330,42 @@ progress_wrap_command() {
         estimated_lines=$(progress_get_fallback_estimate)
     fi
 
-    # Get estimated duration from metrics
+    # Get estimated duration from metrics. Use an if-guarded command
+    # substitution so `set -e` does not abort the script when there
+    # are no metrics (the function may return non-zero).
     local estimated_duration
-    estimated_duration=$(progress_get_estimated_duration "$provider" "$operation" "$nodes" 2>/dev/null || echo "0")
+    if estimated_duration=$(progress_get_estimated_duration "$provider" "$operation" "$nodes" 2>/dev/null); then
+        :
+    else
+        estimated_duration=0
+    fi
+
+    # Determine whether this operation is calibrated for provider:
+    # Calibration criteria: at least two metric files exist for this
+    # provider+operation and they include at least one single-node (nodes=1)
+    # and at least one multi-node (nodes>1) sample.
+    local -a _metrics
+    mapfile -t _metrics < <(progress_load_metrics "$provider" "$operation" 2>/dev/null || true)
+    local _has_single=0
+    local _has_multi=0
+    if [[ ${#_metrics[@]} -ge 2 ]]; then
+        for _m in "${_metrics[@]}"; do
+            local metric_nodes
+            eval "$(progress_parse_metric_file "$_m")" >/dev/null 2>&1 || true
+            if [[ -n "${metric_nodes:-}" ]]; then
+                if [[ "${metric_nodes}" -eq 1 ]]; then
+                    _has_single=1
+                else
+                    _has_multi=1
+                fi
+            fi
+        done
+    fi
+    if [[ "$_has_single" -eq 1 && "$_has_multi" -eq 1 ]]; then
+        export PROGRESS_CALIBRATED=true
+    else
+        export PROGRESS_CALIBRATED=false
+    fi
 
     # Setup calibration recording if requested
     local record_file=""
@@ -339,10 +383,22 @@ progress_wrap_command() {
         } > "$record_file"
     fi
 
-    # Execute command with progress tracking
-    "$@" 2>&1 | progress_display_with_eta "$estimated_lines" "$estimated_duration"
+    # Execute command with progress tracking inside a subshell so that
+    # the top-level `set -e` and `pipefail` do not cause the whole script
+    # to exit before we can capture the wrapped command's exit code.
+    # We still use PIPESTATUS within the subshell to obtain the left-side
+    # command exit code, and then return it from this function.
+    (
+        # Run the command piped into the progress display. Capture pipe status
+        # immediately in a variable so it isn't overwritten by other commands.
+        "$@" 2>&1 | progress_display_with_eta "$estimated_lines" "$estimated_duration"
+        subs_exit_code=${PIPESTATUS[0]}
+        # Exit the subshell with the wrapped command's exit code so the
+        # parent can capture it via $?.
+        exit "$subs_exit_code"
+    )
 
-    local exit_code=${PIPESTATUS[0]}
+    local exit_code=$?
 
     # Cleanup
     unset PROGRESS_RECORD_FILE
@@ -367,4 +423,77 @@ progress_estimate_lines() {
     else
         progress_get_fallback_estimate
     fi
+}
+
+# Build a timeline mapping from observed metrics.
+# Output format: line_start line_end percent_start percent_end
+# Usage: progress_build_timeline <provider> <operation>
+progress_build_timeline() {
+    local provider="$1"
+    local operation="$2"
+
+    local -a metric_files
+    mapfile -t metric_files < <(progress_load_metrics "$provider" "$operation" 2>/dev/null || true)
+
+    if [[ ${#metric_files[@]} -eq 0 ]]; then
+        return 1
+    fi
+
+    # Collect normalized per-line offsets for each metric
+    # We'll aggregate by percentiles: convert line offsets to percent (0..100)
+    # and then compute average line ranges per percentile bucket.
+
+    # Temp file to hold per-line percent entries: percent line
+    local tmpfile
+    tmpfile=$(mktemp)
+    for mf in "${metric_files[@]}"; do
+        # Read total_lines and duration
+        local metric_total_lines metric_duration
+        eval "$(progress_parse_metric_file "$mf")" >/dev/null 2>&1 || true
+        metric_total_lines=${metric_total_lines:-0}
+        metric_duration=${metric_duration:-0}
+        if [[ $metric_total_lines -le 0 ]]; then
+            continue
+        fi
+
+        # Read per-line offsets if available
+        while IFS='=' read -r key value; do
+            case "$key" in
+                line_offset_*)
+                    # extract line number
+                    ln=${key#line_offset_}
+                    # percent through run (approx)
+                    if [[ $metric_duration -gt 0 ]]; then
+                        pct=$(( (value * 100) / metric_duration ))
+                    else
+                        # fallback: linear mapping by line
+                        pct=$(( (ln * 100) / metric_total_lines ))
+                    fi
+                    echo "$pct $ln" >> "$tmpfile"
+                    ;;
+            esac
+        done < <(grep -E '^line_offset_[0-9]+=' "$mf" 2>/dev/null || true)
+    done
+
+    if [[ ! -s "$tmpfile" ]]; then
+        rm -f "$tmpfile"
+        return 1
+    fi
+
+    # Aggregate: for each percentile bucket (0..100) find min/max line
+    for p in $(seq 0 100); do
+        # find lines for this percentile
+        lines=$(awk -v P="$p" '$1==P{print $2}' "$tmpfile" | sort -n | tr '\n' ' ')
+        if [[ -n "$lines" ]]; then
+            # min and max line for this percentile
+            # Safely split the whitespace-separated list into an array
+            read -r -a __lines_array <<< "$lines"
+            minl=${__lines_array[0]}
+            maxl=${__lines_array[${#__lines_array[@]}-1]}
+            printf "%s %s %s %s\n" "$minl" "$maxl" "$p" "$p"
+        fi
+    done
+
+    rm -f "$tmpfile"
+    return 0
 }
