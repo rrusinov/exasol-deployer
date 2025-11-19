@@ -316,7 +316,13 @@ progress_wrap_command() {
 
     if [[ -f "$deploy_dir/.exasol.json" ]]; then
         provider=$(jq -r '.cloud_provider // "unknown"' "$deploy_dir/.exasol.json" 2>/dev/null || echo "unknown")
-        nodes=$(jq -r '.cluster_size // 1' "$deploy_dir/.exasol.json" 2>/dev/null || echo "1")
+
+        # Get cluster size by parsing variables.auto.tfvars
+        local tfvars_file="$deploy_dir/variables.auto.tfvars"
+        if [[ -f "$tfvars_file" ]]; then
+            nodes=$(awk -F'=' '/^[[:space:]]*node_count[[:space:]]*=/{gsub(/[^0-9]/,"",$2); if($2!="") {print $2; exit}}' "$tfvars_file" 2>/dev/null)
+        fi
+        nodes=${nodes:-1}
     fi
 
     # Calculate estimated lines

@@ -825,7 +825,7 @@ cmd_health() {
 
         local start_time
         start_time=$(date +%s)
-        local end_time=$((start_time + timeout_seconds + 1))
+        local end_time=$((start_time + timeout_seconds))
         local check_interval=10
         local iteration=0
 

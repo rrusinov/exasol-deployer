@@ -7,10 +7,68 @@ source "$TEST_DIR/test_helper.sh"
 LIB_DIR="$TEST_DIR/../lib"
 source "$LIB_DIR/progress_tracker.sh"
 
+# Setup test metrics directory
+setup_test_metrics() {
+    local test_deploy_dir
+    test_deploy_dir=$(setup_test_dir)
+    local test_metrics_dir="$test_deploy_dir/metrics"
+    mkdir -p "$test_metrics_dir"
+
+    # Create test metric files
+    cat > "$test_metrics_dir/aws.deploy.1.txt" <<'EOF'
+total_lines=994
+provider=aws
+operation=deploy
+nodes=1
+timestamp=2025-01-18T10:00:00Z
+duration=180
+EOF
+
+    cat > "$test_metrics_dir/aws.deploy.4.txt" <<'EOF'
+total_lines=1903
+provider=aws
+operation=deploy
+nodes=4
+timestamp=2025-01-18T10:00:00Z
+duration=420
+EOF
+
+    cat > "$test_metrics_dir/aws.destroy.1.txt" <<'EOF'
+total_lines=808
+provider=aws
+operation=destroy
+nodes=1
+timestamp=2025-01-18T10:00:00Z
+duration=150
+EOF
+
+    cat > "$test_metrics_dir/aws.destroy.4.txt" <<'EOF'
+total_lines=1795
+provider=aws
+operation=destroy
+nodes=4
+timestamp=2025-01-18T10:00:00Z
+duration=300
+EOF
+
+    # Set EXASOL_DEPLOY_DIR so progress tracker finds our test metrics
+    export EXASOL_DEPLOY_DIR="$test_deploy_dir"
+
+    echo "$test_metrics_dir"
+}
+
 # Test progress_estimate_lines function
 test_progress_estimate_lines_scaling() {
     echo ""
     echo "Test: progress_estimate_lines calculates correct scaling"
+
+    # Setup test metrics
+    local test_metrics_dir
+    test_metrics_dir=$(setup_test_metrics)
+    local old_exasol_deploy_dir="${EXASOL_DEPLOY_DIR:-}"
+
+    # Ensure EXASOL_DEPLOY_DIR is set for the progress functions
+    export EXASOL_DEPLOY_DIR="$(dirname "$test_metrics_dir")"
 
     # Test AWS deploy (with scaling) - based on actual metrics
     local deploy_1node deploy_4node deploy_8node
@@ -44,12 +102,28 @@ test_progress_estimate_lines_scaling() {
     # Should use regression defaults (base=100, per_node=50)
     assert_equals "100" "$fallback_1node" "Unknown provider should use regression default base=100"
     assert_equals "250" "$fallback_4node" "Unknown provider should use regression default for 4 nodes (100 + 50*3)"
+
+    # Cleanup
+    if [[ -n "$old_exasol_deploy_dir" ]]; then
+        export EXASOL_DEPLOY_DIR="$old_exasol_deploy_dir"
+    else
+        unset EXASOL_DEPLOY_DIR
+    fi
+    cleanup_test_dir "$(dirname "$test_metrics_dir")"
 }
 
 # Test progress_load_metrics function
 test_progress_load_metrics() {
     echo ""
     echo "Test: progress_load_metrics finds correct metric files"
+
+    # Setup test metrics
+    local test_metrics_dir
+    test_metrics_dir=$(setup_test_metrics)
+    local old_exasol_deploy_dir="${EXASOL_DEPLOY_DIR:-}"
+
+    # Ensure EXASOL_DEPLOY_DIR is set for the progress functions
+    export EXASOL_DEPLOY_DIR="$(dirname "$test_metrics_dir")"
 
     # Test loading AWS deploy metrics
     local aws_deploy_metrics
@@ -95,6 +169,14 @@ test_progress_load_metrics() {
         echo -e "${RED}✗${NC} Should find no metrics for non-existent provider"
         echo -e "  Found: ${YELLOW}${#unknown_metrics[@]}${NC} elements"
     fi
+
+    # Cleanup
+    if [[ -n "$old_exasol_deploy_dir" ]]; then
+        export EXASOL_DEPLOY_DIR="$old_exasol_deploy_dir"
+    else
+        unset EXASOL_DEPLOY_DIR
+    fi
+    cleanup_test_dir "$(dirname "$test_metrics_dir")"
 }
 
 # Test progress_parse_metric_file function
@@ -102,8 +184,14 @@ test_progress_parse_metric_file() {
     echo ""
     echo "Test: progress_parse_metric_file extracts values correctly"
 
-    # Parse a known metric file
-    local metric_file="$LIB_DIR/metrics/aws.deploy.1.txt"
+    # Setup test metrics
+    local test_metrics_dir
+    test_metrics_dir=$(setup_test_metrics)
+    local old_exasol_deploy_dir="${EXASOL_DEPLOY_DIR:-}"
+
+    # Ensure EXASOL_DEPLOY_DIR is set for the progress functions
+    export EXASOL_DEPLOY_DIR="$(dirname "$test_metrics_dir")"
+    local metric_file="$test_metrics_dir/aws.deploy.1.txt"
     local parsed_output
     parsed_output=$(progress_parse_metric_file "$metric_file")
     
@@ -134,12 +222,28 @@ test_progress_parse_metric_file() {
     
     TESTS_TOTAL=$((TESTS_TOTAL + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
     echo -e "${GREEN}✓${NC} All metric fields extracted correctly"
+
+    # Cleanup
+    if [[ -n "$old_exasol_deploy_dir" ]]; then
+        export EXASOL_DEPLOY_DIR="$old_exasol_deploy_dir"
+    else
+        unset EXASOL_DEPLOY_DIR
+    fi
+    cleanup_test_dir "$(dirname "$test_metrics_dir")"
 }
 
 # Test progress_calculate_regression function
 test_progress_calculate_regression() {
     echo ""
     echo "Test: progress_calculate_regression calculates scaling correctly"
+
+    # Setup test metrics
+    local test_metrics_dir
+    test_metrics_dir=$(setup_test_metrics)
+    local old_exasol_deploy_dir="${EXASOL_DEPLOY_DIR:-}"
+
+    # Ensure EXASOL_DEPLOY_DIR is set for the progress functions
+    export EXASOL_DEPLOY_DIR="$(dirname "$test_metrics_dir")"
 
     # Test AWS deploy regression
     local regression_result
@@ -165,12 +269,28 @@ test_progress_calculate_regression() {
     
     assert_equals "100" "$default_base" "Non-existent provider should return base=100"
     assert_equals "50" "$default_per_node" "Non-existent provider should return per_node=50"
+
+    # Cleanup
+    if [[ -n "$old_exasol_deploy_dir" ]]; then
+        export EXASOL_DEPLOY_DIR="$old_exasol_deploy_dir"
+    else
+        unset EXASOL_DEPLOY_DIR
+    fi
+    cleanup_test_dir "$(dirname "$test_metrics_dir")"
 }
 
 # Test progress_get_estimated_duration function
 test_progress_get_estimated_duration() {
     echo ""
     echo "Test: progress_get_estimated_duration returns reasonable estimates"
+
+    # Setup test metrics
+    local test_metrics_dir
+    test_metrics_dir=$(setup_test_metrics)
+    local old_exasol_deploy_dir="${EXASOL_DEPLOY_DIR:-}"
+
+    # Ensure EXASOL_DEPLOY_DIR is set for the progress functions
+    export EXASOL_DEPLOY_DIR="$(dirname "$test_metrics_dir")"
 
     # Test AWS deploy duration estimation
     local duration_1node duration_4node
@@ -185,6 +305,14 @@ test_progress_get_estimated_duration() {
     local no_duration
     no_duration=$(progress_get_estimated_duration "nonexistent" "operation" 1)
     assert_equals "0" "$no_duration" "Non-existent operation should return duration=0"
+
+    # Cleanup
+    if [[ -n "$old_exasol_deploy_dir" ]]; then
+        export EXASOL_DEPLOY_DIR="$old_exasol_deploy_dir"
+    else
+        unset EXASOL_DEPLOY_DIR
+    fi
+    cleanup_test_dir "$(dirname "$test_metrics_dir")"
 }
 
 # Test progress_display_with_eta output format
