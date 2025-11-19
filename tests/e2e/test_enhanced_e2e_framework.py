@@ -33,7 +33,7 @@ class TestEnhancedE2ETestFramework(unittest.TestCase):
                     'provider': 'aws',
                     'parameters': {
                         'cluster_size': [1],
-                        'instance_type': ['m6idn.large'],
+                        'instance_type': ['t3a.large'],
                         'data_volume_size': [100]
                     },
                     'combinations': '1-wise'

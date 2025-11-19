@@ -218,7 +218,7 @@ EOF
 
     # Create mock variables file
     cat > "$test_dir/variables.auto.tfvars" << 'EOF'
-instance_type = "m6idn.large"
+instance_type = "t3a.large"
 node_count = 2
 data_volume_size = 100
 EOF

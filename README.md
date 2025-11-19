@@ -660,7 +660,7 @@ Unlike traditional Terraform setups with hardcoded defaults, this deployer gener
 ```hcl
 aws_region = "us-east-1"
 aws_profile = "default"
-instance_type = "m6idn.large"          # From version config or --instance-type
+instance_type = "t3a.large"          # From version config or --instance-type
 instance_architecture = "x86_64"       # From version config
 node_count = 1                         # From --cluster-size
 data_volume_size = 100                 # From --data-volume-size
@@ -916,7 +916,7 @@ If tests fail, check the detailed output:
    C4_VERSION=4.29.0
    C4_DOWNLOAD_URL=https://x-up.s3.amazonaws.com/releases/c4/linux/x86_64/4.29.0/c4
    C4_CHECKSUM=sha256:...
-   DEFAULT_INSTANCE_TYPE=m6idn.large
+DEFAULT_INSTANCE_TYPE=t3a.large
 
    # ARM64 version (with -arm64 suffix)
    [exasol-2025.2.0-arm64]

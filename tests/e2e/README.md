@@ -91,7 +91,7 @@ Generates combinations covering all pairs of parameter values efficiently:
       "provider": "aws",
       "parameters": {
         "cluster_size": [1, 3],
-        "instance_type": ["m6idn.large", "m6idn.xlarge"],
+        "instance_type": ["t3a.large", "t3a.xlarge"],
         "data_volumes_per_node": [1, 3],
         "data_volume_size": [100, 200],
         "root_volume_size": [50, 100]
@@ -115,7 +115,7 @@ Ensures every parameter value appears at least once, using minimal test combinat
       "provider": "aws",
       "parameters": {
         "cluster_size": [1, 3],
-        "instance_type": ["m6idn.large", "m6idn.xlarge"],
+        "instance_type": ["t3a.large", "t3a.xlarge"],
         "data_volumes_per_node": [1, 3],
         "data_volume_size": [100, 200],
         "root_volume_size": [50, 100]
@@ -139,7 +139,7 @@ Generates all possible combinations of parameters:
       "provider": "aws",
       "parameters": {
         "cluster_size": [1, 3],
-        "instance_type": ["m6idn.large", "m6idn.xlarge"]
+        "instance_type": ["t3a.large", "t3a.xlarge"]
       },
       "combinations": "full"
     }
