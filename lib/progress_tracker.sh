@@ -166,22 +166,13 @@ progress_get_estimated_duration() {
         return 1
     fi
 
-    # Parse metrics to get durations for similar node counts
-    local total_duration=0
-    local count=0
+    # Find the metric with the closest node count match
     local closest_duration=0
     local closest_diff=999
-
     for file in "${metric_files[@]}"; do
         local metric_nodes metric_duration
         eval "$(progress_parse_metric_file "$file")"
-
         if [[ -n "$metric_nodes" && -n "$metric_duration" ]]; then
-            # Track all durations for averaging
-            total_duration=$((total_duration + metric_duration))
-            count=$((count + 1))
-
-            # Track closest match by node count
             local diff=$((metric_nodes > nodes ? metric_nodes - nodes : nodes - metric_nodes))
             if [[ $diff -lt $closest_diff ]]; then
                 closest_diff=$diff
@@ -190,18 +181,7 @@ progress_get_estimated_duration() {
         fi
     done
 
-    if [[ $count -eq 0 ]]; then
-        echo "0"
-        return 1
-    fi
-
-    # If we have an exact or close match (within 2 nodes), use it
-    # Otherwise use average of all samples
-    if [[ $closest_diff -le 2 ]]; then
-        echo "$closest_duration"
-    else
-        echo $((total_duration / count))
-    fi
+    echo "$closest_duration"
 }
 
 # ==============================================================================
@@ -225,7 +205,7 @@ progress_display_with_eta() {
     }
     {
         line_count++
-        percent = int((line_count * 100) / estimated)
+        percent = int((line_count * 100.0) / estimated)
         if (percent > 100) percent = 100
 
         # Calculate ETA
@@ -236,9 +216,10 @@ progress_display_with_eta() {
 
         # Method 1: If we have estimated duration from metrics, use it
         if (est_duration > 0 && percent > 0) {
-            # ETA based on percentage completion and known duration
+            # ETA based on elapsed time and total expected duration
             total_expected = est_duration
-            eta_seconds = int(total_expected - (total_expected * percent / 100))
+            eta_seconds = int(total_expected - elapsed)
+            if (eta_seconds < 0) eta_seconds = 0
 
             # Format ETA
             if (eta_seconds < 60) {

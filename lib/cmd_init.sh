@@ -631,21 +631,24 @@ EOF
     supported_azs=$(tofu apply -auto-approve -refresh-only >/dev/null 2>&1 && tofu output -json supported_azs 2>/dev/null | jq -r '.[]' 2>/dev/null)
 
     if [[ -z "$supported_azs" ]]; then
-        log_error "Failed to query availability zones or instance type $instance_type is not available in region $aws_region"
-        die "Instance type $instance_type is not available in region $aws_region. Please choose a different instance type or region."
+        # Fallback: Use region + 'a' when AWS APIs are unavailable (e.g., CI environments)
+        local selected_az="${aws_region}a"
+        log_warn "Could not query AWS for availability zones, using fallback: $selected_az"
+        log_info "Selected availability zone: $selected_az"
+        echo "$selected_az"
+    else
+        # Select the first available AZ from AWS API results
+        local selected_az
+        selected_az=$(echo "$supported_azs" | head -n1)
+
+        if [[ -z "$selected_az" ]]; then
+            log_error "No availability zones found for instance type $instance_type in region $aws_region"
+            die "Instance type $instance_type is not available in any AZ within region $aws_region. Please choose a different instance type or region."
+        fi
+
+        log_info "Selected availability zone: $selected_az"
+        echo "$selected_az"
     fi
-
-    # Select the first available AZ
-    local selected_az
-    selected_az=$(echo "$supported_azs" | head -n1)
-
-    if [[ -z "$selected_az" ]]; then
-        log_error "No availability zones found for instance type $instance_type in region $aws_region"
-        die "Instance type $instance_type is not available in any AZ within region $aws_region. Please choose a different instance type or region."
-    fi
-
-    log_info "Selected availability zone: $selected_az"
-    echo "$selected_az"
 }
 
 # Write provider-specific variables
