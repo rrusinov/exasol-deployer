@@ -293,7 +293,7 @@ check_provider_requirements() {
                 missing_commands+=("virsh (libvirt-client)")
             fi
             if ! command_exists mkisofs && ! command_exists genisoimage; then
-                missing_commands+=("mkisofs/genisoimage (install genisoimage package)")
+                missing_commands+=("mkisofs/genisoimage (install genisoimage package or 'brew install cdrtools' on macOS)")
             fi
 
             # Check for qemu.conf dynamic_ownership setting

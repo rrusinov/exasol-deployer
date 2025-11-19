@@ -116,7 +116,8 @@ cmd_destroy_confirm() {
         log_warn "⚠️  WARNING: This will destroy all resources including data!"
         log_warn "⚠️  Make sure you have backups of any important data."
         echo ""
-        read -r -p "Are you sure you want to destroy all resources? (yes/no): " confirm
+        echo -e "\033[31mAre you sure you want to destroy all resources? (yes/no): \033[0m" >&2
+        read -r confirm </dev/tty
         if [[ "$confirm" != "yes" ]]; then
             log_info "Destruction cancelled"
             return 0

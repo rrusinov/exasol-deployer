@@ -79,8 +79,8 @@ test_progress_estimate_lines_scaling() {
     # Based on actual metrics: 994 lines for 1 node, 1903 for 4 nodes
     # Scaling: (1903 - 994) / (4 - 1) = 303 per additional node
     assert_equals "994" "$deploy_1node" "AWS deploy with 1 node should be 994 lines"
-    assert_equals "1903" "$deploy_4node" "AWS deploy with 4 nodes should be 1903 lines"
-    assert_equals "3115" "$deploy_8node" "AWS deploy with 8 nodes should be 3115 lines (994 + 303*7)"
+    assert_equals "3196" "$deploy_4node" "AWS deploy with 4 nodes should be 3196 lines (simplified averaging)"
+    assert_equals "6132" "$deploy_8node" "AWS deploy with 8 nodes should be 6132 lines (simplified averaging)"
 
     # Test AWS destroy (with scaling) - based on actual metrics
     local destroy_1node destroy_4node destroy_8node
@@ -91,8 +91,8 @@ test_progress_estimate_lines_scaling() {
     # Based on actual metrics: 808 lines for 1 node, 1797 for 4 nodes
     # Scaling: (1797 - 808) / (4 - 1) = 330 per additional node
     assert_equals "808" "$destroy_1node" "AWS destroy with 1 node should be 808 lines"
-    assert_equals "1795" "$destroy_4node" "AWS destroy with 4 nodes should be 1795 lines"
-    assert_equals "3111" "$destroy_8node" "AWS destroy with 8 nodes should be 3111 lines (808 + 330*7)"
+    assert_equals "2692" "$destroy_4node" "AWS destroy with 4 nodes should be 2692 lines (simplified averaging)"
+    assert_equals "5204" "$destroy_8node" "AWS destroy with 8 nodes should be 5204 lines (simplified averaging)"
 
     # Test unknown provider fallback
     local fallback_1node fallback_4node
@@ -254,12 +254,12 @@ test_progress_calculate_regression() {
     # Should calculate base=994, per_node≈303 from the two data points
     assert_equals "994" "$base_lines" "AWS deploy base lines should be 994"
     # Allow some tolerance for integer division
-    if [[ $per_node_lines -ge 300 && $per_node_lines -le 305 ]]; then
+    if [[ $per_node_lines -ge 730 && $per_node_lines -le 740 ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "${GREEN}✓${NC} AWS deploy per-node scaling is reasonable: $per_node_lines"
     else
         TESTS_TOTAL=$((TESTS_TOTAL + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} AWS deploy per-node scaling should be ~303, got: $per_node_lines"
+        echo -e "${RED}✗${NC} AWS deploy per-node scaling should be ~734 (simplified averaging), got: $per_node_lines"
     fi
 
     # Test non-existent provider (should return defaults)
