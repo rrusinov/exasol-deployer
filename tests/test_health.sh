@@ -641,7 +641,7 @@ test_health_status_update_from_failed() {
 
     # Create mock commands
     cat > "$MOCK_BIN_DIR/ssh" <<'EOF'
-#!/bin/bash
+#!/bin/env bash
 # Mock SSH that handles different commands
 if [[ "$*" == *"true"* ]]; then
     # Basic connectivity test
@@ -675,7 +675,7 @@ EOF
     chmod +x "$MOCK_BIN_DIR/ssh"
 
     cat > "$MOCK_BIN_DIR/sleep" <<'EOF'
-#!/bin/bash
+#!/bin/env bash
 exit 0
 EOF
     chmod +x "$MOCK_BIN_DIR/sleep"
@@ -708,28 +708,28 @@ EOF
 
     # Mock systemctl to return active for all services
     cat > "$MOCK_BIN_DIR/systemctl" <<'EOF'
-#!/bin/bash
+#!/bin/env bash
 echo "active"
 EOF
     chmod +x "$MOCK_BIN_DIR/systemctl"
 
     # Mock lsblk for volume check
     cat > "$MOCK_BIN_DIR/lsblk" <<'EOF'
-#!/bin/bash
+#!/bin/env bash
 echo "1073741824"  # 1GB
 EOF
     chmod +x "$MOCK_BIN_DIR/lsblk"
 
     # Mock readlink for volume symlink check
     cat > "$MOCK_BIN_DIR/readlink" <<'EOF'
-#!/bin/bash
+#!/bin/env bash
 echo "/dev/nvme1n1"
 EOF
     chmod +x "$MOCK_BIN_DIR/readlink"
 
     # Mock shopt for volume check
     cat > "$MOCK_BIN_DIR/shopt" <<'EOF'
-#!/bin/bash
+#!/bin/env bash
 # Just succeed
 exit 0
 EOF

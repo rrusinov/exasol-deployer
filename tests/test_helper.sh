@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Test helper functions for unit testing
 
+# Ensure deterministic, ASCII-safe environment for tooling (e.g., tr, head)
+export LC_ALL=C LANG=C
+
 # Enable pipefail so pipeline failures are caught
 set -o pipefail
 
@@ -222,9 +225,9 @@ extract_command_options() {
     local file="$1"
     local function_name="$2"
     
-    # Get the directory where this script is located
+    # Use bundled Python helper under tests/python-helpers
     local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local python_helper="$script_dir/python-helpers/extract_function_options.py"
     
     if [[ ! -f "$python_helper" ]]; then

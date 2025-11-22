@@ -246,8 +246,11 @@ check_required_commands() {
 
     # Check for mktemp with -d support
     if command_exists mktemp; then
-        if ! mktemp -d -t "exasol-test-XXXXXX" 2>/dev/null | xargs rm -rf; then
+        local mktemp_dir
+        if ! mktemp_dir=$(mktemp -d -t "exasol-test-XXXXXX" 2>/dev/null); then
             version_issues+=("mktemp (mktemp -d failed, ensure GNU coreutils is installed)")
+        else
+            rm -rf "$mktemp_dir"
         fi
     fi
 

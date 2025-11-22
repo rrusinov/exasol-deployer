@@ -212,7 +212,7 @@ wc -l <(./exasol deploy --deployment-dir ./test 2>&1)
 Create reusable calibration scripts:
 
 ```bash
-#!/bin/bash
+#!/bin/env bash
 # calibrate.sh
 set -e
 

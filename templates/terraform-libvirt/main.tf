@@ -20,15 +20,14 @@ terraform {
   }
 }
 
-provider "libvirt" {
-  uri = "qemu:///system"
-}
-
 locals {
   # Provider-specific info for common outputs
   provider_name = "Libvirt"
   provider_code = "libvirt"
   region_name   = "local"
+
+  # exasol init populates libvirt_uri via virsh/CLI detection. Fail early if missing.
+  libvirt_uri = trimspace(var.libvirt_uri)
 
   # Group volume IDs by node for Ansible inventory
   node_volumes = {
@@ -39,8 +38,12 @@ locals {
   }
 
   # Node IPs for common outputs (libvirt uses private IPs only)
-  node_public_ips  = [for domain in libvirt_domain.exasol_node : domain.network_interface[0].addresses[0]]
-  node_private_ips = [for domain in libvirt_domain.exasol_node : domain.network_interface[0].addresses[0]]
+  node_public_ips  = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "") ]
+  node_private_ips = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "") ]
+}
+
+provider "libvirt" {
+  uri = local.libvirt_uri
 }
 
 # ==============================================================================
@@ -105,6 +108,7 @@ resource "libvirt_domain" "exasol_node" {
   memory  = var.libvirt_memory_gb * 1024  # Convert GB to MB
   vcpu    = var.libvirt_vcpus
   running = var.infra_desired_state == "stopped" ? false : true
+  type    = var.libvirt_domain_type
 
   # Use host CPU to ensure required instruction sets (e.g., SSSE3) are available
   cpu {
@@ -113,9 +117,19 @@ resource "libvirt_domain" "exasol_node" {
 
   cloudinit = libvirt_cloudinit_disk.commoninit[count.index].id
 
-  network_interface {
-    network_name   = var.libvirt_network_bridge
-    wait_for_lease = true
+  dynamic "network_interface" {
+    for_each = var.libvirt_network_bridge != "" ? [1] : []
+    content {
+      network_name   = var.libvirt_network_bridge
+      wait_for_lease = true
+    }
+  }
+
+  dynamic "network_interface" {
+    for_each = var.libvirt_network_bridge == "" ? [1] : []
+    content {
+      # User networking (slirp), no network_name needed
+    }
   }
 
   # Root disk
