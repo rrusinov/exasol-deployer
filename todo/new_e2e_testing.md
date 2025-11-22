@@ -1,4 +1,9 @@
-# End-to-End Test Framework (Partially Implemented)
+# E2E Testing and Validation
+
+## Overview
+This document consolidates all end-to-end testing initiatives for the Exasol deployer, including framework implementation, provider coverage expansion, test scenario expansion, and health check testing recommendations.
+
+## E2E Test Framework Implementation
 
 **Status: Partially Implemented** - Core framework exists but critical live system validation is not fully integrated.
 
@@ -6,7 +11,7 @@ Develop a comprehensive e2e testing framework for Exasol deployments that can de
 
 **Current Status**: The framework foundation is implemented with parameter definition, test plan generation, parallel execution, and basic validation. Enhanced components for SSH validation, emergency response, and resource tracking have been created but need full integration.
 
-## Recommended Implementation Language: Python
+### Recommended Implementation Language: Python
 
 **Rationale:**
 - **JSON/YAML Processing**: Native support for configuration files
@@ -18,16 +23,16 @@ Develop a comprehensive e2e testing framework for Exasol deployments that can de
 
 **Dependencies:** Standard library only (no external packages required)
 
-## Framework Requirements
+### Framework Requirements
 
-### Core Components
+#### Core Components
 1. **Test Parameter Definition System**: JSON/YAML-based configuration for defining test parameters and their combinations ✅
 2. **Test Plan Generator**: Tool to generate pairwise test combinations for efficient coverage ✅
 3. **Parallel Execution Engine**: Framework to run multiple test deployments concurrently ✅
 4. **Result Validation System**: Automated validation of deployment success and configuration correctness ⚠️ (Partially implemented - needs live system validation)
 5. **Cleanup Management**: Automatic cleanup of test resources and failed deployments ✅
 
-### Test Parameter Structure
+#### Test Parameter Structure
 ```json
 {
   "test_suites": {
@@ -46,47 +51,238 @@ Develop a comprehensive e2e testing framework for Exasol deployments that can de
 }
 ```
 
-### Combination Strategies
+#### Combination Strategies
 - **Pairwise (2-wise)**: Generates combinations covering all pairs of parameter values. For 5 parameters with 2 values each, produces 8 test cases.
 - **Each-Choice (1-wise)**: Generates the full Cartesian product, ensuring every parameter value appears in at least one test. For 5 parameters with 2 values each, produces 32 test cases.
 - **Full**: Same as Each-Choice, generates all possible combinations.
 
-### Framework Features
+#### Framework Features
 1. **Dry Run Mode**: Generate pairwise test plans without executing deployments
 2. **Parallel Execution**: Run multiple pairwise test combinations simultaneously with resource limits
 3. **Dependency Management**: Handle test dependencies and resource conflicts
 4. **Result Aggregation**: Collect and analyze test results across all pairwise combinations
 5. **Failure Handling**: Automatic cleanup and retry logic for failed tests
 
-## Implementation Status
+### Implementation Status
 
-### Phase 1: Framework Foundation ✅ Completed
+#### Phase 1: Framework Foundation ✅ Completed
 1. **Directory Structure**: Create `tests/e2e/` directory with Python framework components ✅
 2. **Configuration System**: Implement parameter definition and validation using Python's json/yaml support ✅
 3. **Test Plan Generator**: Create pairwise test generator to produce efficient test combinations ✅
 
-### Phase 2: Execution Engine ✅ Completed
+#### Phase 2: Execution Engine ✅ Completed
 1. **Parallel Runner**: Implement concurrent test execution using `concurrent.futures.ThreadPoolExecutor` ✅
 2. **Deployment Management**: Handle deployment lifecycle (init, deploy, validate, cleanup) via subprocess calls ✅
 3. **Monitoring System**: Track test progress and resource usage with logging ✅
 
-### Phase 3: Validation & Reporting ⚠️ Partially Completed
+#### Phase 3: Validation & Reporting ⚠️ Partially Completed
 1. **Validation Framework**: Implement checks for deployment success and configuration using file parsing ✅
    - **Live System Validation**: SSH-based validation of deployed environments ⚠️ (Partially implemented)
 2. **Result Collection**: Gather metrics, logs, and validation results in structured format ✅
 3. **Reporting System**: Generate JSON/HTML test reports and failure analysis ⚠️ (JSON only, HTML not implemented)
 
-### Phase 4: Integration & CI/CD ✅ Framework Exists
+#### Phase 4: Integration & CI/CD ✅ Framework Exists
 1. **CI Integration**: Integrate with GitHub Actions for automated e2e testing (Python available in all runners) ✅
 2. **Resource Management**: Implement cloud resource quotas and cost controls ⚠️ (Partially implemented)
 3. **Notification System**: Alert on test failures and performance issues ❌ (Not implemented)
 
-### Phase 5: Live System Validation Enhancement ⚠️ Partially Implemented
+#### Phase 5: Live System Validation Enhancement ⚠️ Partially Implemented
 Enhanced components exist but need full integration:
-- SSH Validation Framework ✅ (Framework exists)
-- Emergency Response System ✅ (Framework exists)
-- Enhanced Reporting ✅ (Framework exists)
-- Cloud Resource Tracking ✅ (Framework exists)
+
+1. **SSH Validation Framework** ✅ (Framework exists)
+2. **Emergency Response System** ✅ (Framework exists)
+3. **Enhanced Reporting** ✅ (Framework exists)
+4. **Cloud Resource Tracking** ✅ (Framework exists)
+
+## E2E Tests for All Providers
+
+**Problem**: Currently only AWS has basic E2E tests; other providers (Azure, GCP, Hetzner, DigitalOcean) are untested.
+
+**Solution**: Create comprehensive E2E test configurations for each provider.
+
+### Implementation Steps
+- Create provider-specific test configuration files
+- Implement provider authentication setup
+- Define test parameters for each provider
+- Add validation checks for provider-specific resources
+- Configure parallel test execution
+
+### Files to Create
+- tests/e2e/configs/azure-basic.json
+- tests/e2e/configs/gcp-basic.json
+- tests/e2e/configs/hetzner-basic.json
+- tests/e2e/configs/digitalocean-basic.json
+
+## Expand E2E Test Coverage
+
+**Problem**: Current tests only cover basic configurations with 1-wise strategy; missing advanced scenarios.
+
+**Solution**: Expand test coverage to include spot instances and other configuration options.
+
+### Implementation Steps
+- Add spot/preemptible instance tests
+- Include different regions/locations
+- Test network configurations
+- Add custom instance types
+- Implement 2-wise combination strategy
+- Add failure scenario tests
+
+### Test Scenarios to Add
+- Spot instance deployments (AWS, Azure, GCP)
+- Different regions/locations testing
+- Custom network configurations
+- Mixed architecture deployments
+- Database version testing
+- Configuration edge cases
+- Failure recovery scenarios
+
+## E2E Test Recommendations for Health Check Feature
+
+This section provides recommendations for end-to-end testing of the enhanced `exasol health` command in live AWS/Azure/GCP deployments.
+
+### Test Environment Setup
+
+#### Prerequisites
+- Active AWS/Azure/GCP account with permissions to create/destroy resources
+- Exasol deployer configured and tested
+- SSH access to deployed instances
+- AWS CLI / Azure CLI / gcloud CLI installed and configured
+
+#### Test Deployment
+Create a test deployment using the standard process:
+```bash
+./exasol init --deployment-dir ./health-test --cloud-provider aws
+./exasol deploy --deployment-dir ./health-test
+```
+
+### Test Scenarios
+
+#### 1. Basic Health Check (Healthy State)
+**Objective**: Verify health check passes on a healthy deployment
+
+#### 2. JSON Output Format
+**Objective**: Verify JSON output is properly formatted and contains all data
+
+#### 3. Spontaneous IP Change Detection
+**Objective**: Detect when instance IPs change (simulating provider-initiated reboot)
+
+#### 4. Service Failure and Auto-Remediation
+**Objective**: Detect failed services and restart them with --try-fix
+
+#### 5. Cloud Metadata Validation (AWS)
+**Objective**: Verify cloud provider instance count matches expected
+
+#### 6. Multiple Concurrent Issues
+**Objective**: Test detection of multiple simultaneous problems
+
+#### 7. Backup and Rollback
+**Objective**: Verify backups are created and can be used for rollback
+
+#### 8. State Management and Locking
+**Objective**: Verify health check integrates with state management
+
+#### 9. Progress Tracking
+**Objective**: Verify progress events are logged
+
+#### 10. Volume Attachments Check
+**Objective**: Verify volume detection works correctly
+
+#### 11. Cluster State Validation
+**Objective**: Verify c4 cluster status check works
+
+#### 12. Long-Running Deployment Testing
+**Objective**: Test health check on deployment over time
+
+### Test Matrix
+
+| Test Scenario | AWS | Azure | GCP | Exit Code | JSON Output | --update | --try-fix |
+|--------------|-----|-------|-----|-----------|-------------|----------|-----------|
+| 1. Basic Health | ✓ | ✓ | ✓ | 0 | ✓ | - | - |
+| 2. JSON Output | ✓ | ✓ | ✓ | 0 | ✓ | - | - |
+| 3. IP Change | ✓ | ✓ | ✓ | 1→0 | ✓ | ✓ | - |
+| 4. Service Fail | ✓ | ✓ | ✓ | 1→0/2 | ✓ | - | ✓ |
+| 5. Cloud Metadata | ✓ | ⚠️ | ⚠️ | 1 | ✓ | - | - |
+| 6. Multi-Issue | ✓ | ✓ | ✓ | 1 | ✓ | ✓ | ✓ |
+| 7. Backup | ✓ | ✓ | ✓ | - | - | ✓ | - |
+| 8. State/Lock | ✓ | ✓ | ✓ | - | - | - | - |
+| 9. Progress | ✓ | ✓ | ✓ | - | - | - | - |
+| 10. Volumes | ✓ | ✓ | ✓ | 0/1 | ✓ | - | - |
+| 11. Cluster | ✓ | ✓ | ✓ | 0 | ✓ | - | - |
+| 12. Long-Running | ✓ | ✓ | ✓ | varies | ✓ | - | - |
+
+### Automated Test Script Template
+
+```bash
+#!/usr/bin/env bash
+# e2e-health-test.sh - Automated E2E testing for health check
+
+set -euo pipefail
+
+DEPLOYMENT_DIR="./health-e2e-test"
+LOG_FILE="health-e2e-results.log"
+
+log() {
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" | tee -a "$LOG_FILE"
+}
+
+assert_exit_code() {
+    local expected=$1
+    local actual=$2
+    local test_name=$3
+
+    if [[ "$actual" -eq "$expected" ]]; then
+        log "✓ PASS: $test_name (exit code $actual)"
+        return 0
+    else
+        log "✗ FAIL: $test_name (expected $expected, got $actual)"
+        return 1
+    fi
+}
+
+# Test 1: Basic Health Check
+test_basic_health() {
+    log "Running Test 1: Basic Health Check"
+    ./exasol health --deployment-dir "$DEPLOYMENT_DIR"
+    assert_exit_code 0 $? "Basic health check on healthy deployment"
+}
+
+# Test 2: JSON Output
+test_json_output() {
+    log "Running Test 2: JSON Output"
+    ./exasol health --deployment-dir "$DEPLOYMENT_DIR" --output-format json > /tmp/health.json
+    jq . /tmp/health.json >/dev/null
+    assert_exit_code 0 $? "JSON output valid"
+}
+
+# Test 3: Service Failure
+test_service_failure() {
+    log "Running Test 3: Service Failure and Remediation"
+
+    # Stop service
+    ssh -F "$DEPLOYMENT_DIR/ssh_config" n11 sudo systemctl stop c4.service
+
+    # Should detect failure
+    ./exasol health --deployment-dir "$DEPLOYMENT_DIR"
+    assert_exit_code 1 $? "Health check detects service failure"
+
+    # Should fix with --try-fix
+    ./exasol health --deployment-dir "$DEPLOYMENT_DIR" --try-fix
+    assert_exit_code 0 $? "Health check repairs service failure"
+}
+
+# Run all tests
+main() {
+    log "Starting E2E Health Check Tests"
+
+    test_basic_health
+    test_json_output
+    test_service_failure
+
+    log "E2E Health Check Tests Complete"
+}
+
+main "$@"
+```
 
 ## Success Criteria
 
@@ -111,144 +307,6 @@ python tests/e2e_framework.py run --config e2e/configs/aws-basic.json --parallel
 python tests/e2e_framework.py run --config e2e/configs/aws-basic.json --filter "cluster_size=2,instance_type=m6idn.xlarge"
 ```
 
-## Alternative Language Considerations
-
-### Bash (Alternative)
-- **Pros**: Native integration, no dependencies, consistent with main codebase
-- **Cons**: Complex parallel execution, JSON processing cumbersome, harder maintenance
-- **Recommendation**: Use for simple wrapper scripts, not full framework
-
-### Go (Alternative)
-- **Pros**: Fast compilation, single binary, good concurrency
-- **Cons**: Different language paradigm, compilation step, less shell integration
-- **Recommendation**: Consider if performance becomes critical
-
-**Final Recommendation: Python with standard library only, using pairwise combinatorial testing**
-
----
-
-## Current Implementation Status
-
-The end-to-end test framework has been partially implemented with the following components:
-
-### ✅ **Fully Implemented Components**
-- Core framework foundation with Python standard library
-- Test parameter definition via JSON configuration
-- Pairwise (2-wise), each-choice (1-wise), and full combination strategies
-- Parallel execution engine using `concurrent.futures`
-- Basic validation (file existence, inventory parsing)
-- Automatic cleanup and resource management
-- JSON-based result reporting
-- SSH validation framework (`SSHValidator` class)
-- Emergency response system (`EmergencyHandler` class)
-- Resource tracking (`ResourceTracker` class)
-
-### ⚠️ **Partially Integrated Components**
-The enhanced framework components exist but are not fully integrated into the main validation flow:
-
-1. **SSH Validation Integration**: SSH validator exists but is not consistently used for live system validation
-2. **Emergency Response Integration**: Emergency handler exists but is not fully connected to the main test flow
-3. **Resource Tracking Integration**: Resource tracker exists but is not fully utilized in the main framework
-
-### ❌ **Missing Critical Features**
-1. **Live System Validation**: The framework primarily validates local files rather than inspecting live deployed environments
-2. **Resource Quota Monitoring**: No cost controls or resource quota monitoring
-3. **Notification System**: No alerts for test failures or performance issues
-4. **HTML Reporting**: Only JSON reporting is implemented, HTML reports are missing
-
-#### **Comprehensive Parameter Validation Matrix**
-
-| Parameter | Current Validation | Missing Live Validation | SSH Check Command |
-|----------|-------------------|------------------------|-------------------|
-| `--cluster-size` | Inventory file count | Actual running nodes | `nproc` + cluster verification |
-| `--instance-type` | Terraform state | Hardware specs | `lscpu`, `free -h` |
-| `--data-volume-size` | Terraform config | Actual disk sizes | `lsblk`, `df -h` |
-| `--data-volumes-per-node` | Config parsing | Physical volumes | `ls /dev/exasol_data_*` |
-| `--root-volume-size` | Terraform config | Root partition size | `df -h /` |
-| `--db-version` | Config file | Installed DB version | `/opt/exasol/EXASolution-version` |
-| `--db-password` | Config file | Database access | `exasol db client` |
-| `--adminui-password` | Config file | UI accessibility | HTTP check to port 8888 |
-| `--allowed-cidr` | Security group rules | Actual firewall rules | `iptables -L` |
-| `--owner` | Resource tags | Tag presence on all resources | AWS CLI describe-tags |
-
-#### **Template & Ansible Integration Analysis**
-
-**Access Methods Available:**
-1. **SSH Key**: Generated in `templates/terraform-common/common.tf` - available for framework use
-2. **Inventory File**: Generated at `deployment-dir/inventory.ini` - contains all node IPs
-3. **Ansible Playbook**: `templates/ansible/setup-exasol-cluster.yml` - shows validation patterns
-4. **Configuration File**: `/home/exasol/exasol-release/config` - contains all runtime parameters
-
-**Validation Patterns from Ansible:**
-- Symlink discovery: `ls -1 /dev/exasol_data_*` (line 206)
-- Service status: Systemd service checks for `exasol-data-symlinks`
-- File existence: Config file and artifact validation
-- User creation: SSH key and user `exasol` validation
-
----
-
-## **Phase 5: Live System Validation Enhancement**
-
-### **Required Implementation Steps**
-
-#### **5.1 SSH Validation Framework**
-```python
-class SSHValidator:
-    def __init__(self, inventory_file, ssh_key_path):
-        self.inventory = self._parse_inventory(inventory_file)
-        self.ssh_key = ssh_key_path
-        
-    def validate_symlinks(self):
-        """Check /dev/exasol_data_* symlinks on all nodes"""
-        
-    def validate_volumes(self):
-        """Verify EBS volume attachment and sizes"""
-        
-    def validate_services(self):
-        """Check exasol-data-symlinks service status"""
-        
-    def validate_database(self):
-        """Verify Exasol DB installation and version"""
-```
-
-#### **5.2 Emergency Response System**
-```python
-class EmergencyHandler:
-    def __init__(self, deployment_dir, timeout_minutes=30):
-        self.timeout = timeout_minutes
-        self.deployment_dir = deployment_dir
-        
-    def monitor_deployment(self):
-        """Track deployment progress and force cleanup on timeout"""
-        
-    def emergency_cleanup(self):
-        """Force destroy all resources and verify deletion"""
-        
-    def check_resource_leaks(self):
-        """Verify no orphaned resources remain"""
-```
-
-#### **5.3 Enhanced Reporting**
-- **Live System Metrics**: CPU, memory, disk usage from all nodes
-- **Network Connectivity**: Inter-node communication tests
-- **Database Health**: Connection tests and status queries
-- **Resource Inventory**: Complete list of all cloud resources created
-
-#### **5.4 Cloud Resource Tracking**
-```python
-class ResourceTracker:
-    def track_aws_resources(self, deployment_id):
-        """Monitor all AWS resources created"""
-        
-    def verify_cleanup(self, deployment_id):
-        """Ensure no resources remain after cleanup"""
-        
-    def cost_monitoring(self, deployment_id):
-        """Track estimated costs during testing"""
-```
-
----
-
 ## Next Steps & Implementation Priority
 
 ### High Priority (Critical for Complete E2E Testing)
@@ -269,29 +327,25 @@ class ResourceTracker:
 11. **Add filter functionality** - Run specific test combinations
 12. **Create HTML reports** - Better visualization of test results
 
----
+## Integration Strategy
 
-## **Integration Strategy**
-
-### **Leverage Existing Infrastructure**
+### Leverage Existing Infrastructure
 - **SSH Keys**: Use `tls_private_key.exasol_key` from Terraform
 - **Inventory**: Parse generated `inventory.ini` for node IPs
 - **Ansible Patterns**: Reuse validation commands from setup playbook
 - **Configuration Files**: Parse `/home/exasol/exasol-release/config` for runtime validation
 
-### **Emergency Response Implementation**
+### Emergency Response Implementation
 - **Timeout Monitoring**: Track deployment progress with configurable timeouts
 - **Force Cleanup**: Use `exasol destroy --force` for stuck deployments
 - **Resource Verification**: Cloud provider APIs to confirm complete deletion
 - **Alert System**: Notifications for cleanup failures or resource leaks
 
-### **Reporting Enhancement**
+### Reporting Enhancement
 - **Live Metrics Collection**: System stats from all nodes via SSH
 - **Validation Results**: Detailed pass/fail for each parameter
 - **Resource Inventory**: Complete list with cloud resource IDs
 - **Cost Tracking**: Estimated costs per test execution
-
----
 
 ## Success Criteria Update
 

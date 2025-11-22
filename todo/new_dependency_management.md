@@ -24,7 +24,7 @@ Commands like `deploy` and `destroy` directly invoke tools without checking if t
 
 ### 2. No Version Validation
 Even when tools are present, there's no check for minimum required versions:
-- Terraform/OpenTofu >= 1.0 required (specified in `templates/terraform-*/main.tf`)
+- OpenTofu >= 1.0 required (specified in `templates/terraform-*/main.tf`)
 - Ansible version compatibility not checked
 - Bash version only checked (>= 4.0)
 
@@ -37,7 +37,7 @@ Different commands handle missing tools differently:
 ## Required Tools
 
 ### Critical (Required for Core Functionality)
-1. **tofu** or **terraform** (>= 1.0)
+1. **tofu** (>= 1.0)
    - Used by: `deploy`, `destroy`, `status`, `health` (optional)
    - Purpose: Infrastructure provisioning
    - Failure impact: Cannot deploy or destroy infrastructure
@@ -170,18 +170,14 @@ check_core_dependencies() {
         all_ok=false
     fi
 
-    # Check for either tofu or terraform
-    if ! command_exists "tofu" && ! command_exists "terraform"; then
-        log_error "Neither 'tofu' nor 'terraform' is installed"
-        log_error "Please install OpenTofu (recommended) or Terraform >= 1.0"
+    # Check for tofu
+    if ! command_exists "tofu"; then
+        log_error "'tofu' is not installed"
+        log_error "Please install OpenTofu >= 1.0"
         log_error "  OpenTofu: https://opentofu.org/docs/intro/install/"
-        log_error "  Terraform: https://www.terraform.io/downloads"
         all_ok=false
     else
-        local tf_cmd="tofu"
-        command_exists "tofu" || tf_cmd="terraform"
-
-        if ! require_tool_version "$tf_cmd" "1.0" "version" "Infrastructure provisioning"; then
+        if ! require_tool_version "tofu" "1.0" "version" "Infrastructure provisioning"; then
             all_ok=false
         fi
     fi
@@ -272,10 +268,8 @@ fi
 **lib/cmd_deploy.sh:**
 ```bash
 # In cmd_deploy()
-# Check Terraform/Tofu
-local tf_cmd="tofu"
-command_exists "tofu" || tf_cmd="terraform"
-require_tool "$tf_cmd" "Infrastructure provisioning"
+# Check OpenTofu
+require_tool "tofu" "Infrastructure provisioning"
 
 # Check Ansible
 require_tool "ansible-playbook" "Cluster configuration"
@@ -305,8 +299,8 @@ require_tool "ssh" "Remote host connectivity checks"
 
 ### Phase 3: Command-Specific Integration
 - [ ] Update `lib/cmd_init.sh` to check for curl/wget
-- [ ] Update `lib/cmd_deploy.sh` to check for tofu/terraform and ansible
-- [ ] Update `lib/cmd_destroy.sh` to check for tofu/terraform
+- [ ] Update `lib/cmd_deploy.sh` to check for tofu and ansible
+- [ ] Update `lib/cmd_destroy.sh` to check for tofu
 - [ ] Update `lib/cmd_health.sh` to use centralized `require_tool()` instead of `health_require_tool()`
 - [ ] Add cloud provider CLI checks when provider is determined
 
@@ -347,9 +341,8 @@ Terraform initialization failed
 $ ./exasol deploy --deployment-dir ./my-deployment
 [ERROR] Required tool 'tofu' is not installed or not in PATH
 [ERROR] Purpose: Infrastructure provisioning
-[ERROR] Please install OpenTofu (recommended) or Terraform >= 1.0
+[ERROR] Please install OpenTofu >= 1.0
 [ERROR]   OpenTofu: https://opentofu.org/docs/intro/install/
-[ERROR]   Terraform: https://www.terraform.io/downloads
 [ERROR] Missing required dependencies. Please install missing tools and try again.
 ```
 

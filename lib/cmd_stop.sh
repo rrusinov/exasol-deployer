@@ -99,7 +99,10 @@ cmd_stop() {
     # Update status
     state_set_status "$deploy_dir" "$STATE_STOP_IN_PROGRESS"
 
-    progress_start "stop" "begin" "Starting Exasol database stop operation"
+    # Get cluster size for progress estimation
+    local cluster_size
+    cluster_size=$(state_read "$deploy_dir" "cluster_size")
+    cluster_size=${cluster_size:-1}
 
     log_info "Stopping Exasol database cluster..."
     log_info "Current state: $current_state"
@@ -123,7 +126,6 @@ cmd_stop() {
     if [[ ! -f "$deploy_dir/.templates/stop-exasol-cluster.yml" ]]; then
         log_error "Ansible playbook not found: .templates/stop-exasol-cluster.yml"
         state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
-        progress_fail "stop" "playbook_missing" "Stop playbook not found"
         die "Stop playbook not found"
     fi
 
@@ -131,47 +133,119 @@ cmd_stop() {
     if [[ ! -f "$deploy_dir/inventory.ini" ]]; then
         log_error "Ansible inventory not found: inventory.ini"
         state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
-        progress_fail "stop" "inventory_missing" "Ansible inventory not found"
         die "Ansible inventory not found"
     fi
 
     # Run Ansible to stop the database
-    progress_start "stop" "ansible_stop" "Stopping database services with Ansible"
-
     local ansible_extra=(-i inventory.ini .templates/stop-exasol-cluster.yml)
     [[ "$infra_power_supported" == "false" ]] && ansible_extra+=(-e "power_off_fallback=true")
 
-    if ! run_ansible_with_progress "stop" "ansible_stop" "Stopping database services" ansible-playbook "${ansible_extra[@]}"; then
-        state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
-        progress_fail "stop" "ansible_stop" "Failed to stop database services"
-        die "Ansible stop operation failed"
+    if ! ansible-playbook "${ansible_extra[@]}"; then
+        # For providers without infra power control, unreachable hosts after shutdown are expected
+        if [[ "$infra_power_supported" == "false" ]]; then
+            log_warn "Ansible reported unreachable hosts after shutdown; this is expected if VMs are powered off."
+        else
+            state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
+            die "Ansible stop operation failed"
+        fi
     fi
-    progress_complete "stop" "ansible_stop" "Database services stopped successfully"
 
     # If provider supports infra power control, stop instances via tofu
     if [[ "$infra_power_supported" == "true" ]]; then
-        progress_start "stop" "tofu_stop" "Stopping infrastructure (powering off instances)"
-        if ! run_tofu_with_progress "stop" "tofu_stop" "Powering off instances" tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_off" -target="google_compute_instance.exasol_node" -var "infra_desired_state=stopped"; then
+        # Note: We enable refresh to ensure Terraform sees the current state (running=true)
+        # This is important for all providers to detect state drift and apply changes correctly
+        if ! tofu apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_off" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped"; then
             state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
-            progress_fail "stop" "tofu_stop" "Failed to stop infrastructure (tofu apply)"
             die "Infrastructure stop (tofu apply) failed"
         fi
-        progress_complete "stop" "tofu_stop" "Infrastructure powered off"
     else
-        log_warn "Provider '$cloud_provider' does not support power control via tofu. Instances were issued in-guest shutdown; manual power-on will be required for start."
+        log_warn "Provider '$cloud_provider' does not support power control via tofu."
+        log_info ""
+        log_info "Instances have been issued an in-guest shutdown command."
+        log_info ""
     fi
 
-    # Update status to stopped
+    # Verify VMs are actually powered off by checking SSH connectivity
+    # If we can SSH to any VM, the power-off failed
+    log_info "Verifying VMs are powered off..."
+    local -a hosts=()
+    while IFS= read -r line; do
+        [[ -z "$line" || "$line" =~ ^\[.*\] ]] && continue
+        local host
+        host=$(echo "$line" | awk '{print $1}')
+        [[ -n "$host" ]] && hosts+=("$host")
+    done < <(awk '/^\[exasol_nodes\]/,/^\[/ {print}' "$deploy_dir/inventory.ini")
+
+    local -a check_pids=()
+    local temp_dir
+    temp_dir=$(mktemp -d)
+
+    for host in "${hosts[@]}"; do
+        (
+            if ssh -F "$deploy_dir/ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$host" \
+                "true" >/dev/null 2>&1; then
+                echo "running" > "$temp_dir/$host"
+            else
+                echo "stopped" > "$temp_dir/$host"
+            fi
+        ) &
+        check_pids+=($!)
+    done
+
+    for pid in "${check_pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+
+    # For providers without infra power control, unreachable hosts after shutdown are success
+    if [[ "$infra_power_supported" == "false" ]]; then
+        local all_stopped=true
+        for host in "${hosts[@]}"; do
+            if [[ -f "$temp_dir/$host" ]] && grep -q "running" "$temp_dir/$host"; then
+                all_stopped=false
+                break
+            fi
+        done
+        if [[ "$all_stopped" == "true" ]]; then
+            state_set_status "$deploy_dir" "$STATE_STOPPED"
+            operation_success
+            log_info "✓ All VMs are powered off and unreachable. Stop operation successful."
+            return 0
+        else
+            state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
+            die "Some VMs are still reachable after stop operation."
+        fi
+    fi
+
+    # Check results - if any VM is still reachable via SSH, stop failed
+    local any_running=false
+    for host in "${hosts[@]}"; do
+        if [[ -f "$temp_dir/$host" ]] && [[ "$(cat "$temp_dir/$host")" == "running" ]]; then
+            log_warn "VM $host is still reachable via SSH"
+            any_running=true
+        fi
+    done
+
+    rm -rf "$temp_dir"
+
+    if [[ "$any_running" == true ]]; then
+        state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
+        operation_success  # Remove lock
+        log_error ""
+        log_error "✗ Stop operation completed but VMs are still running"
+        log_error ""
+        log_error "Status set to 'stop_failed'. Please check the logs and try again."
+        return 1
+    fi
+
+    # All VMs powered off successfully
     state_set_status "$deploy_dir" "$STATE_STOPPED"
     operation_success
 
     # Display results
-    progress_complete "stop" "complete" "Stop operation completed successfully"
-
     log_info ""
     log_info "✓ Exasol Database Stopped Successfully!"
     log_info ""
-    log_info "The database services have been stopped. Cloud instances are still running."
+    log_info "VMs have been powered off."
     log_info "To restart the database, run: exasol start --deployment-dir $deploy_dir"
     log_info "To terminate cloud instances, run: exasol destroy --deployment-dir $deploy_dir"
 }

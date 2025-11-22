@@ -13,9 +13,10 @@ show_start_help() {
     cat <<'EOF'
 Start a stopped Exasol database deployment.
 
-This command starts the Exasol database services on an existing deployment
-that was previously stopped using 'exasol stop'. The cloud instances must
-still be running.
+This command powers on cloud instances (if supported) and waits for the
+database to become healthy. For providers without automatic power control
+(DigitalOcean, Hetzner, libvirt), you'll be prompted to manually power on
+the machines first.
 
 Usage:
   exasol start [flags]
@@ -26,8 +27,11 @@ Flags:
 
 Prerequisites:
   - Deployment must be in 'stopped' or 'start_failed' state
-  - Cloud instances must still be running
   - No other operations can be in progress
+
+Behavior by Provider:
+  - AWS/Azure/GCP: Automatically powers on instances and waits for database
+  - DigitalOcean/Hetzner/libvirt: Displays power-on instructions and waits
 
 Example:
   exasol start --deployment-dir ./my-deployment
@@ -95,10 +99,8 @@ cmd_start() {
 
     setup_operation_guard "$deploy_dir" "$STATE_START_FAILED" "start_success"
 
-    # Update status
+    # Step 1: Set status to start_in_progress (operation guard start)
     state_set_status "$deploy_dir" "$STATE_START_IN_PROGRESS"
-
-    progress_start "start" "begin" "Starting Exasol database start operation"
 
     log_info "Starting Exasol database cluster..."
     log_info "Current state: $current_state"
@@ -118,90 +120,145 @@ cmd_start() {
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"
 
-    # Check if Ansible playbook exists
+    # Prepare exasol command path for later use
+    local exasol_cmd="${LIB_DIR}/../exasol"
+
+    # Check if required files exist
     if [[ ! -f "$deploy_dir/.templates/start-exasol-cluster.yml" ]]; then
         log_error "Ansible playbook not found: .templates/start-exasol-cluster.yml"
         state_set_status "$deploy_dir" "$STATE_START_FAILED"
-        progress_fail "start" "playbook_missing" "Start playbook not found"
         die "Start playbook not found"
     fi
 
-    # Check if inventory file exists
     if [[ ! -f "$deploy_dir/inventory.ini" ]]; then
         log_error "Ansible inventory not found: inventory.ini"
         state_set_status "$deploy_dir" "$STATE_START_FAILED"
-        progress_fail "start" "inventory_missing" "Ansible inventory not found"
         die "Ansible inventory not found"
     fi
 
-    # If provider supports infra power control, start instances via tofu first
+    # Step 2: Infrastructure start (automatic for aws/gcp/azure; manual for libvirt/digitalocean/hetzner)
     if [[ "$infra_power_supported" == "true" ]]; then
-        progress_start "start" "tofu_start" "Starting infrastructure (powering on instances)"
-        if ! run_tofu_with_progress "start" "tofu_start" "Powering on instances" tofu apply -auto-approve -refresh=false -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_on" -target="google_compute_instance.exasol_node" -var "infra_desired_state=running"; then
+        log_info "Powering on instances via tofu..."
+        # Note: We enable refresh to ensure Terraform sees the current state (running=false)
+        # This is important for all providers to detect state drift and apply changes correctly
+        if ! tofu apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_on" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=running"; then
             state_set_status "$deploy_dir" "$STATE_START_FAILED"
-            progress_fail "start" "tofu_start" "Failed to start infrastructure (tofu apply)"
+            operation_success  # Release lock
             die "Infrastructure start (tofu apply) failed"
         fi
-        progress_complete "start" "tofu_start" "Infrastructure powered on"
-    else
-        log_warn "Provider '$cloud_provider' lacks tofu-based power control. Ensure instances are running before continuing; start will attempt services regardless."
-    fi
 
-    # Refresh IPs in inventory/ssh_config before Ansible (similar to deploy)
-    if command -v exasol >/dev/null 2>&1; then
-        log_info "Refreshing inventory and ssh_config via health --update"
-        cmd_health --deployment-dir "$deploy_dir" --update --quiet >/dev/null 2>&1 || true
-    fi
+        # Refresh IPs in inventory/ssh_config before Ansible
+        log_info "Refreshing inventory and ssh_config..."
+        "$exasol_cmd" health --deployment-dir "$deploy_dir" --update --quiet >/dev/null 2>&1 || true
 
-    # Run Ansible to start the database
-    progress_start "start" "ansible_start" "Starting database services with Ansible"
+        # Run Ansible to start the database services
+        log_info "Starting database services via Ansible..."
+        if ! ansible-playbook -i inventory.ini .templates/start-exasol-cluster.yml; then
+            state_set_status "$deploy_dir" "$STATE_START_FAILED"
+            die "Ansible start operation failed"
+        fi
 
-    if ! run_ansible_with_progress "start" "ansible_start" "Starting database services" ansible-playbook -i inventory.ini .templates/start-exasol-cluster.yml; then
-        state_set_status "$deploy_dir" "$STATE_START_FAILED"
-        progress_fail "start" "ansible_start" "Failed to start database services"
-        die "Ansible start operation failed"
-    fi
-    progress_complete "start" "ansible_start" "Database services started successfully"
+        # Validate database connectivity (optional - best effort)
+        local validation_passed=true
+        if [[ -f "$deploy_dir/inventory.ini" ]] && [[ -f "$deploy_dir/ssh_config" ]]; then
+            # Try to check if c4.service is active on the first node
+            local first_host
+            first_host=$(awk '/^\[exasol_nodes\]/,/^\[/ {if ($1 !~ /^\[/ && NF > 0) {print $1; exit}}' "$deploy_dir/inventory.ini")
 
-    # Validate database connectivity (optional - best effort)
-    progress_start "start" "validation" "Validating database connectivity"
-
-    local validation_passed=true
-    if [[ -f "$deploy_dir/inventory.ini" ]] && [[ -f "$deploy_dir/ssh_config" ]]; then
-        # Try to check if c4.service is active on the first node
-        local first_host
-        first_host=$(awk '/^\[exasol_nodes\]/,/^\[/ {if ($1 !~ /^\[/ && NF > 0) {print $1; exit}}' "$deploy_dir/inventory.ini")
-
-        if [[ -n "$first_host" ]]; then
-            log_debug "Checking c4.service status on $first_host"
-            if ssh -F "$deploy_dir/ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$first_host" \
-                "sudo systemctl is-active c4.service" >/dev/null 2>&1; then
-                log_info "Database services are active"
-            else
-                log_warn "Could not verify database service status"
-                validation_passed=false
+            if [[ -n "$first_host" ]]; then
+                log_debug "Checking c4.service status on $first_host"
+                if ssh -F "$deploy_dir/ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$first_host" \
+                    "sudo systemctl is-active c4.service" >/dev/null 2>&1; then
+                    log_info "Database services are active"
+                else
+                    log_warn "Could not verify database service status"
+                    validation_passed=false
+                fi
             fi
         fi
-    fi
 
-    if $validation_passed; then
-        progress_complete "start" "validation" "Database connectivity validated"
-        state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
+        if $validation_passed; then
+            state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
+        else
+            state_set_status "$deploy_dir" "$STATE_DATABASE_CONNECTION_FAILED"
+            log_warn "Database started but connectivity could not be fully validated"
+        fi
+        operation_success
+
+        # Display results
+        log_info ""
+        log_info "✓ Exasol Database Started Successfully!"
+        log_info ""
+        log_info "The database services have been started and should be ready for use."
+        return 0
     else
-        progress_complete "start" "validation" "Database started but connectivity validation incomplete"
-        state_set_status "$deploy_dir" "$STATE_DATABASE_CONNECTION_FAILED"
-        log_warn "Database started but connectivity could not be fully validated"
-        log_info "Run 'exasol health --deployment-dir $deploy_dir' to check database status"
+        log_warn "Provider '$cloud_provider' does not support automatic power control."
+        log_info ""
+
+        # Provider-specific power-on instructions
+        case "$cloud_provider" in
+            libvirt)
+                log_info "Please power on the VMs using virsh:"
+                log_info "  virsh list --all  # List all VMs to find the VM names"
+                log_info "  virsh start <vm-name>  # Start each VM"
+                log_info ""
+                log_info "Alternatively, use virt-manager GUI to power on the VMs."
+                ;;
+            digitalocean)
+                log_info "Please power on the Droplets using DigitalOcean console or CLI:"
+                log_info "  Web Console: https://cloud.digitalocean.com/droplets"
+                log_info "  CLI: doctl compute droplet-action power-on <droplet-id>"
+                log_info ""
+                log_info "To list all droplets: doctl compute droplet list"
+                ;;
+            hetzner)
+                log_info "Please power on the servers using Hetzner Cloud Console or CLI:"
+                log_info "  Web Console: https://console.hetzner.cloud/"
+                log_info "  CLI: hcloud server poweron <server-name>"
+                log_info ""
+                log_info "To list all servers: hcloud server list"
+                ;;
+            *)
+                log_info "Please manually power on the machines using your provider's interface."
+                ;;
+        esac
+
+        log_info ""
     fi
-    operation_success
 
-    # Display results
-    progress_complete "start" "complete" "Start operation completed successfully"
+    # Step 3: For manual providers, set status to 'started' and wait for health
+    state_set_status "$deploy_dir" "$STATE_STARTED"
+    operation_success  # Mark operation as successful
+    lock_remove "$deploy_dir"  # Actually remove lock so health command can run
 
+    # Step 4: Call health --update --wait-for database_ready,15m
+    log_info "Waiting for cluster to become healthy (timeout: 15 minutes)..."
     log_info ""
-    log_info "✓ Exasol Database Started Successfully!"
-    log_info ""
-    log_info "The database services have been started and should be ready for use."
-    log_info "Run 'exasol status --deployment-dir $deploy_dir' to check deployment status"
-    log_info "Run 'exasol health --deployment-dir $deploy_dir' for detailed health checks"
+
+    if "$exasol_cmd" health --deployment-dir "$deploy_dir" --update --wait-for database_ready,15m; then
+        # Step 5: Success - print result and return
+        log_info ""
+        log_info "✓ Exasol Database Started Successfully!"
+        log_info ""
+        log_info "The database services have been started and are ready for use."
+        return 0
+    else
+        # Step 5: Failure - print error and return
+        log_error ""
+        log_error "✗ Failed to reach 'database_ready' status within 15 minutes."
+        log_error ""
+        log_error "Please verify that:"
+        if [[ "$infra_power_supported" == "false" ]]; then
+            log_error "  1. VMs have been manually powered on via your provider interface"
+            log_error "  2. VMs are reachable via SSH"
+        else
+            log_error "  1. VMs are reachable via SSH"
+        fi
+        log_error "  3. Database services are running"
+        log_error ""
+        log_error "Run 'exasol health --deployment-dir $deploy_dir' for detailed diagnostics"
+        log_error ""
+        state_set_status "$deploy_dir" "$STATE_START_FAILED"
+        return 1
+    fi
 }

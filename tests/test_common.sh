@@ -218,7 +218,7 @@ EOF
 
     # Create mock variables file
     cat > "$test_dir/variables.auto.tfvars" << 'EOF'
-instance_type = "m6idn.large"
+instance_type = "t3a.large"
 node_count = 2
 data_volume_size = 100
 EOF
@@ -358,63 +358,6 @@ test_extract_plan_total_resources() {
     fi
 }
 
-test_calculate_overall_progress_deploy_weights() {
-    echo ""
-    echo "Test: calculate_overall_progress deploy weights"
-
-    local percent
-    percent=$(calculate_overall_progress "deploy" "begin" 0)
-    assert_equals "0" "$percent" "Deploy begin should start at 0%"
-
-    percent=$(calculate_overall_progress "deploy" "tofu_init" 0)
-    assert_equals "1" "$percent" "Deploy tofu_init start should include begin weight"
-
-    percent=$(calculate_overall_progress "deploy" "tofu_init" 100)
-    assert_equals "3" "$percent" "Deploy tofu_init complete should reach 3%"
-
-    percent=$(calculate_overall_progress "deploy" "tofu_plan" 100)
-    assert_equals "4" "$percent" "Deploy tofu_plan complete should reach 4%"
-
-    percent=$(calculate_overall_progress "deploy" "tofu_apply" 50)
-    assert_equals "9" "$percent" "Deploy tofu_apply halfway should reach 9%"
-
-    percent=$(calculate_overall_progress "deploy" "ansible_config" 50)
-    assert_equals "59" "$percent" "Deploy ansible_config halfway should reach 59%"
-
-    percent=$(calculate_overall_progress "deploy" "ansible_config" 100)
-    assert_equals "100" "$percent" "Deploy ansible_config completion should reach 100%"
-
-    percent=$(calculate_overall_progress "deploy" "complete" 100)
-    assert_equals "100" "$percent" "Deploy complete should remain 100%"
-}
-
-test_calculate_overall_progress_destroy_weights() {
-    echo ""
-    echo "Test: calculate_overall_progress destroy weights"
-
-    local percent
-    percent=$(calculate_overall_progress "destroy" "begin" 0)
-    assert_equals "0" "$percent" "Destroy begin should start at 0%"
-
-    percent=$(calculate_overall_progress "destroy" "confirm" 0)
-    assert_equals "1" "$percent" "Destroy confirm start should include begin weight"
-
-    percent=$(calculate_overall_progress "destroy" "confirm" 100)
-    assert_equals "2" "$percent" "Destroy confirm complete should reach 2%"
-
-    percent=$(calculate_overall_progress "destroy" "tofu_destroy" 50)
-    assert_equals "50" "$percent" "Destroy tofu_destroy halfway should reach 50%"
-
-    percent=$(calculate_overall_progress "destroy" "cleanup" 0)
-    assert_equals "99" "$percent" "Destroy cleanup start should reach 99%"
-
-    percent=$(calculate_overall_progress "destroy" "cleanup" 100)
-    assert_equals "100" "$percent" "Destroy cleanup complete should reach 100%"
-
-    percent=$(calculate_overall_progress "destroy" "complete" 100)
-    assert_equals "100" "$percent" "Destroy complete should remain 100%"
-}
-
 # Run all tests
 test_validate_directory
 test_ensure_directory
@@ -426,8 +369,6 @@ test_get_config_sections
 test_generate_info_files
 test_categorize_ansible_phase
 test_extract_plan_total_resources
-test_calculate_overall_progress_deploy_weights
-test_calculate_overall_progress_destroy_weights
 
 # Show summary
 test_summary

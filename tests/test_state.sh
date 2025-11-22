@@ -18,7 +18,8 @@ test_state_init() {
     echo ""
     echo "Test: state_init"
 
-    local test_dir=$(setup_test_dir)
+    local test_dir
+    test_dir=$(setup_test_dir)
 
     state_init "$test_dir" "exasol-2025.1.4" "x86_64"
     assert_success $? "Should initialize state successfully"
@@ -26,13 +27,16 @@ test_state_init() {
     assert_file_exists "$test_dir/.exasol.json" "Should create state file"
 
     # Verify state file content
-    local status=$(state_read "$test_dir" "status")
+    local status
+    status=$(state_read "$test_dir" "status")
     assert_equals "initialized" "$status" "Should set initial status to 'initialized'"
 
-    local version=$(state_read "$test_dir" "db_version")
+    local version
+    version=$(state_read "$test_dir" "db_version")
     assert_equals "exasol-2025.1.4" "$version" "Should store db_version"
 
-    local arch=$(state_read "$test_dir" "architecture")
+    local arch
+    arch=$(state_read "$test_dir" "architecture")
     assert_equals "x86_64" "$arch" "Should store architecture"
 
     cleanup_test_dir "$test_dir"
@@ -43,7 +47,8 @@ test_is_deployment_directory() {
     echo ""
     echo "Test: is_deployment_directory"
 
-    local test_dir=$(setup_test_dir)
+    local test_dir
+    test_dir=$(setup_test_dir)
 
     if ! is_deployment_directory "$test_dir"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))

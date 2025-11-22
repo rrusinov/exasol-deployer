@@ -1,7 +1,20 @@
 #!/usr/bin/env bash
 # Test runner - executes all unit tests
 
-set -e
+set -euo pipefail
+
+# Re-exec with a modern bash if the current shell is too old (e.g., macOS /bin/bash 3.2)
+if [[ -z "${BASH_VERSINFO:-}" || ${BASH_VERSINFO[0]} -lt 4 ]]; then
+    for candidate in "$HOME/.local/homebrew/bin/bash" "/usr/local/bin/bash"; do
+        if [[ -x "$candidate" ]]; then
+            exec "$candidate" "$0" "$@"
+        fi
+    done
+    echo "A Bash version >=4 is required to run the test suite. Install Homebrew bash and ensure it's on PATH." >&2
+    exit 1
+fi
+
+export PATH="$HOME/.local/homebrew/bin:/usr/local/bin:$PATH"
 
 # Get script directory
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,6 +35,8 @@ TOTAL_TEST_FILES=0
 PASSED_TEST_FILES=0
 FAILED_TEST_FILES=0
 
+BASH_BIN="${BASH:-bash}"
+
 # Function to run a test file
 run_test_file() {
     local test_file="$1"
@@ -33,7 +48,7 @@ run_test_file() {
 
     TOTAL_TEST_FILES=$((TOTAL_TEST_FILES + 1))
 
-    if bash "$test_file"; then
+    if "$BASH_BIN" "$test_file"; then
         PASSED_TEST_FILES=$((PASSED_TEST_FILES + 1))
         echo ""
         return 0
@@ -47,6 +62,7 @@ run_test_file() {
 # Run all test files
 run_test_file "$TEST_DIR/test_shellcheck.sh"
 run_test_file "$TEST_DIR/test_common.sh"
+run_test_file "$TEST_DIR/test_progress.sh"
 run_test_file "$TEST_DIR/test_versions.sh"
 run_test_file "$TEST_DIR/test_state.sh"
 run_test_file "$TEST_DIR/test_init.sh"
@@ -58,6 +74,7 @@ run_test_file "$TEST_DIR/test_template_validation.sh"
 run_test_file "$TEST_DIR/test_url_availability.sh"
 run_test_file "$TEST_DIR/test_documentation.sh"
 run_test_file "$TEST_DIR/test_help_options.sh"
+run_test_file "$TEST_DIR/test_add_metrics.sh"
 run_test_file "$TEST_DIR/test_e2e_framework.sh"
 
 # Overall summary

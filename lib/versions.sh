@@ -86,6 +86,17 @@ validate_version_format() {
         log_error "  - exasol-2025.1.4-arm64 (ARM64 variant)"
         log_error "  - exasol-2025.1.4-local (local x86_64 variant)"
         log_error "  - exasol-2025.1.4-arm64-local (local ARM64 variant)"
+        log_error ""
+        log_error "Available versions:"
+        local available_versions
+        available_versions=$(list_versions 2>/dev/null)
+        if [[ -n "$available_versions" ]]; then
+            echo "$available_versions" | while read -r v; do
+                log_error "  - $v"
+            done
+        else
+            log_error "  (No versions configured)"
+        fi
         return 1
     fi
 }

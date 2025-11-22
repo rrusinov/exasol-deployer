@@ -1,6 +1,6 @@
 # Python Helper Scripts
 
-This directory contains Python helper scripts that support the Exasol Deployer shell scripts. These scripts extract and parse information from shell scripts and documentation files.
+This directory contains Python helper scripts that support the Exasol Deployer test scripts. These scripts extract and parse information from shell scripts and documentation files.
 
 ## Scripts
 
@@ -47,7 +47,7 @@ All helper scripts use only Python standard library modules to minimize external
 ## Requirements
 
 - Python 3.6 or higher
-- No external packages required (uses only standard library)
+- No external packages required (all scripts use standard library only)
 
 ## Integration with Shell Scripts
 
@@ -57,3 +57,7 @@ These Python helpers are called from the shell test scripts:
 - `tests/test_documentation.sh` uses `extract_readme_flags.py`
 
 The shell scripts automatically locate these Python helpers using relative paths from the script directory.
+
+## Note on YAML Validation
+
+YAML validation was previously handled by `validate_yaml.py` (removed). It is now performed by the `yamllint` tool in `tests/test_template_validation.sh`, which provides more comprehensive validation including syntax and style checking.

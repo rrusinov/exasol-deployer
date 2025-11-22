@@ -47,10 +47,13 @@ locals {
 }
 
 # Standard outputs (to be included in each provider's outputs.tf)
-output "summary" {
-  description = "Deployment summary with connection information"
-  value       = local.summary_box
-}
+# Note: summary output is commented out to avoid cluttering start/stop/destroy output
+# Terraform automatically displays all outputs after 'apply' completes, which would
+# show this multi-line summary during every start/stop/destroy operation.
+# output "summary" {
+#   description = "Deployment summary with connection information"
+#   value       = local.summary_box
+# }
 
 output "cluster_id" {
   description = "Unique identifier for this cluster deployment"

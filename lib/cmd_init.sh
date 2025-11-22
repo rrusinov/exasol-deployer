@@ -94,6 +94,7 @@ Libvirt-Specific Flags:
   --libvirt-vcpus <n>            vCPUs per VM (default: 2)
   --libvirt-network <name>       Network name (default: "default")
   --libvirt-pool <name>          Storage pool name (default: "default")
+  --libvirt-uri <uri>            Libvirt connection URI (auto-detected if not provided)
 
 Examples:
   # List available providers
@@ -164,6 +165,7 @@ cmd_init() {
     local libvirt_vcpus=2
     local libvirt_network_bridge="default"
     local libvirt_disk_pool="default"
+    local libvirt_uri=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -302,6 +304,10 @@ cmd_init() {
                 libvirt_disk_pool="$2"
                 shift 2
                 ;;
+            --libvirt-uri)
+                libvirt_uri="$2"
+                shift 2
+                ;;
             --list-versions)
                 log_info "Available database versions:"
                 list_versions
@@ -391,6 +397,12 @@ cmd_init() {
     local architecture
     architecture=$(get_version_config "$db_version" "ARCHITECTURE")
 
+    # Override for macOS arm64 hosts using libvirt
+    if [[ "$(uname -m)" == "arm64" && "$cloud_provider" == "libvirt" ]]; then
+        architecture="arm64"
+        log_info "Detected arm64 host architecture, using arm64 for libvirt VMs"
+    fi
+
     if [[ "$cloud_provider" == "digitalocean" && "$architecture" == "arm64" ]]; then
         die "DigitalOcean deployments currently support only x86_64 database versions. Please select an x86_64 build instead of $db_version."
     fi
@@ -416,9 +428,6 @@ cmd_init() {
         adminui_password=$(generate_password 16)
         log_info "Generated random AdminUI password"
     fi
-
-    # Emit progress: initialization started
-    progress_start "init" "validate_config" "Initializing deployment directory: $deploy_dir"
 
     log_info "Initializing deployment directory: $deploy_dir"
     log_info "  Cloud Provider: ${SUPPORTED_PROVIDERS[$cloud_provider]}"
@@ -457,20 +466,13 @@ cmd_init() {
             ;;
     esac
 
-    progress_complete "init" "validate_config" "Configuration validated"
-
     # Create deployment directory
-    progress_start "init" "create_directories" "Creating deployment directories"
     ensure_directory "$deploy_dir"
-    progress_complete "init" "create_directories" "Deployment directories created"
 
     # Initialize state file with cloud provider
-    progress_start "init" "initialize_state" "Initializing deployment state"
     state_init "$deploy_dir" "$db_version" "$architecture" "$cloud_provider" || die "Failed to initialize state"
-    progress_complete "init" "initialize_state" "Deployment state initialized"
 
     # Create templates directory
-    progress_start "init" "copy_templates" "Copying deployment templates for $cloud_provider"
     local templates_dir="$deploy_dir/.templates"
     ensure_directory "$templates_dir"
 
@@ -496,7 +498,6 @@ cmd_init() {
         log_debug "Copied cloud-specific templates for $cloud_provider"
     else
         log_error "No templates found for cloud provider: $cloud_provider"
-        progress_fail "init" "copy_templates" "Templates not found for $cloud_provider"
         die "Templates directory templates/terraform-$cloud_provider does not exist"
     fi
 
@@ -504,17 +505,19 @@ cmd_init() {
     cp -r "$script_root/templates/ansible/"* "$templates_dir/" 2>/dev/null || true
     log_debug "Copied Ansible templates"
 
-    # Create Terraform files in deployment directory
-    create_terraform_files "$deploy_dir" "$architecture" "$cloud_provider"
-    progress_complete "init" "copy_templates" "Templates copied successfully"
-
     # Write variables file based on cloud provider
-    if [[ -z "$gcp_zone" ]]; then
+    if [[ "$cloud_provider" == "gcp" && -z "$gcp_zone" ]]; then
         gcp_zone="${gcp_region}-a"
         log_info "Using default GCP zone: $gcp_zone"
     fi
 
-    progress_start "init" "generate_variables" "Creating Terraform variables file"
+    if [[ "$cloud_provider" == "libvirt" ]]; then
+        libvirt_uri=$(detect_libvirt_uri "$libvirt_uri")
+        if [[ -z "$libvirt_uri" ]]; then
+            die "Failed to determine libvirt URI automatically. Please rerun with --libvirt-uri <uri>."
+        fi
+    fi
+
     log_info "Creating variables file..."
     write_provider_variables "$deploy_dir" "$cloud_provider" \
         "$aws_region" "$aws_profile" "$aws_spot_instance" \
@@ -522,14 +525,15 @@ cmd_init() {
         "$gcp_region" "$gcp_zone" "$gcp_project" "$gcp_spot_instance" \
         "$hetzner_location" "$hetzner_network_zone" "$hetzner_token" \
         "$digitalocean_region" "$digitalocean_token" \
-        "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool" \
+        "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool" "$libvirt_uri" \
         "$instance_type" "$architecture" "$cluster_size" \
         "$data_volume_size" "$data_volumes_per_node" "$root_volume_size" \
         "$allowed_cidr" "$owner"
-    progress_complete "init" "generate_variables" "Variables file created"
+
+    # Create Terraform files in deployment directory (after variables are written so macOS HVF can be detected)
+    create_terraform_files "$deploy_dir" "$architecture" "$cloud_provider"
 
     # Store passwords and deployment metadata securely
-    progress_start "init" "store_credentials" "Storing deployment credentials"
     local credentials_file="$deploy_dir/.credentials.json"
 
     # Get download URLs and checksums from version config
@@ -542,6 +546,10 @@ cmd_init() {
     raw_c4_checksum=$(get_version_config "$db_version" "C4_CHECKSUM")
     db_checksum=$(normalize_checksum_value "$raw_db_checksum")
     c4_checksum=$(normalize_checksum_value "$raw_c4_checksum")
+
+    # Expand ~/ and $HOME in file:// URLs
+    db_url=$(echo "$db_url" | sed "s|^file://~/|file://$HOME/|" | sed "s|\$HOME|$HOME|g")
+    c4_url=$(echo "$c4_url" | sed "s|^file://~/|file://$HOME/|" | sed "s|\$HOME|$HOME|g")
 
     cat > "$credentials_file" <<EOF
 {
@@ -557,17 +565,11 @@ cmd_init() {
 }
 EOF
     chmod 600 "$credentials_file"
-    progress_complete "init" "store_credentials" "Credentials stored securely"
 
     # Create README
-    progress_start "init" "generate_readme" "Generating deployment README"
     create_readme "$deploy_dir" "$cloud_provider" "$db_version" "$architecture" \
         "$cluster_size" "$instance_type" "$aws_region" "$azure_region" "$gcp_region" \
         "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool"
-    progress_complete "init" "generate_readme" "README generated"
-
-    # Mark initialization as complete
-    progress_complete "init" "complete" "Deployment directory initialized successfully"
 
     # Generate INFO.txt file
     generate_info_files "$deploy_dir"
@@ -590,6 +592,11 @@ calculate_aws_availability_zone() {
     local instance_type="$3"
 
     log_debug "Calculating best availability zone for instance type $instance_type in region $aws_region"
+
+    if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
+        echo "${aws_region}a"
+        return 0
+    fi
 
     # Create a temporary directory for the AZ query
     local temp_dir
@@ -648,21 +655,63 @@ EOF
     supported_azs=$(tofu apply -auto-approve -refresh-only >/dev/null 2>&1 && tofu output -json supported_azs 2>/dev/null | jq -r '.[]' 2>/dev/null)
 
     if [[ -z "$supported_azs" ]]; then
-        log_error "Failed to query availability zones or instance type $instance_type is not available in region $aws_region"
-        die "Instance type $instance_type is not available in region $aws_region. Please choose a different instance type or region."
+        # Fallback: Use region + 'a' when AWS APIs are unavailable (e.g., CI environments)
+        local selected_az="${aws_region}a"
+        log_warn "Could not query AWS for availability zones, using fallback: $selected_az"
+        log_info "Selected availability zone: $selected_az"
+        echo "$selected_az"
+    else
+        # Select the first available AZ from AWS API results
+        local selected_az
+        selected_az=$(echo "$supported_azs" | head -n1)
+
+        if [[ -z "$selected_az" ]]; then
+            log_error "No availability zones found for instance type $instance_type in region $aws_region"
+            die "Instance type $instance_type is not available in any AZ within region $aws_region. Please choose a different instance type or region."
+        fi
+
+        log_info "Selected availability zone: $selected_az"
+        echo "$selected_az"
+    fi
+}
+
+# Detect libvirt URI via CLI flag or virsh
+detect_libvirt_uri() {
+    local override="${1:-}"
+
+    if [[ -n "$override" ]]; then
+        log_info "Using libvirt URI from --libvirt-uri"
+        echo "$override"
+        return 0
     fi
 
-    # Select the first available AZ
-    local selected_az
-    selected_az=$(echo "$supported_azs" | head -n1)
-
-    if [[ -z "$selected_az" ]]; then
-        log_error "No availability zones found for instance type $instance_type in region $aws_region"
-        die "Instance type $instance_type is not available in any AZ within region $aws_region. Please choose a different instance type or region."
+    if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
+        echo "qemu:///session"
+        return 0
     fi
 
-    log_info "Selected availability zone: $selected_az"
-    echo "$selected_az"
+    local virsh_uri=""
+    if command -v virsh >/dev/null 2>&1; then
+        virsh_uri="$(virsh uri 2>/dev/null | tr -d '\r\n' || true)"
+    fi
+
+    if [[ -n "$virsh_uri" ]]; then
+        log_info "Detected libvirt URI via 'virsh uri': $virsh_uri"
+        # Adjust URI for macOS session to include socket path
+        if [[ "$virsh_uri" == "qemu:///session" ]] && [[ "$(uname)" == "Darwin" ]]; then
+            socket_path="$HOME/.cache/libvirt/libvirt-sock"
+            if [[ -S "$socket_path" ]]; then
+                virsh_uri="qemu+unix:///session?socket=$socket_path"
+                log_info "Adjusted libvirt URI for macOS session: $virsh_uri"
+            fi
+        fi
+        echo "$virsh_uri"
+        return 0
+    fi
+
+    log_error "Unable to detect libvirt URI automatically via 'virsh uri'."
+    log_error "Install libvirt-clients or rerun with --libvirt-uri <uri>."
+    echo ""
 }
 
 # Write provider-specific variables
@@ -688,14 +737,15 @@ write_provider_variables() {
     local libvirt_vcpus="${19}"
     local libvirt_network_bridge="${20}"
     local libvirt_disk_pool="${21}"
-    local instance_type="${22}"
-    local architecture="${23}"
-    local cluster_size="${24}"
-    local data_volume_size="${25}"
-    local data_volumes_per_node="${26}"
-    local root_volume_size="${27}"
-    local allowed_cidr="${28}"
-    local owner="${29}"
+    local libvirt_uri="${22}"
+    local instance_type="${23}"
+    local architecture="${24}"
+    local cluster_size="${25}"
+    local data_volume_size="${26}"
+    local data_volumes_per_node="${27}"
+    local root_volume_size="${28}"
+    local allowed_cidr="${29}"
+    local owner="${30}"
 
     case "$cloud_provider" in
         aws)
@@ -774,11 +824,24 @@ write_provider_variables() {
                 "owner=$owner"
             ;;
         libvirt)
+            local libvirt_domain_type="kvm"
+            local libvirt_firmware="efi"
+            # Session URIs typically indicate a user-level daemon. On macOS use HVF and slirp; on Linux keep KVM.
+            if [[ "$libvirt_uri" == *session* ]]; then
+                libvirt_firmware=""
+                if [[ "$(uname)" == "Darwin" ]]; then
+                    libvirt_domain_type="hvf"
+                    libvirt_network_bridge=""
+                fi
+            fi
             write_variables_file "$deploy_dir" \
                 "libvirt_memory_gb=$libvirt_memory_gb" \
                 "libvirt_vcpus=$libvirt_vcpus" \
                 "libvirt_network_bridge=$libvirt_network_bridge" \
                 "libvirt_disk_pool=$libvirt_disk_pool" \
+                "libvirt_uri=$libvirt_uri" \
+                "libvirt_domain_type=$libvirt_domain_type" \
+                "libvirt_firmware=$libvirt_firmware" \
                 "instance_type=$instance_type" \
                 "instance_architecture=$architecture" \
                 "node_count=$cluster_size" \
@@ -787,6 +850,64 @@ write_provider_variables() {
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner"
+
+            # Check and create default libvirt storage pool if it doesn't exist
+            if ! virsh -c "$libvirt_uri" version >/dev/null 2>&1; then
+                log_warn "Cannot connect to libvirt URI $libvirt_uri, ensure libvirt daemon is running. Skipping pool creation."
+            elif ! virsh -c "$libvirt_uri" pool-list --name 2>/dev/null | grep -q "^default$"; then
+                log_info "Default libvirt storage pool not found, attempting to create it"
+                if [[ "$(uname)" == "Darwin" ]]; then
+                    if [[ "$libvirt_uri" == *session* ]]; then
+                        pool_path="$HOME/libvirt/images"
+                    else
+                        pool_path="/usr/local/var/lib/libvirt/images"
+                    fi
+                else
+                    pool_path="/var/lib/libvirt/images"
+                fi
+                mkdir -p "$pool_path" || log_warn "Could not create pool directory $pool_path, you may need to adjust permissions"
+                if virsh -c "$libvirt_uri" pool-define-as default dir --target "$pool_path" 2>/dev/null; then
+                    log_info "Default pool defined successfully"
+                    if virsh -c "$libvirt_uri" pool-start default 2>/dev/null; then
+                        log_info "Default pool started successfully"
+                    else
+                        log_warn "Could not start default pool"
+                    fi
+                    if ! virsh -c "$libvirt_uri" pool-autostart default 2>/dev/null; then
+                        log_warn "Could not set default pool to autostart"
+                    fi
+                else
+                    log_warn "Could not define default pool, ensure libvirt is running and you have permissions"
+                fi
+            fi
+
+            # Check and create default libvirt network if it doesn't exist (skip for session mode, which uses user networking)
+            if [[ "$libvirt_uri" != *session* ]] && ! virsh -c "$libvirt_uri" net-list --name 2>/dev/null | grep -q "^default$"; then
+                log_info "Default libvirt network not found, attempting to create it"
+                if virsh -c "$libvirt_uri" net-define /dev/stdin 2>/dev/null <<EOF; then
+<network>
+  <name>default</name>
+  <forward mode="nat"/>
+  <ip address="10.0.0.1" netmask="255.255.255.0">
+    <dhcp>
+      <range start="10.0.0.2" end="10.0.0.254"/>
+    </dhcp>
+  </ip>
+</network>
+EOF
+                    log_info "Default network defined successfully"
+                    if virsh -c "$libvirt_uri" net-start default 2>/dev/null; then
+                        log_info "Default network started successfully"
+                    else
+                        log_warn "Could not start default network. For session mode, you may need to start it manually with appropriate permissions."
+                    fi
+                    if ! virsh -c "$libvirt_uri" net-autostart default 2>/dev/null; then
+                        log_warn "Could not set default network to autostart"
+                    fi
+                else
+                    log_warn "Could not define default network, ensure libvirt is running and you have permissions"
+                fi
+            fi
             ;;
     esac
 }
@@ -872,9 +993,18 @@ create_terraform_files() {
     ln -sf ".templates/common.tf" "$deploy_dir/common.tf"
     ln -sf ".templates/common-firewall.tf" "$deploy_dir/common-firewall.tf"
     ln -sf ".templates/common-outputs.tf" "$deploy_dir/common-outputs.tf"
-    ln -sf ".templates/main.tf" "$deploy_dir/main.tf"
+    # Prefer macOS-specific template when deployment variables indicate hvf
+    local vars_file="$deploy_dir/variables.auto.tfvars"
+    if [[ -f "$vars_file" ]] && grep -q "libvirt_domain_type\s*=\s*\"hvf\"" "$vars_file" && [[ -f "$templates_dir/main-osx.tf" ]]; then
+        ln -sf ".templates/main-osx.tf" "$deploy_dir/main.tf"
+    elif [[ "$(uname)" == "Darwin" && -f "$templates_dir/main-osx.tf" ]]; then
+        ln -sf ".templates/main-osx.tf" "$deploy_dir/main.tf"
+    else
+        ln -sf ".templates/main.tf" "$deploy_dir/main.tf"
+    fi
     ln -sf ".templates/variables.tf" "$deploy_dir/variables.tf"
     ln -sf ".templates/outputs.tf" "$deploy_dir/outputs.tf"
+        # No provider-specific cloud-init templates are symlinked by default.
 
     # Inventory template may be cloud-specific
     if [[ -f "$templates_dir/inventory-$cloud_provider.tftpl" ]]; then

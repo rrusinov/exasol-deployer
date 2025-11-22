@@ -86,15 +86,16 @@ cmd_deploy() {
     # Update status
     state_set_status "$deploy_dir" "$STATE_DEPLOY_IN_PROGRESS"
 
-    progress_start "deploy" "begin" "Starting Exasol deployment"
-
-    # Get version information
-    local db_version architecture
+    # Get version information and cluster size for progress tracking
+    local db_version architecture cluster_size
     db_version=$(state_read "$deploy_dir" "db_version")
     architecture=$(state_read "$deploy_dir" "architecture")
+    cluster_size=$(state_read "$deploy_dir" "cluster_size")
+    cluster_size=${cluster_size:-1}
 
     log_info "Database version: $db_version"
     log_info "Architecture: $architecture"
+    log_info "Cluster size: $cluster_size nodes"
 
     # Note: For c4-based deployments, download URLs are handled by Ansible
     # The credentials file contains db_download_url and c4_download_url that
@@ -103,46 +104,12 @@ cmd_deploy() {
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"
 
-    # Initialize Terraform/Tofu
-    progress_start "deploy" "tofu_init" "Initializing OpenTofu"
-    if ! tofu init -upgrade; then
+    # Run all tofu operations (init, plan, apply)
+    log_info "Creating cloud infrastructure..."
+
+    if ! { tofu init -upgrade && tofu plan -out=tfplan && tofu apply -auto-approve tfplan; }; then
         state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
-        progress_fail "deploy" "tofu_init" "OpenTofu initialization failed"
-        die "Terraform initialization failed"
-    fi
-    progress_complete "deploy" "tofu_init" "OpenTofu initialized successfully"
-
-    # Plan
-    progress_start "deploy" "tofu_plan" "Planning infrastructure changes"
-    if ! tofu plan -out=tfplan; then
-        state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
-        progress_fail "deploy" "tofu_plan" "Infrastructure planning failed"
-        die "Terraform planning failed"
-    fi
-    progress_complete "deploy" "tofu_plan" "Infrastructure plan created"
-
-    # Apply
-    progress_start "deploy" "tofu_apply" "Creating cloud infrastructure"
-    if ! run_tofu_with_progress "deploy" "tofu_apply" "Creating cloud infrastructure" tofu apply -auto-approve tfplan; then
-        state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
-        progress_fail "deploy" "tofu_apply" "Infrastructure creation failed"
-        die "Terraform apply failed"
-    fi
-    progress_complete "deploy" "tofu_apply" "Cloud infrastructure created"
-
-    # Wait for instances to be ready
-    progress_start "deploy" "wait_instances" "Waiting for instances to initialize (60s)"
-    sleep 60
-    progress_complete "deploy" "wait_instances" "Instances ready"
-
-    # Show deployment summary before Ansible configuration
-    if tofu output summary >/dev/null 2>&1; then
-        log_info ""
-        log_info "🚀 Deployment Summary (Infrastructure Ready):"
-        tofu output summary
-        log_info ""
-        log_info "📋 Next: Configuring cluster with Ansible..."
-        log_info ""
+        die "Infrastructure deployment failed"
     fi
 
     # Check if Ansible playbook exists
@@ -157,34 +124,25 @@ cmd_deploy() {
         return 0
     fi
 
-    # Run Ansible
-    progress_start "deploy" "ansible_config" "Configuring cluster with Ansible"
-
     # Check if inventory file was generated
     if [[ ! -f "$deploy_dir/inventory.ini" ]]; then
         log_warn "Ansible inventory not found, skipping configuration"
         state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
         operation_success
-        progress_complete "deploy" "ansible_config" "Infrastructure deployed (Ansible skipped)"
-        progress_complete "deploy" "complete" "Deployment completed successfully"
         log_info ""
         log_info "⚠️  Note: Ansible configuration skipped (inventory not found)"
         return 0
     fi
 
-    if ! run_ansible_with_progress "deploy" "ansible_config" "Configuring cluster" ansible-playbook -i inventory.ini .templates/setup-exasol-cluster.yml; then
+    log_info "Configuring cluster with Ansible..."
+    if ! ansible-playbook -i inventory.ini .templates/setup-exasol-cluster.yml; then
         state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
-        progress_fail "deploy" "ansible_config" "Ansible configuration failed"
         die "Ansible configuration failed"
     fi
-    progress_complete "deploy" "ansible_config" "Cluster configured successfully"
 
     # Update status to success
     state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
     operation_success
-
-    # Display results
-    progress_complete "deploy" "complete" "Deployment completed successfully"
 
     log_info ""
     log_info "✅ Exasol Cluster Deployment Complete!"

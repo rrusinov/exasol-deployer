@@ -219,7 +219,7 @@ class TestE2EFrameworkUtilities(unittest.TestCase):
             'cluster_size': 2,
             'data_volumes_per_node': 1,
             'data_volume_size': 50,
-            'instance_type': 'm6idn.large'
+            'instance_type': 't3a.large'
         }}]
         metrics = monitor.evaluate_plan(valid_plan, max_parallel=1)
         self.assertEqual(metrics['total_instances'], 2)

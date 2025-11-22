@@ -27,6 +27,7 @@ source "$SCRIPT_DIR/lib/cmd_status.sh"
 source "$SCRIPT_DIR/lib/cmd_health.sh"
 source "$SCRIPT_DIR/lib/cmd_start.sh"
 source "$SCRIPT_DIR/lib/cmd_stop.sh"
+source "$SCRIPT_DIR/lib/cmd_add_metrics.sh"
 
 # Global flags
 DEPLOYMENT_DIR="."
@@ -54,6 +55,7 @@ Available Commands:
   destroy     Destroy an active deployment
   status      Get the status of a deployment
   health      Run connectivity and service health checks
+  add-metrics Copy calibrated metrics to global repository
   version     Print the program version and exit
   help        Show this help message
 
@@ -65,32 +67,35 @@ Global Flags:
 Use "exasol [command] --help" for more information about a command.
 
 Examples:
-  # Initialize a new deployment with default version
-  exasol init --deployment-dir ./my-deployment
+   # Initialize a new deployment with default version
+   exasol init --deployment-dir ./my-deployment
 
-  # Initialize with specific version and architecture
-  exasol init --db-version 8.0.0-x86_64 --cluster-size 4
+   # Initialize with specific version and architecture
+   exasol init --db-version 8.0.0-x86_64 --cluster-size 4
 
-  # List available database versions
-  exasol init --list-versions
+   # List available database versions
+   exasol init --list-versions
 
-  # Deploy the infrastructure
-  exasol deploy --deployment-dir ./my-deployment
+   # Deploy the infrastructure
+   exasol deploy --deployment-dir ./my-deployment
 
-  # Check deployment status
-  exasol status --deployment-dir ./my-deployment
+   # Check deployment status
+   exasol status --deployment-dir ./my-deployment
 
-  # Stop the database (keeps instances running)
-  exasol stop --deployment-dir ./my-deployment
+   # Stop the database (keeps instances running)
+   exasol stop --deployment-dir ./my-deployment
 
-  # Start a stopped database
-  exasol start --deployment-dir ./my-deployment
+   # Start a stopped database
+   exasol start --deployment-dir ./my-deployment
 
-  # Check health status
-  exasol health --deployment-dir ./my-deployment
+   # Check health status
+   exasol health --deployment-dir ./my-deployment
 
-  # Destroy the deployment
-  exasol destroy --deployment-dir ./my-deployment
+   # Copy calibrated metrics to global repository
+   exasol add-metrics --deployment-dir ./my-deployment
+
+   # Destroy the deployment
+   exasol destroy --deployment-dir ./my-deployment
 EOF
 }
 
@@ -174,7 +179,7 @@ main() {
                 exit 0
             fi
             check_required_commands
-            cmd_deploy --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            progress_wrap_command "deploy" "$DEPLOYMENT_DIR" cmd_deploy --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         destroy)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
@@ -182,7 +187,7 @@ main() {
                 exit 0
             fi
             check_required_commands
-            cmd_destroy --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            progress_wrap_command "destroy" "$DEPLOYMENT_DIR" cmd_destroy --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         start)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
@@ -190,7 +195,7 @@ main() {
                 exit 0
             fi
             check_required_commands
-            cmd_start --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            progress_wrap_command "start" "$DEPLOYMENT_DIR" cmd_start --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         stop)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
@@ -198,7 +203,7 @@ main() {
                 exit 0
             fi
             check_required_commands
-            cmd_stop --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            progress_wrap_command "stop" "$DEPLOYMENT_DIR" cmd_stop --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         status)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
@@ -213,6 +218,13 @@ main() {
                 exit 0
             fi
             cmd_health --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        add-metrics)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_add_metrics_help
+                exit 0
+            fi
+            cmd_add_metrics --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         version)
             show_version

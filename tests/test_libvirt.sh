@@ -45,6 +45,7 @@ test_libvirt_command_line_options() {
     # Test with all libvirt options
     cmd_init --cloud-provider libvirt --deployment-dir "$test_dir" \
         --libvirt-memory 16 --libvirt-vcpus 8 --libvirt-network br0 --libvirt-pool exasol \
+        --libvirt-uri qemu:///session \
         --cluster-size 2 --data-volume-size 200 2>/dev/null
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
@@ -95,6 +96,17 @@ test_libvirt_command_line_options() {
             all_options_found=false
         fi
 
+        if grep -q "libvirt_uri = \"qemu:///session\"" "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} libvirt_uri correctly set from CLI flag"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} libvirt_uri not found or incorrect"
+            all_options_found=false
+        fi
+
         if [[ "$all_options_found" == true ]]; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -115,6 +127,20 @@ test_libvirt_default_values() {
     echo "Test: Libvirt default values"
 
     local test_dir=$(setup_test_dir)
+    local stub_dir
+    stub_dir=$(mktemp -d)
+    local prev_path="$PATH"
+    PATH="$stub_dir:$PATH"
+
+    cat >"$stub_dir/virsh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "uri" ]]; then
+    echo "qemu:///session"
+else
+    exit 1
+fi
+EOF
+    chmod +x "$stub_dir/virsh"
 
     # Test with default values (no libvirt options specified)
     cmd_init --cloud-provider libvirt --deployment-dir "$test_dir" 2>/dev/null
@@ -170,6 +196,17 @@ test_libvirt_default_values() {
             all_defaults_correct=false
         fi
 
+        if grep -Eq 'libvirt_uri\s*=\s*".+"' "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Default libvirt_uri detected and recorded"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Default libvirt_uri missing"
+            all_defaults_correct=false
+        fi
+
         if [[ "$all_defaults_correct" == true ]]; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -182,6 +219,57 @@ test_libvirt_default_values() {
     fi
 
     cleanup_test_dir "$test_dir"
+    PATH="$prev_path"
+    rm -rf "$stub_dir"
+}
+
+# Test: libvirt firmware detection matches URI type
+test_libvirt_firmware_detection() {
+    echo ""
+    echo "Test: Libvirt firmware detection"
+
+    local session_dir
+    session_dir=$(setup_test_dir)
+    cmd_init --cloud-provider libvirt --deployment-dir "$session_dir" --libvirt-uri qemu:///session 2>/dev/null
+
+    if [[ -f "$session_dir/variables.auto.tfvars" ]]; then
+        if grep -q 'libvirt_firmware = ""' "$session_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Session URI leaves firmware empty"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Session URI firmware not empty"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Session variables.auto.tfvars missing"
+    fi
+    cleanup_test_dir "$session_dir"
+
+    local system_dir
+    system_dir=$(setup_test_dir)
+    cmd_init --cloud-provider libvirt --deployment-dir "$system_dir" --libvirt-uri qemu:///system 2>/dev/null
+
+    if [[ -f "$system_dir/variables.auto.tfvars" ]]; then
+        if grep -q 'libvirt_firmware = "efi"' "$system_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} System URI defaults firmware to efi"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} System URI firmware not set to efi"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} System variables.auto.tfvars missing"
+    fi
+
+    cleanup_test_dir "$system_dir"
 }
 
 # Test: Libvirt templates are copied correctly
@@ -194,7 +282,7 @@ test_libvirt_template_copy() {
     cmd_init --cloud-provider libvirt --deployment-dir "$test_dir" 2>/dev/null
 
     if [[ -d "$test_dir/.templates" ]]; then
-        local required_files=("main.tf" "variables.tf" "outputs.tf")
+        local required_files=("main.tf" "variables.tf" "outputs.tf" "scripts/remove_ide_controller.xsl")
         local unexpected_files=("cloud-init.cfg" "domain.xslt")
         local all_files_found=true
         local no_duplicate_templates=true
@@ -322,6 +410,7 @@ test_libvirt_instance_type_mapping() {
 test_libvirt_in_supported_providers
 test_libvirt_command_line_options
 test_libvirt_default_values
+test_libvirt_firmware_detection
 test_libvirt_template_copy
 test_libvirt_readme_generation
 test_libvirt_instance_type_mapping

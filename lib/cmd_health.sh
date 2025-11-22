@@ -6,6 +6,8 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$LIB_DIR/common.sh"
 # shellcheck source=lib/state.sh
 source "$LIB_DIR/state.sh"
+# shellcheck source=lib/health_internal.sh
+source "$LIB_DIR/health_internal.sh"
 
 readonly HEALTH_REQUIRED_SERVICES=(
     "c4.service"
@@ -35,17 +37,29 @@ Usage:
   exasol health [flags]
 
 Flags:
-  --deployment-dir <path>   Deployment directory (default: ".")
-  --refresh-terraform       Run 'tofu refresh' to sync Terraform state
-  --output-format <format>  Output format: text (default) or json
-  --verbose                 Show detailed output
-  --update                  Refresh IPs and correct deployment status if cluster is healthy
-  --quiet                   Show only errors and final status
-  -h, --help                Show help
+  --deployment-dir <path>      Deployment directory (default: ".")
+  --refresh-terraform          Run 'tofu refresh' to sync Terraform state
+  --output-format <format>     Output format: text (default) or json
+  --verbose                    Show detailed output
+  --update                     Refresh IPs and correct deployment status if cluster is healthy
+  --quiet                      Show only errors and final status
+  --wait-for <status,timeout>  Wait until deployment reaches status with timeout
+                               Format: status,timeout (e.g., database_ready,15m)
+                               If timeout omitted, defaults to 15m
+  -h, --help                   Show help
+
+Wait-for Status Values:
+  database_ready               Wait for database to be healthy and ready
+  stopped                      Wait for cluster to be fully stopped
+
+Timeout Formats:
+  15m                          15 minutes
+  1h                           1 hour
+  60s                          60 seconds
 
 Exit Codes:
   0  Health check passed without issues
-  1  Health check detected issues
+  1  Health check detected issues or timeout reached
 
 Examples:
   exasol health --deployment-dir ./my-deployment
@@ -53,6 +67,8 @@ Examples:
   exasol health --deployment-dir ./my-deployment --refresh-terraform
   exasol health --deployment-dir ./my-deployment --verbose
   exasol health --deployment-dir ./my-deployment --update
+  exasol health --deployment-dir ./my-deployment --wait-for database_ready,15m
+  exasol health --deployment-dir ./my-deployment --wait-for database_ready
 EOF
 }
 
@@ -88,21 +104,34 @@ health_fetch_remote_ips() {
     local host_name="$2"
     local ssh_timeout="$3"
     local cloud_provider="$4"
+    local deploy_dir="${5:-.}"  # Optional deploy_dir parameter
 
     local private_ip=""
     private_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" hostname -I 2>/dev/null | awk '{print $1}' || true)
 
-    # Try to get public IP using ip.me (works for all cloud providers)
+    # Extract node index from host_name (e.g., "n11" -> 0, "n12" -> 1)
+    local node_index
+    if [[ "$host_name" =~ ^n([0-9]+)$ ]]; then
+        node_index=$((BASH_REMATCH[1] - 11))
+    else
+        node_index=-1
+    fi
+
+    # Try to get public IP from tofu output first (works for all providers, including libvirt and isolated environments)
     local public_ip=""
-    public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
-        "curl -s --max-time 3 ip.me 2>/dev/null" 2>/dev/null || true)
+    if [[ -n "$deploy_dir" ]] && [[ -d "$deploy_dir" ]] && [[ $node_index -ge 0 ]]; then
+        if cd "$deploy_dir" 2>/dev/null; then
+            public_ip=$(tofu output -json node_public_ips 2>/dev/null | jq -r ".[$node_index] // empty" 2>/dev/null || true)
+            cd - >/dev/null 2>&1 || true
+        fi
+    fi
 
     # Clean up the result (remove any whitespace/newlines)
     public_ip=$(echo "$public_ip" | tr -d '\r\n' | xargs)
 
-    # Validate that we got a valid IP address (basic check)
+    # If tofu output failed or returned invalid data, fall back to cloud-specific metadata services
     if [[ ! "$public_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        # If ip.me failed or returned invalid data, fall back to cloud metadata
+        # Try cloud provider metadata services first (more reliable than ip.me)
         case "$cloud_provider" in
             aws)
                 public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
@@ -118,6 +147,13 @@ health_fetch_remote_ips() {
                 ;;
         esac
         public_ip=$(echo "$public_ip" | tr -d '\r\n' | xargs)
+
+        # If metadata services failed, try ip.me as last resort (may return incorrect IP for libvirt/NAT)
+        if [[ ! "$public_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                "curl -s --max-time 3 ip.me 2>/dev/null" 2>/dev/null || true)
+            public_ip=$(echo "$public_ip" | tr -d '\r\n' | xargs)
+        fi
     fi
 
     # If still no valid public IP, fall back to private IP
@@ -577,6 +613,7 @@ health_check_single_host() {
     local cloud_provider="$5"
     local check_cluster_state="$6"  # "true" or "false"
     local result_dir="$7"
+    local deploy_dir="${8:-.}"  # Optional deploy_dir parameter
 
     local result_file="${result_dir}/health_${host_name}_$$.tmp"
     local -a local_issues=()
@@ -627,7 +664,7 @@ health_check_single_host() {
 
         # Fetch IPs
         local ip_info
-        ip_info=$(health_fetch_remote_ips "$ssh_config" "$host_name" "$ssh_timeout" "$cloud_provider")
+        ip_info=$(health_fetch_remote_ips "$ssh_config" "$host_name" "$ssh_timeout" "$cloud_provider" "$deploy_dir")
         IFS='|' read -r private_ip public_ip <<<"$ip_info"
         [[ -z "$public_ip" ]] && public_ip="$private_ip"
 
@@ -697,6 +734,8 @@ cmd_health() {
     local output_format="text"
     local verbosity="normal"  # normal, verbose, quiet
     local do_update_metadata="false"
+    local wait_for_status=""
+    local wait_timeout="15m"
 
 
 
@@ -734,6 +773,19 @@ cmd_health() {
                 do_update_metadata="true"
                 shift
                 ;;
+            --wait-for)
+                # Parse comma-separated status,timeout format
+                local wait_for_value="$2"
+                if [[ "$wait_for_value" =~ ^([^,]+),(.+)$ ]]; then
+                    wait_for_status="${BASH_REMATCH[1]}"
+                    wait_timeout="${BASH_REMATCH[2]}"
+                else
+                    # Only status provided, use default timeout
+                    wait_for_status="$wait_for_value"
+                    wait_timeout="15m"
+                fi
+                shift 2
+                ;;
             *)
                 log_error "Unknown option for health command: $1"
                 return 1
@@ -753,6 +805,129 @@ cmd_health() {
 
     local cloud_provider
     cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
+
+    # Handle --wait-for BEFORE acquiring lock and running checks
+    # We need to define the internal health check function that can be called without locks
+    if [[ -n "$wait_for_status" ]]; then
+        # Convert timeout to seconds
+        local timeout_seconds
+        if [[ "$wait_timeout" =~ ^([0-9]+)m$ ]]; then
+            timeout_seconds=$((BASH_REMATCH[1] * 60))
+        elif [[ "$wait_timeout" =~ ^([0-9]+)h$ ]]; then
+            timeout_seconds=$((BASH_REMATCH[1] * 3600))
+        elif [[ "$wait_timeout" =~ ^([0-9]+)s$ ]]; then
+            timeout_seconds="${BASH_REMATCH[1]}"
+        elif [[ "$wait_timeout" =~ ^([0-9]+)$ ]]; then
+            timeout_seconds="$wait_timeout"
+        else
+            die "Invalid timeout format: $wait_timeout (use format like 15m, 1h, 60s)"
+        fi
+
+        local start_time
+        start_time=$(date +%s)
+        local end_time=$((start_time + timeout_seconds))
+        local check_interval=10
+        local iteration=0
+
+        log_info "Waiting for status '$wait_for_status' (timeout: $wait_timeout)..."
+        log_info "Running health checks every $check_interval seconds..."
+        log_info ""
+
+        while true; do
+            local current_time
+            current_time=$(date +%s)
+
+            if [[ $current_time -ge $end_time ]]; then
+                # Timeout - run one final health check with full output
+                log_error ""
+                log_error "Timeout waiting for status '$wait_for_status' after $wait_timeout"
+                log_error "Running final health check..."
+                log_error ""
+
+                # Continue to run the normal health check below (without --wait-for)
+                # This will show the full diagnostic output
+                break
+            fi
+
+            iteration=$((iteration + 1))
+            log_info "Health check remaining time: $((end_time - current_time))s ..."
+
+            # Wait for any existing health check lock to be released
+            local lock_wait_seconds=0
+            local max_lock_wait=60
+            while lock_exists "$deploy_dir"; do
+                local lock_op
+                lock_op=$(lock_info "$deploy_dir" | jq -r '.operation // "unknown"' 2>/dev/null || echo "unknown")
+
+                if [[ "$lock_op" == "health" ]]; then
+                    # Another health check is running, wait for it
+                    if [[ $lock_wait_seconds -ge $max_lock_wait ]]; then
+                        log_warn "Health check lock held for ${max_lock_wait}s, proceeding anyway"
+                        break
+                    fi
+                    sleep 1
+                    lock_wait_seconds=$((lock_wait_seconds + 1))
+                else
+                    # Different operation is running, skip this iteration
+                    log_warn "Operation '$lock_op' in progress, skipping health check iteration"
+                    sleep "$check_interval"
+                    continue 2  # Continue outer while loop
+                fi
+            done
+
+            # Run the internal health check function (same as final check but quiet)
+            # This function sets variables: overall_issues, ssh_passed, ssh_failed, cluster_status, etc.
+            health_run_internal_checks "$deploy_dir" "quiet" "json" "$do_update_metadata" "$cloud_provider" 2>/dev/null || true
+
+            # Determine current status from health check results
+            local current_status
+            current_status=$(health_determine_status "$deploy_dir" "$ssh_passed" "$ssh_failed" "$cluster_status" "$overall_issues" 2>/dev/null || echo "unknown")
+            log_debug "Current status: $current_status (overall_issues=$overall_issues, cluster_status=$cluster_status, ssh_passed=$ssh_passed, ssh_failed=$ssh_failed)"
+
+            # Update persistent state if --update flag is set and status changed
+            if [[ "$do_update_metadata" == "true" && "$current_status" != "unknown" ]]; then
+                local persistent_status
+                persistent_status=$(state_get_status "$deploy_dir" 2>/dev/null || echo "unknown")
+
+                if [[ "$persistent_status" != "$current_status" ]]; then
+                    state_set_status "$deploy_dir" "$current_status"
+                    log_debug "Status updated: $persistent_status -> $current_status"
+                fi
+            fi
+
+            if [[ "$current_status" == "$wait_for_status" ]]; then
+                # Success - run one final health check with full output
+                log_info ""
+                log_info "✓ Status reached: $wait_for_status"
+                log_info "Running final health check..."
+                log_info ""
+
+                # Continue to run the normal health check below (without --wait-for)
+                # This will show the full diagnostic output
+                break
+            fi
+
+            # Check if we're in a failure state that won't recover
+            case "$current_status" in
+                *_failed)
+                    # Failure - run one final health check with full output
+                    log_error ""
+                    log_error "Deployment is in failed state: $current_status"
+                    log_error "Running final health check..."
+                    log_error ""
+
+                    # Continue to run the normal health check below (without --wait-for)
+                    # This will show the full diagnostic output
+                    break
+                    ;;
+            esac
+
+            sleep "$check_interval"
+        done
+
+        # After the wait loop, continue with normal health check execution
+        # This will perform one final health check and print the full report
+    fi
 
     # Check if another operation is in progress
     if lock_exists "$deploy_dir"; then
@@ -779,476 +954,10 @@ cmd_health() {
         log_warn "Deployment is in state: $current_state (health check may be incomplete)"
     fi
 
-    local inventory_file="$deploy_dir/inventory.ini"
-    local ssh_config_file="$deploy_dir/ssh_config"
-
-    if [[ ! -f "$inventory_file" ]]; then
-        lock_remove "$deploy_dir"
-        die "Missing inventory.ini in $deploy_dir"
-    fi
-
-    if [[ ! -f "$ssh_config_file" ]]; then
-        lock_remove "$deploy_dir"
-        die "Missing ssh_config in $deploy_dir"
-    fi
-
-    health_require_tool "ssh"
-
-    local -a host_entries=()
-
-    # Parse inventory file using awk to extract host entries
-    if [[ -f "$inventory_file" ]]; then
-        mapfile -t host_entries < <(awk '
-        BEGIN { section = "" }
-        {
-            # Skip empty lines and comments
-            if (NF == 0 || $0 ~ /^[[:space:]]*#/) {
-                next
-            }
-
-            # Check for section headers
-            if ($0 ~ /^\[.*\]$/) {
-                # Extract section name
-                match($0, /\[(.*)\]/, arr)
-                section = arr[1]
-                next
-            }
-
-            # Only process lines in the exasol_nodes section
-            if (section != "exasol_nodes") {
-                next
-            }
-
-            # Parse host entry
-            host = $1
-            ansible_host = ""
-
-            # Find ansible_host parameter
-            for (i = 2; i <= NF; i++) {
-                if ($i ~ /^ansible_host=/) {
-                    split($i, kv, "=")
-                    ansible_host = kv[2]
-                    break
-                }
-            }
-
-            # Output in format: host|ansible_host
-            print host "|" ansible_host
-        }
-        ' "$inventory_file")
-    fi
-
-    if [[ ${#host_entries[@]} -eq 0 ]]; then
-        die "No hosts found in inventory.ini"
-    fi
-
-    # Progress tracking
-    progress_start "health" "checks" "Running health checks"
-
-    local ssh_timeout=10
-    local overall_issues=0
-    local ip_mismatches=0
-
-    # Tracking for JSON output
-    local -a json_issues=()
-    local -a failed_checks=()
-    local ssh_passed=0
-    local ssh_failed=0
-    local services_active=0
-    local services_failed=0
-    declare -A state_public_ip_map=()
-    declare -A tf_ip_by_host=()
-
-    # Preload public IPs from Terraform state (if available) keyed by host order
-    local -a state_public_ips=()
-    if mapfile -t state_public_ips < <(health_load_state_public_ips "$deploy_dir" 2>/dev/null); then
-        local idx=0
-        for entry in "${host_entries[@]}"; do
-            IFS='|' read -r host_name _ <<<"$entry"
-            host_name="${host_name//[[:space:]]/}"
-            [[ -z "$host_name" ]] && continue
-            if [[ -n "${state_public_ips[$idx]:-}" ]]; then
-                state_public_ip_map["$host_name"]="${state_public_ips[$idx]}"
-                tf_ip_by_host["$host_name"]="${state_public_ips[$idx]}"
-            fi
-            idx=$((idx + 1))
-        done
-    fi
-
-    # If update requested, rewrite inventory/ssh_config up front using TF state IPs
-    if [[ "$do_update_metadata" == "true" && ${#state_public_ip_map[@]} -gt 0 ]]; then
-        for i in "${!host_entries[@]}"; do
-            IFS='|' read -r host_name host_ip <<<"${host_entries[$i]}"
-            host_name="${host_name//[[:space:]]/}"
-            host_ip="${host_ip//[[:space:]]/}"
-            [[ -z "$host_name" ]] && continue
-
-            local tf_ip="${state_public_ip_map[$host_name]:-}"
-            if [[ -n "$tf_ip" && -n "$host_ip" && "$tf_ip" != "$host_ip" ]]; then
-                health_update_inventory_ip "$inventory_file" "$host_name" "$tf_ip" || true
-                health_update_ssh_config "$ssh_config_file" "$host_name" "$tf_ip" || true
-                health_update_info_file "$deploy_dir/INFO.txt" "$host_ip" "$tf_ip" || true
-                # Update host_entries so SSH checks use new IP
-                host_entries[i]="${host_name}|${tf_ip}"
-            elif [[ -n "$tf_ip" ]]; then
-                # Keep ssh_config in sync even if inventory already matches
-                health_update_inventory_ip "$inventory_file" "$host_name" "${host_ip:-$tf_ip}" || true
-                health_update_ssh_config "$ssh_config_file" "$host_name" "$tf_ip" || true
-                if [[ -n "$host_ip" && "$host_ip" != "$tf_ip" ]]; then
-                    health_update_info_file "$deploy_dir/INFO.txt" "$host_ip" "$tf_ip" || true
-                    host_entries[i]="${host_name}|${tf_ip}"
-                fi
-            fi
-        done
-    fi
-
-    # Determine if we should show detailed output
-    local show_details="true"
-    [[ "$verbosity" == "quiet" && "$output_format" == "text" ]] && show_details="false"
-
-    if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
-        echo "Health report for $deploy_dir"
-        echo "============================================================"
-    fi
-
-    # Skip cloud metadata check - we'll verify instance count through SSH connectivity instead
-    # Cloud metadata checks require AWS CLI and credentials which may not be available
-
-    # Launch parallel health checks for all hosts
-    if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
-        echo "Running health checks on ${#host_entries[@]} host(s) in parallel..."
-    fi
-
-    local result_dir
-    result_dir=$(get_runtime_temp_dir)
-    # Clean old health temp files for these hosts
-    for entry in "${host_entries[@]}"; do
-        IFS='|' read -r host_name _ <<<"$entry"
-        host_name="${host_name//[[:space:]]/}"
-        [[ -z "$host_name" ]] && continue
-        find "$result_dir" -maxdepth 1 -name "health_${host_name}_*.tmp" -delete 2>/dev/null || true
-    done
-
-    local -a result_files=()
-    local -a host_pids=()
-    local idx=0
-    for entry in "${host_entries[@]}"; do
-        IFS='|' read -r host_name host_ip <<<"$entry"
-        host_name="${host_name//[[:space:]]/}"
-        host_ip="${host_ip//[[:space:]]/}"
-
-        if [[ -z "$host_name" ]]; then
-            continue
-        fi
-
-        # Check if this is the first host (for cluster state check)
-        local check_cluster="false"
-        [[ "$idx" -eq 0 ]] && check_cluster="true"
-
-        # Launch health check in background
-        (
-            health_check_single_host "$ssh_config_file" "$host_name" "$host_ip" "$ssh_timeout" "$cloud_provider" "$check_cluster" "$result_dir" >/dev/null
-        ) &
-        host_pids+=($!)
-
-        idx=$((idx + 1))
-    done
-
-    # Show progress while waiting for results
-    if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
-        local completed=0
-        while [[ $completed -lt ${#host_pids[@]} ]]; do
-            completed=0
-            for pid in "${host_pids[@]}"; do
-                if ! kill -0 "$pid" 2>/dev/null; then
-                    completed=$((completed + 1))
-                fi
-            done
-            if [[ $completed -lt ${#host_pids[@]} ]]; then
-                echo -ne "\rProgress: $completed/${#host_pids[@]} hosts checked..."
-                sleep 0.5
-            fi
-        done
-        echo -e "\rProgress: ${#host_pids[@]}/${#host_pids[@]} hosts checked   "
-        echo ""
-    fi
-
-    # Wait for all background jobs to complete
-    for pid in "${host_pids[@]}"; do
-        wait "$pid" 2>/dev/null || true
-    done
-
-    # Collect all result files
-    for entry in "${host_entries[@]}"; do
-        IFS='|' read -r host_name host_ip <<<"$entry"
-        host_name="${host_name//[[:space:]]/}"
-
-        if [[ -z "$host_name" ]]; then
-            continue
-        fi
-
-        # Find the result file (may have different PID)
-        local result_file
-        result_file=$(find "$result_dir" -maxdepth 1 -name "health_${host_name}_*.tmp" 2>/dev/null | head -1)
-        if [[ -n "$result_file" && -f "$result_file" ]]; then
-            result_files+=("$result_file")
-        fi
-    done
-
-    # Update deployment status if health checks pass and --update is used
-    if [[ "$do_update_metadata" == "true" && "$overall_issues" -eq 0 ]]; then
-        local current_status
-        current_status=$(state_get_status "$deploy_dir")
-
-        # Check if cluster is database-ready (any host reports cluster_stage_d)
-        local cluster_ready="false"
-        for result_file in "${result_files[@]}"; do
-            if [[ -f "$result_file" ]]; then
-                local cluster_status
-                cluster_status=$(jq -r '.cluster_status' "$result_file" 2>/dev/null || echo "")
-                if [[ "$cluster_status" == "cluster_stage_d" ]]; then
-                    cluster_ready="true"
-                    break
-                fi
-            fi
-        done
-
-        # Update status from failure states to database_ready if cluster is healthy
-        if [[ "$current_status" == "deployment_failed" || "$current_status" == "database_connection_failed" || "$current_status" == "start_failed" || "$current_status" == "stop_failed" ]]; then
-            if [[ "$cluster_ready" == "true" ]]; then
-                state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
-                if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
-                    log_info "✅ Deployment status updated to 'database_ready' (cluster is healthy)"
-                fi
-            fi
-        fi
-    fi
-
-    # Process results and display output
-    for result_file in "${result_files[@]}"; do
-        if [[ ! -f "$result_file" ]]; then
-            continue
-        fi
-
-        # Read JSON result
-        local host_name ansible_host ssh_ok cos_ssh_ok services volume_status cluster_status private_ip public_ip port_8443_ok port_8563_ok
-        host_name=$(jq -r '.host' "$result_file" 2>/dev/null || echo "unknown")
-        ansible_host=$(jq -r '.ansible_host' "$result_file" 2>/dev/null || echo "unknown")
-        ssh_ok=$(jq -r '.ssh_ok' "$result_file" 2>/dev/null || echo "false")
-        cos_ssh_ok=$(jq -r '.cos_ssh_ok' "$result_file" 2>/dev/null || echo "false")
-        services=$(jq -r '.services' "$result_file" 2>/dev/null || echo "")
-        volume_status=$(jq -r '.volume_status' "$result_file" 2>/dev/null || echo "")
-        cluster_status=$(jq -r '.cluster_status' "$result_file" 2>/dev/null || echo "")
-        private_ip=$(jq -r '.private_ip' "$result_file" 2>/dev/null || echo "")
-        public_ip=$(jq -r '.public_ip' "$result_file" 2>/dev/null || echo "")
-        port_8443_ok=$(jq -r '.port_8443_ok' "$result_file" 2>/dev/null || echo "false")
-        port_8563_ok=$(jq -r '.port_8563_ok' "$result_file" 2>/dev/null || echo "false")
-        local host_changed="false"
-
-        # Add issues from this host to global issues
-        local host_issues
-        host_issues=$(jq -c '.issues[]' "$result_file" 2>/dev/null || echo "")
-        if [[ -n "$host_issues" ]]; then
-            while IFS= read -r issue; do
-                [[ -n "$issue" ]] && json_issues+=("$issue")
-            done <<< "$host_issues"
-        fi
-
-        # Count results (for both text and JSON output)
-        if [[ "$ssh_ok" == "true" ]]; then
-            ssh_passed=$((ssh_passed + 1))
-        else
-            ssh_failed=$((ssh_failed + 1))
-            overall_issues=$((overall_issues + 1))
-        fi
-
-        # Count service results
-        IFS=';' read -ra service_array <<< "$services"
-        for service_status in "${service_array[@]}"; do
-            [[ -z "$service_status" ]] && continue
-            IFS=':' read -r svc_name svc_state <<< "$service_status"
-            if [[ "$svc_state" == "active" ]]; then
-                services_active=$((services_active + 1))
-            else
-                services_failed=$((services_failed + 1))
-                overall_issues=$((overall_issues + 1))
-            fi
-        done
-
-        # Count volume issues
-        IFS='|' read -r vol_type vol_count vol_sizes <<< "$volume_status"
-        if [[ "$vol_type" == "no_data_volumes" || "$vol_type" == "broken_volume_symlink" ]]; then
-            overall_issues=$((overall_issues + 1))
-        fi
-
-        # Count IP mismatches
-        if [[ -n "$public_ip" && -n "$ansible_host" && "$public_ip" != "$private_ip" && "$public_ip" != "$ansible_host" ]]; then
-            ip_mismatches=$((ip_mismatches + 1))
-            overall_issues=$((overall_issues + 1))
-        fi
-
-        # Count port issues
-        if [[ "$port_8443_ok" != "true" && -n "$public_ip" ]]; then
-            overall_issues=$((overall_issues + 1))
-        fi
-        if [[ "$port_8563_ok" != "true" && -n "$public_ip" ]]; then
-            overall_issues=$((overall_issues + 1))
-        fi
-
-        # Now display (only for text output)
-        if [[ "$output_format" == "text" && "$show_details" == "true" ]]; then
-            echo "- Host: $host_name (ansible_host=${ansible_host})"
-
-            # SSH check
-            if [[ "$ssh_ok" == "true" ]]; then
-                echo "    ✓ SSH: OK"
-            else
-                echo "    ✗ SSH: FAILED (host unreachable)"
-                failed_checks+=("$host_name: SSH unreachable")
-
-                # If we have public IPs from Terraform state, try to update inventory/ssh_config even when SSH failed
-                if [[ "$do_update_metadata" == "true" ]]; then
-                    local state_ip=""
-                    state_ip="${state_public_ip_map[$host_name]:-}"
-                    if [[ -n "$state_ip" && "$state_ip" != "$ansible_host" ]]; then
-                        if health_update_inventory_ip "$inventory_file" "$host_name" "$state_ip"; then
-                            health_update_ssh_config "$ssh_config_file" "$host_name" "$state_ip"
-                            health_update_info_file "$deploy_dir/INFO.txt" "$ansible_host" "$state_ip"
-                            echo "    ✓ IP updated from Terraform state: now $state_ip"
-                            host_changed="true"
-                        fi
-                    fi
-                fi
-
-                continue
-            fi
-
-            # COS SSH check
-            if [[ "$cos_ssh_ok" == "true" ]]; then
-                echo "    ✓ COS SSH (${host_name}-cos): OK"
-            elif grep -Eq "^Host[[:space:]]+${host_name}-cos" "$ssh_config_file" 2>/dev/null; then
-                echo "    ✗ COS SSH (${host_name}-cos): FAILED"
-                failed_checks+=("$host_name: COS SSH unreachable")
-            fi
-
-            # Service checks (display only - already counted above)
-            IFS=';' read -ra service_array <<< "$services"
-            for service_status in "${service_array[@]}"; do
-                if [[ -z "$service_status" ]]; then
-                    continue
-                fi
-                IFS=':' read -r svc_name svc_state <<< "$service_status"
-                if [[ "$svc_state" == "active" ]]; then
-                    echo "    ✓ Service $svc_name: active"
-                else
-                    echo "    ✗ Service $svc_name: $svc_state"
-                    failed_checks+=("$host_name: Service $svc_name is $svc_state")
-                fi
-            done
-
-            # Volume check (display only - already counted above)
-            IFS='|' read -r vol_type vol_count vol_sizes <<< "$volume_status"
-            if [[ "$vol_type" == "volume_ok" ]]; then
-                if [[ -n "$vol_sizes" ]]; then
-                    echo "    ✓ Volume check: OK ($vol_count disk(s) found: $vol_sizes)"
-                else
-                    echo "    ✓ Volume check: OK ($vol_count disk(s) found)"
-                fi
-            elif [[ "$vol_type" == "no_data_volumes" ]]; then
-                echo "    ✗ Volume check: WARNING - No exasol_data_* symlinks detected"
-                failed_checks+=("$host_name: No data volumes detected")
-            elif [[ "$vol_type" == "broken_volume_symlink" ]]; then
-                echo "    ✗ Volume check: WARNING - Broken symlinks: $vol_sizes"
-                failed_checks+=("$host_name: Broken volume symlinks")
-            fi
-
-            # Cluster state
-            if [[ "$cluster_status" == "cluster_stage_d" ]]; then
-                echo "    ✓ Cluster state: Stage 'd' - Database ready (all nodes)"
-            elif [[ "$cluster_status" == "cluster_stage_a" ]]; then
-                echo "    ○ Cluster state: Stage 'a/a1' - Stopped (instances running, database stopped)"
-            elif [[ "$cluster_status" == "cluster_stage_b" ]]; then
-                echo "    ⚠ Cluster state: Stage 'b/b1' - Boot stage (services starting)"
-                failed_checks+=("$host_name: Cluster in boot stage")
-            elif [[ "$cluster_status" == "cluster_stage_c" ]]; then
-                echo "    ⚠ Cluster state: Stage 'c' - COS ready (database not started)"
-                failed_checks+=("$host_name: Cluster at COS stage, database not ready")
-            elif [[ "$cluster_status" == cluster_stage_mixed:* ]]; then
-                local stages="${cluster_status#cluster_stage_mixed:}"
-                echo "    ✗ Cluster state: Mixed stages across nodes ($stages)"
-                failed_checks+=("$host_name: Cluster has mixed stages: $stages")
-            elif [[ "$cluster_status" == "cluster_state_unknown" ]]; then
-                echo "    Cluster state: Unable to verify (c4 ps unavailable)"
-            fi
-
-            # IP information
-            if [[ -n "$private_ip" ]]; then
-                echo "    ✓ Private IP: $private_ip"
-            fi
-
-            # Decide desired IP to use for metadata updates: prefer TF state, then detected public_ip, else ansible_host
-            local desired_ip="$ansible_host"
-            if [[ -n "${state_public_ip_map[$host_name]:-}" ]]; then
-                desired_ip="${state_public_ip_map[$host_name]}"
-            elif [[ -n "$public_ip" && "$public_ip" != "$private_ip" ]]; then
-                desired_ip="$public_ip"
-            fi
-
-            # Apply updates if requested
-            if [[ "$do_update_metadata" == "true" && -n "$desired_ip" ]]; then
-                local inv_changed="false"
-                local ssh_changed="false"
-
-                if health_update_inventory_ip "$inventory_file" "$host_name" "$desired_ip"; then
-                    inv_changed="true"
-                fi
-                if health_update_ssh_config "$ssh_config_file" "$host_name" "$desired_ip"; then
-                    ssh_changed="true"
-                fi
-                if health_update_info_file "$deploy_dir/INFO.txt" "$ansible_host" "$desired_ip"; then
-                    host_changed="true"
-                fi
-
-                if [[ "$inv_changed" == "true" || "$ssh_changed" == "true" || "$host_changed" == "true" ]]; then
-                    echo "    ✓ IP metadata updated to $desired_ip"
-                    ansible_host="$desired_ip"
-                fi
-            fi
-
-            # IP mismatch check (display only)
-            if [[ -n "$public_ip" && -n "$ansible_host" && "$public_ip" != "$private_ip" ]]; then
-                if [[ "$public_ip" == "$ansible_host" ]]; then
-                    echo "    ✓ Public IP: $public_ip (matches inventory)"
-                else
-                    echo "    ✗ IP mismatch: inventory has $ansible_host, cloud metadata shows $public_ip"
-                    failed_checks+=("$host_name: IP mismatch (inventory=$ansible_host, actual=$public_ip)")
-                fi
-            elif [[ -n "$public_ip" && "$public_ip" == "$private_ip" ]]; then
-                echo "    ⓘ Public IP: Cannot verify (cloud metadata not accessible, inventory shows $ansible_host)"
-            fi
-
-            # Port checks (display only - already counted above)
-            if [[ "$port_8443_ok" == "true" ]]; then
-                echo "    ✓ Admin UI (8443): HTTPS reachable"
-            elif [[ -n "$public_ip" ]]; then
-                echo "    ✗ Admin UI (8443): FAILED"
-                failed_checks+=("$host_name: Admin UI port 8443 unreachable")
-            fi
-
-            if [[ "$port_8563_ok" == "true" ]]; then
-                echo "    ✓ DB port (8563): reachable"
-            elif [[ -n "$public_ip" ]]; then
-                echo "    ✗ DB port (8563): FAILED"
-                failed_checks+=("$host_name: DB port 8563 unreachable")
-            fi
-        fi
-
-        # Clean up result file
-        rm -f "$result_file"
-    done
-
-    # Clean up any remaining health temp files for this run
-    find "$result_dir" -maxdepth 1 -name "health_*.tmp" -delete 2>/dev/null || true
+    # Run internal health checks
+    # This function sets all health check variables: overall_issues, ssh_passed, ssh_failed, 
+    # cluster_status, cluster_ready, services_active, services_failed, json_issues, failed_checks, etc.
+    health_run_internal_checks "$deploy_dir" "$verbosity" "$output_format" "$do_update_metadata" "$cloud_provider"
 
     # Terraform state refresh if requested
     if [[ "$do_refresh_terraform" == "true" ]]; then
@@ -1278,7 +987,7 @@ cmd_health() {
     local history_file="$deploy_dir/.health_history.jsonl"
     local history_entry
     history_entry=$(cat <<EOF
-{"timestamp": "$timestamp", "status": "$([ $overall_issues -eq 0 ] && echo healthy || echo unhealthy)", "issues_count": $overall_issues, "ssh_passed": $ssh_passed, "ssh_failed": $ssh_failed, "services_active": $services_active, "services_failed": $services_failed}
+{"timestamp": "$timestamp", "status": "$([ "$overall_issues" -eq 0 ] && echo healthy || echo unhealthy)", "issues_count": $overall_issues, "ssh_passed": $ssh_passed, "ssh_failed": $ssh_failed, "services_active": $services_active, "services_failed": $services_failed}
 EOF
     )
     echo "$history_entry" >> "$history_file"
@@ -1286,13 +995,6 @@ EOF
     local health_status="healthy"
     [[ "$overall_issues" -gt 0 ]] && health_status="unhealthy"
     state_update "$deploy_dir" "health_status" "$health_status"
-
-    # Progress tracking
-    if [[ "$overall_issues" -eq 0 ]]; then
-        progress_complete "health" "checks" "Health check completed successfully"
-    else
-        progress_fail "health" "checks" "Health check detected $overall_issues issue(s)"
-    fi
 
     # Generate output based on format
     if [[ "$output_format" == "json" ]]; then
