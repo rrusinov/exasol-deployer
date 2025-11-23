@@ -521,6 +521,25 @@ cmd_init() {
         fi
     fi
 
+    # Validate DigitalOcean token
+    if [[ "$cloud_provider" == "digitalocean" ]]; then
+        # If token is empty, try to read from ~/.digitalocean_token
+        if [[ -z "$digitalocean_token" ]]; then
+            local token_file="$HOME/.digitalocean_token"
+            if [[ -f "$token_file" ]]; then
+                digitalocean_token=$(cat "$token_file" | tr -d '[:space:]')
+                log_info "Using DigitalOcean token from $token_file"
+            else
+                die "DigitalOcean token is required. Please provide via --digitalocean-token or create ~/.digitalocean_token file"
+            fi
+        fi
+
+        # Validate token is not empty after reading from file
+        if [[ -z "$digitalocean_token" ]]; then
+            die "DigitalOcean token cannot be empty"
+        fi
+    fi
+
     log_info "Creating variables file..."
     write_provider_variables "$deploy_dir" "$cloud_provider" \
         "$aws_region" "$aws_profile" "$aws_spot_instance" \

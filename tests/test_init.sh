@@ -498,6 +498,103 @@ EOF
     cleanup_test_dir "$test_dir"
 }
 
+test_digitalocean_token_validation() {
+    echo ""
+    echo "Test: DigitalOcean token validation"
+
+    local test_dir=$(setup_test_dir)
+
+    # Test 1: Init without token should fail
+    echo "  Testing: Init without token should fail"
+    local output
+    output=$(cmd_init --cloud-provider digitalocean \
+        --deployment-dir "$test_dir" \
+        --digitalocean-region nyc3 \
+        2>&1)
+    local exit_code=$?
+
+    assert_failure "$exit_code" "DigitalOcean init without token should fail"
+    assert_contains "$output" "DigitalOcean token is required" "Error should mention token requirement"
+
+    # Test 2: Init with empty token should fail
+    echo "  Testing: Init with empty token should fail"
+    output=$(cmd_init --cloud-provider digitalocean \
+        --deployment-dir "$test_dir" \
+        --digitalocean-region nyc3 \
+        --digitalocean-token "" \
+        2>&1)
+    exit_code=$?
+
+    assert_failure "$exit_code" "DigitalOcean init with empty token should fail"
+    assert_contains "$output" "DigitalOcean token" "Error should mention token"
+
+    # Test 3: Init with token from file should succeed
+    echo "  Testing: Init with token from ~/.digitalocean_token should succeed"
+    local token_file="$HOME/.digitalocean_token"
+    local token_backup=""
+    if [[ -f "$token_file" ]]; then
+        token_backup=$(cat "$token_file")
+    fi
+
+    echo "test-token-from-file-12345" > "$token_file"
+
+    cmd_init --cloud-provider digitalocean \
+        --deployment-dir "$test_dir" \
+        --digitalocean-region nyc3 \
+        2>/dev/null
+    exit_code=$?
+
+    # Restore original token file
+    if [[ -n "$token_backup" ]]; then
+        echo "$token_backup" > "$token_file"
+    else
+        rm -f "$token_file"
+    fi
+
+    if [[ $exit_code -eq 0 ]]; then
+        if grep -q "test-token-from-file-12345" "$test_dir/variables.auto.tfvars" 2>/dev/null; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} Should use token from ~/.digitalocean_token"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} Token from file should be in variables.auto.tfvars"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Init with token from file should succeed"
+    fi
+
+    # Test 4: Command-line token should override file
+    echo "  Testing: Command-line token should take precedence over file"
+    echo "file-token-123" > "$token_file"
+
+    local test_dir2
+    test_dir2=$(setup_test_dir)
+    cmd_init --cloud-provider digitalocean \
+        --deployment-dir "$test_dir2" \
+        --digitalocean-region nyc3 \
+        --digitalocean-token "cmdline-token-456" \
+        2>/dev/null
+
+    if grep -q "cmdline-token-456" "$test_dir2/variables.auto.tfvars" 2>/dev/null; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Command-line token should override file token"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Command-line token should take precedence"
+    fi
+
+    # Cleanup
+    rm -f "$token_file"
+    cleanup_test_dir "$test_dir"
+    cleanup_test_dir "$test_dir2"
+}
+
 test_hetzner_private_ip_template() {
     echo ""
     echo "Test: Hetzner template uses network private IPs"
@@ -619,6 +716,7 @@ test_hetzner_initialization
 test_hetzner_network_zone_configuration
 test_digitalocean_initialization
 test_digitalocean_arm64_guard
+test_digitalocean_token_validation
 test_hetzner_private_ip_template
 test_config_datadisk_format
 

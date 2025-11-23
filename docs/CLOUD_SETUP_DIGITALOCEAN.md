@@ -54,16 +54,22 @@ DigitalOcean frequently offers:
 ### Secure Token Storage
 
 ```bash
-# Store token securely in environment variable
-export DIGITALOCEAN_TOKEN="your-token-here"
-
-# Or store in a secure file
+# Option 1: Store token in ~/.digitalocean_token (recommended)
+# The exasol CLI will automatically read from this file
 echo "your-token-here" > ~/.digitalocean_token
 chmod 600 ~/.digitalocean_token
 
-# Use in deployment
+# Option 2: Pass token via command line
+# Use this for one-off deployments or CI/CD
+export DIGITALOCEAN_TOKEN="your-token-here"
+
+# Option 3: Store in environment variable and use in commands
 export DIGITALOCEAN_TOKEN=$(cat ~/.digitalocean_token)
 ```
+
+**Token Priority:**
+1. Command-line argument `--digitalocean-token` (highest priority)
+2. File at `~/.digitalocean_token` (automatic fallback)
 
 **Never commit tokens to version control!**
 
@@ -114,13 +120,22 @@ doctl compute size list
 Single-node deployment with defaults:
 
 ```bash
+# With token in ~/.digitalocean_token (recommended - no --digitalocean-token needed)
+./exasol init \
+  --cloud-provider digitalocean \
+  --deployment-dir ./my-do-deployment
+
+# Or with explicit token
 ./exasol init \
   --cloud-provider digitalocean \
   --digitalocean-token "$DIGITALOCEAN_TOKEN" \
   --deployment-dir ./my-do-deployment
 ```
 
-**Warning**: Never commit the token to version control. Use environment variables.
+**Token handling**:
+- If you have `~/.digitalocean_token`, the token is loaded automatically
+- Use `--digitalocean-token` to override or for CI/CD pipelines
+- Never commit tokens to version control
 
 **Architecture note**: DigitalOcean currently offers only x86_64 droplets. `exasol init` will reject `--db-version` values that target arm64 when `--cloud-provider digitalocean` is used.
 
@@ -163,7 +178,12 @@ Cost-effective small cluster:
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--digitalocean-region` | Datacenter region | `nyc3` |
-| `--digitalocean-token` | DigitalOcean API token (required) | - |
+| `--digitalocean-token` | DigitalOcean API token | Reads from `~/.digitalocean_token` if not provided |
+
+**Token behavior**:
+- If `--digitalocean-token` is provided: Uses that token
+- If `--digitalocean-token` is NOT provided: Reads from `~/.digitalocean_token`
+- If neither exists: Init fails with error message
 
 **Note**: DigitalOcean does not support spot instances - all droplets are on-demand.
 
