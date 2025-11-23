@@ -178,7 +178,7 @@ DigitalOcean offers simple, straightforward droplet types with all-SSD storage.
 | `s-1vcpu-1gb` | 1 | 1 GB | 25 GB | 1 TB | $6 | Small dev |
 | `s-1vcpu-2gb` | 1 | 2 GB | 50 GB | 2 TB | $12 | Dev/test |
 | `s-2vcpu-2gb` | 2 | 2 GB | 60 GB | 3 TB | $18 | Small apps |
-| `s-2vcpu-4gb` | 2 | 4 GB | 80 GB | 4 TB | $24 | Dev cluster |
+| `s-2vcpu-4gb` | 2 | 4 GB | 80 GB | 4 TB | $24 | **Default** - Dev cluster |
 | `s-4vcpu-8gb` | 4 | 8 GB | 160 GB | 5 TB | $48 | Small production |
 
 *Current pricing as of 2025, check https://www.digitalocean.com/pricing for latest

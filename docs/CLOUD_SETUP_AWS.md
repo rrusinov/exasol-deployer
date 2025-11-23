@@ -203,6 +203,7 @@ The deployer automatically selects appropriate instance types based on database 
 
 | Instance Type | vCPUs | Memory | Network | Use Case |
 |---------------|-------|--------|---------|----------|
+| `t3a.medium` | 2 | 4 GB | Up to 5 Gbps | **Default** - Small dev/test |
 | `t3a.large` | 2 | 8 GB | Up to 5 Gbps | Small dev/test |
 | `t3a.xlarge` | 4 | 16 GB | Up to 5 Gbps | Small production |
 | `c7a.8xlarge` | 32 | 64 GB | 12.5 Gbps | Medium production |
@@ -213,6 +214,7 @@ The deployer automatically selects appropriate instance types based on database 
 
 | Instance Type | vCPUs | Memory | Network | Use Case |
 |---------------|-------|--------|---------|----------|
+| `t4g.medium` | 2 | 4 GB | Up to 5 Gbps | **Default** - Small dev/test |
 | `c7g.2xlarge` | 8 | 16 GB | Up to 15 Gbps | Small production |
 | `c7g.8xlarge` | 32 | 64 GB | 15 Gbps | Medium production |
 | `c7g.16xlarge` | 64 | 128 GB | 30 Gbps | Large production |
@@ -300,7 +302,7 @@ Enable spot instances to save up to 70%:
 
 ### Right-Sizing Strategy
 
-1. **Start small**: Begin with `t3a.large` for testing
+1. **Start small**: Begin with `t3a.medium` (default) for testing
 2. **Monitor performance**: Use AWS CloudWatch
 3. **Scale up**: Increase instance type if needed
 4. **Optimize storage**: Use only required volume sizes

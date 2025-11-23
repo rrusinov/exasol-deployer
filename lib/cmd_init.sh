@@ -413,8 +413,11 @@ cmd_init() {
             instance_type=$(get_version_config "$db_version" "DEFAULT_INSTANCE_TYPE_LIBVIRT" || echo "libvirt-custom")
             log_info "Using default instance type for libvirt: $instance_type"
         else
-            instance_type=$(get_version_config "$db_version" "DEFAULT_INSTANCE_TYPE")
-            log_info "Using default instance type for $cloud_provider: $instance_type"
+            instance_type=$(get_instance_type_default "$cloud_provider" "$architecture")
+            if [[ -z "$instance_type" ]]; then
+                die "No default instance type found for provider '$cloud_provider' and architecture '$architecture'"
+            fi
+            log_info "Using default instance type for $cloud_provider ($architecture): $instance_type"
         fi
     fi
 
