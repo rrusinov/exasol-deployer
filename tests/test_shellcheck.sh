@@ -31,6 +31,11 @@ fi
 tmp_output=$(mktemp)
 
 for script in "${shell_scripts[@]}"; do
+    if [[ ! -f "$script" ]]; then
+        echo ""
+        echo "Skipping (missing): $script"
+        continue
+    fi
     echo ""
     echo "Linting: $script"
     set +e

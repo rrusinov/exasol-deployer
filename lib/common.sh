@@ -33,8 +33,7 @@ case "${EXASOL_LOG_LEVEL:-}" in
     *) CURRENT_LOG_LEVEL=${LOG_LEVEL_INFO} ;;
 esac
 
-# Progress system: Simple LOC-based progress is now the only system
-# The EXASOL_SIMPLE_PROGRESS flag has been removed (always enabled)
+# Progress system: keyword-based step tracking (no calibration or ETA)
 
 # ==============================================================================
 # TEMP FILE HELPERS

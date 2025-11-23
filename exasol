@@ -27,7 +27,6 @@ source "$SCRIPT_DIR/lib/cmd_status.sh"
 source "$SCRIPT_DIR/lib/cmd_health.sh"
 source "$SCRIPT_DIR/lib/cmd_start.sh"
 source "$SCRIPT_DIR/lib/cmd_stop.sh"
-source "$SCRIPT_DIR/lib/cmd_add_metrics.sh"
 
 # Global flags
 DEPLOYMENT_DIR="."
@@ -55,7 +54,6 @@ Available Commands:
   destroy     Destroy an active deployment
   status      Get the status of a deployment
   health      Run connectivity and service health checks
-  add-metrics Copy calibrated metrics to global repository
   version     Print the program version and exit
   help        Show this help message
 
@@ -90,9 +88,6 @@ Examples:
 
    # Check health status
    exasol health --deployment-dir ./my-deployment
-
-   # Copy calibrated metrics to global repository
-   exasol add-metrics --deployment-dir ./my-deployment
 
    # Destroy the deployment
    exasol destroy --deployment-dir ./my-deployment
@@ -218,13 +213,6 @@ main() {
                 exit 0
             fi
             cmd_health --deployment-dir "$DEPLOYMENT_DIR" "$@"
-            ;;
-        add-metrics)
-            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
-                show_add_metrics_help
-                exit 0
-            fi
-            cmd_add_metrics --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         version)
             show_version

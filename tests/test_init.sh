@@ -208,6 +208,42 @@ test_credentials_file() {
     cleanup_test_dir "$test_dir"
 }
 
+test_exasol_entrypoint_init_providers() {
+    echo ""
+    echo "Test: exasol entrypoint init works for all providers"
+
+    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean" "libvirt")
+
+    for provider in "${providers[@]}"; do
+        local test_dir
+        test_dir=$(setup_test_dir)
+
+        if "$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} exasol init should succeed for provider: $provider"
+
+            local cloud_from_state
+            cloud_from_state=$(jq -r '.cloud_provider' "$test_dir/.exasol.json")
+            if [[ "$cloud_from_state" == "$provider" ]]; then
+                TESTS_TOTAL=$((TESTS_TOTAL + 1))
+                TESTS_PASSED=$((TESTS_PASSED + 1))
+                echo -e "${GREEN}✓${NC} State file records provider via entrypoint: $provider"
+            else
+                TESTS_TOTAL=$((TESTS_TOTAL + 1))
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                echo -e "${RED}✗${NC} State file should contain provider: $provider (got: $cloud_from_state)"
+            fi
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} exasol init should succeed for provider: $provider"
+        fi
+
+        cleanup_test_dir "$test_dir"
+    done
+}
+
 test_list_providers_shows_capabilities() {
     echo ""
     echo "Test: --list-providers shows capabilities"
@@ -686,6 +722,7 @@ test_digitalocean_arm64_guard
 test_digitalocean_token_validation
 test_hetzner_private_ip_template
 test_config_datadisk_format
+test_exasol_entrypoint_init_providers
 
 # Show summary
 test_summary
