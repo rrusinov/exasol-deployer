@@ -187,8 +187,10 @@ for vol_id in "${VOLUME_IDS[@]}"; do
         continue
     fi
 
-    if lsblk -nlo MOUNTPOINT "$target_device" | grep -q '^/'; then
-        log "SKIPPING: $target_device (volume: $vol_id) - has mounted partitions (likely root or other OS volume)"
+    # Skip if mounted at system paths (/, /boot, /var, etc.) but allow /mnt
+    # Note: Data volumes formatted by Ansible are typically mounted at /mnt/<volume-name>
+    if lsblk -nlo MOUNTPOINT "$target_device" | grep -q -E '^/(|boot|var|usr|opt|home|tmp|etc)(/|$)'; then
+        log "SKIPPING: $target_device (volume: $vol_id) - has system partitions mounted (likely OS volume)"
         continue
     fi
 
