@@ -143,6 +143,7 @@ run_tests() {
     test_status_constant_cross_references
 
     cleanup_mock_env
+    test_summary
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

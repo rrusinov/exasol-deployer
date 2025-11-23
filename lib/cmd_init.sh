@@ -527,7 +527,7 @@ cmd_init() {
         if [[ -z "$digitalocean_token" ]]; then
             local token_file="$HOME/.digitalocean_token"
             if [[ -f "$token_file" ]]; then
-                digitalocean_token=$(cat "$token_file" | tr -d '[:space:]')
+                digitalocean_token=$(tr -d '[:space:]' < "$token_file")
                 log_info "Using DigitalOcean token from $token_file"
             else
                 die "DigitalOcean token is required. Please provide via --digitalocean-token or create ~/.digitalocean_token file"

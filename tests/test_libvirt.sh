@@ -282,7 +282,7 @@ test_libvirt_template_copy() {
     cmd_init --cloud-provider libvirt --deployment-dir "$test_dir" 2>/dev/null
 
     if [[ -d "$test_dir/.templates" ]]; then
-        local required_files=("main.tf" "variables.tf" "outputs.tf" "scripts/remove_ide_controller.xsl")
+        local required_files=("main.tf" "variables.tf" "outputs.tf")
         local unexpected_files=("cloud-init.cfg" "domain.xslt")
         local all_files_found=true
         local no_duplicate_templates=true

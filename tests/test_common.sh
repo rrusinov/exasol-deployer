@@ -38,12 +38,17 @@ test_validate_directory() {
     local username
     username=$(whoami)
     local normalized_result="${result//\/.\//\/}"
-    local expected_pattern="^/(var/tmp|tmp)/exasol-deployer-utest-${username}-[a-zA-Z0-9]{6,}$"
-    if [[ ! "$normalized_result" =~ $expected_pattern ]]; then
-        echo -e "${RED}✗${NC} Result should match pattern /var/tmp/exasol-deployer-utest-${username}-XXXXXXXX"
+    local expected_pattern="^/(var/tmp|tmp)/exasol-deployer-utest-${username}-[a-zA-Z0-9]{6}-[a-zA-Z0-9]{6}$"
+    if [[ "$normalized_result" =~ $expected_pattern ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Should validate relative directory path"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should validate relative directory path"
         echo "  String: $normalized_result"
-        echo "  Expected pattern: /var/tmp/exasol-deployer-utest-${username}-XXXXXXXX (or /tmp/... fallback)"
-        return 1
+        echo "  Expected pattern: /var/tmp/exasol-deployer-utest-${username}-XXXXXX-XXXXXX (or /tmp/... fallback)"
     fi
 
     cleanup_test_dir "$test_dir"
