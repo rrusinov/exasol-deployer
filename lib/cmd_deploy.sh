@@ -97,21 +97,6 @@ cmd_deploy() {
     log_info "Architecture: $architecture"
     log_info "Cluster size: $cluster_size nodes"
 
-    # Calculate total estimated lines for entire deploy operation
-    # Based on actual measurements from real deployments
-    local total_lines
-    total_lines=$(estimate_lines "deploy" "$cluster_size")
-
-    # Initialize cumulative progress tracking for entire deploy
-    progress_init_cumulative "$total_lines"
-    export PROGRESS_CUMULATIVE_MODE=1
-
-    # Calculate sub-operation estimates for cumulative tracking
-    # These are proportional estimates based on typical deploy breakdown
-    local tofu_lines ansible_lines
-    tofu_lines=$((total_lines * 50 / 100))      # ~50% of deploy is infrastructure
-    ansible_lines=$((total_lines * 50 / 100))   # ~50% is ansible configuration
-
     # Note: For c4-based deployments, download URLs are handled by Ansible
     # The credentials file contains db_download_url and c4_download_url that
     # are passed to Ansible for downloading files on remote nodes
@@ -119,12 +104,10 @@ cmd_deploy() {
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"
 
-    # Run all tofu operations (init, plan, apply) as one cumulative step
+    # Run all tofu operations (init, plan, apply)
     log_info "Creating cloud infrastructure..."
 
-    # Combine all tofu operations and track as single progress block
-    if ! { tofu init -upgrade && tofu plan -out=tfplan && tofu apply -auto-approve tfplan; } 2>&1 | \
-        progress_prefix_cumulative "$tofu_lines"; then
+    if ! { tofu init -upgrade && tofu plan -out=tfplan && tofu apply -auto-approve tfplan; }; then
         state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
         die "Infrastructure deployment failed"
     fi
@@ -152,14 +135,10 @@ cmd_deploy() {
     fi
 
     log_info "Configuring cluster with Ansible..."
-    if ! ansible-playbook -i inventory.ini .templates/setup-exasol-cluster.yml 2>&1 | \
-        progress_prefix_cumulative "$ansible_lines"; then
+    if ! ansible-playbook -i inventory.ini .templates/setup-exasol-cluster.yml; then
         state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
         die "Ansible configuration failed"
     fi
-
-    # Disable cumulative mode after deploy
-    unset PROGRESS_CUMULATIVE_MODE
 
     # Update status to success
     state_set_status "$deploy_dir" "$STATE_DATABASE_READY"

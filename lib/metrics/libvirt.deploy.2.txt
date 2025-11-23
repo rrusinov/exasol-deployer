@@ -1,0 +1,6 @@
+total_lines=735
+provider=libvirt
+operation=deploy
+nodes=2
+duration=430
+timestamp=2025-01-18T10:00:00Z

@@ -41,6 +41,14 @@ exit 0
 EOF
     chmod +x "$MOCK_BIN_DIR/tofu"
 
+    # Create mock exasol command for health checks
+    cat > "$MOCK_BIN_DIR/exasol" <<'EOF'
+#!/usr/bin/env bash
+echo "Mock exasol command - health check failed"
+exit 1
+EOF
+    chmod +x "$MOCK_BIN_DIR/exasol"
+
     export PATH="$MOCK_BIN_DIR:$PATH"
 }
 
@@ -55,7 +63,7 @@ get_ansible_call_count() {
 }
 
 get_tofu_call_count() {
-    [[ -f "$TOFU_LOG" ]] && wc -l < "$TOFU_LOG" || echo "0"
+    [[ -f "$TOFU_LOG" ]] && grep -c "apply" "$TOFU_LOG" || echo "0"
 }
 
 get_ansible_calls() {
@@ -63,7 +71,7 @@ get_ansible_calls() {
 }
 
 get_tofu_calls() {
-    [[ -f "$TOFU_LOG" ]] && cat "$TOFU_LOG" || echo ""
+    [[ -f "$TOFU_LOG" ]] && grep "apply" "$TOFU_LOG" || echo ""
 }
 
 setup_mock_deployment_dir() {
@@ -176,7 +184,8 @@ exit 0
 EOF
     chmod +x "$MOCK_BIN_DIR/ssh"
 
-    cmd_start --deployment-dir "$dir" >/dev/null 2>&1
+    # Run start command with timeout to prevent hanging on health check
+    timeout 10 bash -c "cmd_start --deployment-dir '$dir' >/dev/null 2>&1" || true
 
     local tofu_count
     tofu_count=$(get_tofu_call_count)

@@ -6,11 +6,13 @@ This guide covers setting up libvirt/KVM virtualization for local Exasol deploym
 
 The libvirt provider enables local testing of Exasol deployments using KVM virtualization before moving to cloud providers. This provides a cost-effective local development and testing environment.
 
+> Status: The libvirt backend is in development and can vary across hosts (Linux system daemons, Linux user sessions, macOS HVF, or remote libvirt over SSH). Expect to adjust URIs, networks, and pools to match your host; it is not yet fully portable.
+
 ## Prerequisites
 
 ### System Requirements
 
-- **Operating System**: Linux (Ubuntu 20.04+, Debian 10+, CentOS 8+, RHEL 8+)
+- **Operating System**: Linux (Ubuntu 20.04+, Debian 10+, CentOS 8+, RHEL 8+) or macOS (10.15+)
 - **CPU**: Hardware virtualization support (Intel VT-x or AMD-V)
 - **Memory**: Minimum 8GB RAM (16GB+ recommended for multi-node clusters)
 - **Storage**: Minimum 100GB free disk space
@@ -18,14 +20,28 @@ The libvirt provider enables local testing of Exasol deployments using KVM virtu
 
 ### Hardware Virtualization Check
 
-Verify your CPU supports virtualization:
+Verify your system supports virtualization:
 
+**Linux**:
 ```bash
 # Check for Intel VT-x or AMD-V
 egrep -c '(vmx|svm)' /proc/cpuinfo
 
 # Should return > 0 if virtualization is supported
 # If 0, check BIOS settings to enable virtualization
+```
+
+**macOS**:
+macOS uses Hypervisor.framework for virtualization, which is supported on:
+- Intel Macs with VT-x enabled
+- Apple Silicon Macs (M1/M2/M3 chips)
+
+```bash
+# Check if virtualization is available
+sysctl kern.hv_support
+
+# Should return: kern.hv_support: 1
+# If 0, virtualization may not be available
 ```
 
 ## Installation
@@ -39,14 +55,8 @@ sudo apt update
 # Install required packages
 sudo apt install -y qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst genisoimage
 
-# Install Terraform/OpenTofu (if not already installed)
-# Using OpenTofu (recommended)
+# Install OpenTofu (if not already installed)
 curl -fsSL https://get.opentofu.org | sudo bash
-
-# Or using Terraform
-wget https://releases.hashicorp.com/terraform/1.8.0/terraform_1.8.0_linux_amd64.zip
-unzip terraform_1.8.0_linux_amd64.zip
-sudo mv terraform /usr/local/bin/
 ```
 
 ### CentOS/RHEL
@@ -58,15 +68,62 @@ sudo yum install -y epel-release
 # Install required packages
 sudo yum install -y qemu-kvm libvirt-daemon libvirt-client bridge-utils virt-install genisoimage
 
-# Install Terraform/OpenTofu
-# Using OpenTofu (recommended)
+# Install OpenTofu
 curl -fsSL https://get.opentofu.org | sudo bash
-
-# Or using Terraform
-wget https://releases.hashicorp.com/terraform/1.8.0/terraform_1.8.0_linux_amd64.zip
-unzip terraform_1.8.0_linux_amd64.zip
-sudo mv terraform /usr/local/bin/
 ```
+
+### macOS
+
+**Note**: macOS does not support KVM (Linux kernel module). Instead, libvirt uses macOS's Hypervisor.framework for virtualization. This provides similar functionality for local testing but with macOS-specific limitations.
+
+```bash
+# Install Homebrew (if not already installed)
+# Visit https://brew.sh/ for installation instructions
+
+# Install required packages via Homebrew (no sudo required)
+brew install libvirt cdrtools qemu
+
+# Install OpenTofu 
+brew install opentofu
+
+# Start libvirt daemon (user-space)
+brew services start libvirt
+
+# Verify installation
+virsh version
+mkisofs --version
+tofu version  
+```
+
+**Connection URI defaults on macOS**:
+- `exasol init` runs `virsh uri` and records the detected value in `variables.auto.tfvars` (Homebrew services typically yield `qemu:///session`).
+- If `virsh` isn't available, rerun `exasol init` with `--libvirt-uri <uri>` pointing to the desired socket/daemon.
+- Example overrides for remote or custom sockets:
+
+```bash
+./exasol init --cloud-provider libvirt --libvirt-uri qemu+ssh://user@libvirt-host/system
+```
+
+**Important Notes for macOS**:
+- VMs run using Hypervisor.framework, not KVM
+- Network bridging may have limitations compared to Linux
+- Storage pools work similarly but use macOS file system permissions
+- For best performance, ensure macOS virtualization is enabled in System Preferences > Security & Privacy (if applicable)
+- HVF/QEMU on macOS does not support IDE controllers. The template automatically strips IDE controllers from the generated domain XML so disks/cloud-init attach over virtio/SCSI only.
+
+## Firmware Selection
+
+The Terraform template exposes a `libvirt_firmware` variable so you can align firmware with the hypervisor in use.
+
+- `exasol init` sets this automatically: Linux/system URIs default to `"efi"` while macOS/user-session URIs leave the field empty and let libvirt choose the best available firmware.
+- Override the value in `variables.auto.tfvars` if your host requires a different firmware label or a fully qualified path to an `.fd` file.
+
+```hcl
+# variables.auto.tfvars
+libvirt_firmware = "/usr/share/OVMF/OVMF_CODE.fd" # or "bios" for legacy
+```
+
+This makes the libvirt template work on Linux, macOS, and remote hosts (system or session URIs) without manual HCL edits.
 
 ## User Configuration
 
@@ -103,6 +160,16 @@ sudo systemctl enable libvirtd
 
 # Check service status
 sudo systemctl status libvirtd
+```
+
+**macOS**:
+```bash
+# Libvirt daemon is managed by Homebrew services
+brew services list | grep libvirt
+
+# Should show libvirt started
+# If not running:
+brew services start libvirt
 ```
 
 ### Configure QEMU for Copy-on-Write Volumes
@@ -264,10 +331,8 @@ virsh net-list --all
 # Test storage pool
 virsh pool-list --all
 
-# Test Terraform/OpenTofu
+# Test OpenTofu
 tofu version
-# or
-terraform version
 ```
 
 ### Run Basic Test
@@ -383,9 +448,12 @@ sudo apt install -y genisoimage
 # CentOS/RHEL:
 sudo yum install -y genisoimage
 
+# macOS:
+brew install cdrtools
+
 # Verify installation:
 which mkisofs
-# Should output: /usr/bin/mkisofs
+# Should output: /usr/local/bin/mkisofs (macOS) or /usr/bin/mkisofs (Linux)
 ```
 
 #### QEMU Permission Denied on Base Image

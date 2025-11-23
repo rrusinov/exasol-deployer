@@ -97,7 +97,7 @@ test_get_version_config() {
     assert_equals "x86_64" "$result" "Should get architecture from version config"
 
     result=$(get_version_config "exasol-2025.1.4" "DEFAULT_INSTANCE_TYPE")
-    assert_equals "m6idn.large" "$result" "Should get default instance type from version config"
+    assert_equals "t3a.large" "$result" "Should get default instance type from version config"
 
     result=$(get_version_config "exasol-2025.1.4" "C4_VERSION")
     assert_equals "4.28.4" "$result" "Should get C4 version from config"

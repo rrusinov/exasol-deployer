@@ -135,17 +135,14 @@ test_status_constant_cross_references() {
     fi
 }
 
-cleanup_mock_env() {
-    # No-op function for compatibility
-    true
-}
-
 run_tests() {
     test_destroy_in_progress_status
     test_tofu_destroy_failure_updates_status
     test_destroy_success_updates_status
     test_destroy_no_terraform_state
     test_status_constant_cross_references
+
+    cleanup_mock_env
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

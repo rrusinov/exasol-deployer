@@ -136,31 +136,12 @@ cmd_start() {
         die "Ansible inventory not found"
     fi
 
-    # Get cluster size for progress estimation
-    local cluster_size
-    cluster_size=$(state_read "$deploy_dir" "cluster_size")
-    cluster_size=${cluster_size:-1}
-
-    # Calculate total estimated lines for start operation
-    local total_lines
-    total_lines=$(estimate_lines "start" "$cluster_size")
-
-    # Initialize cumulative progress tracking
-    progress_init_cumulative "$total_lines"
-    export PROGRESS_CUMULATIVE_MODE=1
-
     # Step 2: Infrastructure start (automatic for aws/gcp/azure; manual for libvirt/digitalocean/hetzner)
     if [[ "$infra_power_supported" == "true" ]]; then
-        # Split progress 50/50 between tofu and ansible
-        local tofu_lines ansible_lines
-        tofu_lines=$((total_lines * 50 / 100))
-        ansible_lines=$((total_lines * 50 / 100))
-
         log_info "Powering on instances via tofu..."
         # Note: We enable refresh to ensure Terraform sees the current state (running=false)
         # This is important for all providers to detect state drift and apply changes correctly
-        if ! tofu apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_on" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=running" 2>&1 | \
-            progress_prefix_cumulative "$tofu_lines"; then
+        if ! tofu apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_on" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=running"; then
             state_set_status "$deploy_dir" "$STATE_START_FAILED"
             operation_success  # Release lock
             die "Infrastructure start (tofu apply) failed"
@@ -172,8 +153,7 @@ cmd_start() {
 
         # Run Ansible to start the database services
         log_info "Starting database services via Ansible..."
-        if ! ansible-playbook -i inventory.ini .templates/start-exasol-cluster.yml 2>&1 | \
-            progress_prefix_cumulative "$ansible_lines"; then
+        if ! ansible-playbook -i inventory.ini .templates/start-exasol-cluster.yml; then
             state_set_status "$deploy_dir" "$STATE_START_FAILED"
             die "Ansible start operation failed"
         fi
@@ -210,8 +190,6 @@ cmd_start() {
         log_info "✓ Exasol Database Started Successfully!"
         log_info ""
         log_info "The database services have been started and should be ready for use."
-        log_info "Run 'exasol status --deployment-dir $deploy_dir' to check deployment status"
-        log_info "Run 'exasol health --deployment-dir $deploy_dir' for detailed health checks"
         return 0
     else
         log_warn "Provider '$cloud_provider' does not support automatic power control."
@@ -263,8 +241,6 @@ cmd_start() {
         log_info "✓ Exasol Database Started Successfully!"
         log_info ""
         log_info "The database services have been started and are ready for use."
-        log_info "Run 'exasol status --deployment-dir $deploy_dir' to check deployment status"
-        log_info "Run 'exasol health --deployment-dir $deploy_dir' for detailed health checks"
         return 0
     else
         # Step 5: Failure - print error and return
