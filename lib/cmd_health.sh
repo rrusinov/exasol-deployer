@@ -35,17 +35,29 @@ Usage:
   exasol health [flags]
 
 Flags:
-  --deployment-dir <path>   Deployment directory (default: ".")
-  --refresh-terraform       Run 'tofu refresh' to sync Terraform state
-  --output-format <format>  Output format: text (default) or json
-  --verbose                 Show detailed output
-  --update                  Refresh IPs and correct deployment status if cluster is healthy
-  --quiet                   Show only errors and final status
-  -h, --help                Show help
+  --deployment-dir <path>      Deployment directory (default: ".")
+  --refresh-terraform          Run 'tofu refresh' to sync Terraform state
+  --output-format <format>     Output format: text (default) or json
+  --verbose                    Show detailed output
+  --update                     Refresh IPs and correct deployment status if cluster is healthy
+  --quiet                      Show only errors and final status
+  --wait-for <status,timeout>  Wait until deployment reaches status with timeout
+                               Format: status,timeout (e.g., database_ready,15m)
+                               If timeout omitted, defaults to 15m
+  -h, --help                   Show help
+
+Wait-for Status Values:
+  database_ready               Wait for database to be healthy and ready
+  stopped                      Wait for cluster to be fully stopped
+
+Timeout Formats:
+  15m                          15 minutes
+  1h                           1 hour
+  60s                          60 seconds
 
 Exit Codes:
   0  Health check passed without issues
-  1  Health check detected issues
+  1  Health check detected issues or timeout reached
 
 Examples:
   exasol health --deployment-dir ./my-deployment
@@ -53,6 +65,8 @@ Examples:
   exasol health --deployment-dir ./my-deployment --refresh-terraform
   exasol health --deployment-dir ./my-deployment --verbose
   exasol health --deployment-dir ./my-deployment --update
+  exasol health --deployment-dir ./my-deployment --wait-for database_ready,15m
+  exasol health --deployment-dir ./my-deployment --wait-for database_ready
 EOF
 }
 
@@ -712,12 +726,153 @@ EOF
     echo "$result_file"
 }
 
+# Internal function to get cluster status without locks or output
+# Returns: "database_ready", "database_connection_failed", "stopped", or "unknown"
+# This function performs minimal checks to determine the actual cluster state
+health_get_cluster_status() {
+    local deploy_dir="$1"
+    local do_update="${2:-false}"
+
+    local inventory_file="$deploy_dir/inventory.ini"
+    local ssh_config_file="$deploy_dir/ssh_config"
+
+    # Check if required files exist
+    [[ ! -f "$inventory_file" ]] && echo "unknown" && return 1
+    [[ ! -f "$ssh_config_file" ]] && echo "unknown" && return 1
+
+    # Parse inventory to get host list
+    local -a host_entries=()
+    mapfile -t host_entries < <(awk '
+        BEGIN { section = "" }
+        {
+            if (NF == 0 || $0 ~ /^[[:space:]]*#/) next
+            if ($0 ~ /^\[.*\]$/) {
+                match($0, /\[(.*)\]/, arr)
+                section = arr[1]
+                next
+            }
+            if (section != "exasol_nodes") next
+            host = $1
+            ansible_host = ""
+            for (i = 2; i <= NF; i++) {
+                if ($i ~ /^ansible_host=/) {
+                    split($i, kv, "=")
+                    ansible_host = kv[2]
+                    break
+                }
+            }
+            print host "|" ansible_host
+        }
+    ' "$inventory_file")
+
+    [[ ${#host_entries[@]} -eq 0 ]] && echo "unknown" && return 1
+
+    # If update requested, sync IPs from Terraform state
+    if [[ "$do_update" == "true" ]]; then
+        local -a state_public_ips=()
+        if mapfile -t state_public_ips < <(health_load_state_public_ips "$deploy_dir" 2>/dev/null); then
+            local idx=0
+            for entry in "${host_entries[@]}"; do
+                IFS='|' read -r host_name host_ip <<<"$entry"
+                host_name="${host_name//[[:space:]]/}"
+                host_ip="${host_ip//[[:space:]]/}"
+                [[ -z "$host_name" ]] && continue
+
+                local tf_ip="${state_public_ips[$idx]:-}"
+                if [[ -n "$tf_ip" && -n "$host_ip" && "$tf_ip" != "$host_ip" ]]; then
+                    health_update_inventory_ip "$inventory_file" "$host_name" "$tf_ip" 2>/dev/null || true
+                    health_update_ssh_config "$ssh_config_file" "$host_name" "$tf_ip" 2>/dev/null || true
+                    health_update_info_file "$deploy_dir/INFO.txt" "$host_ip" "$tf_ip" 2>/dev/null || true
+                    # Update host_entries for SSH checks
+                    host_entries[idx]="${host_name}|${tf_ip}"
+                elif [[ -n "$tf_ip" ]]; then
+                    health_update_inventory_ip "$inventory_file" "$host_name" "${host_ip:-$tf_ip}" 2>/dev/null || true
+                    health_update_ssh_config "$ssh_config_file" "$host_name" "$tf_ip" 2>/dev/null || true
+                    if [[ -n "$host_ip" && "$host_ip" != "$tf_ip" ]]; then
+                        health_update_info_file "$deploy_dir/INFO.txt" "$host_ip" "$tf_ip" 2>/dev/null || true
+                        host_entries[idx]="${host_name}|${tf_ip}"
+                    fi
+                fi
+                idx=$((idx + 1))
+            done
+        fi
+    fi
+
+    # Quick SSH connectivity check
+    local ssh_reachable=0
+    local ssh_unreachable=0
+    local ssh_timeout=5
+
+    for entry in "${host_entries[@]}"; do
+        IFS='|' read -r host_name _ <<<"$entry"
+        host_name="${host_name//[[:space:]]/}"
+        [[ -z "$host_name" ]] && continue
+
+        if ssh -F "$ssh_config_file" -o BatchMode=yes -o StrictHostKeyChecking=no \
+            -o ConnectTimeout="$ssh_timeout" "$host_name" "true" >/dev/null 2>&1; then
+            ssh_reachable=$((ssh_reachable + 1))
+        else
+            ssh_unreachable=$((ssh_unreachable + 1))
+        fi
+    done
+
+    # If all nodes are unreachable, cluster is stopped
+    if [[ $ssh_reachable -eq 0 && $ssh_unreachable -gt 0 ]]; then
+        echo "stopped"
+        return 0
+    fi
+
+    # If no nodes are reachable, unknown
+    if [[ $ssh_reachable -eq 0 ]]; then
+        echo "unknown"
+        return 1
+    fi
+
+    # Check cluster state from first reachable node
+    local cluster_status="unknown"
+    for entry in "${host_entries[@]}"; do
+        IFS='|' read -r host_name _ <<<"$entry"
+        host_name="${host_name//[[:space:]]/}"
+        [[ -z "$host_name" ]] && continue
+
+        # Try to get cluster state
+        local c4_output
+        if c4_output=$(ssh -F "$ssh_config_file" -o BatchMode=yes -o StrictHostKeyChecking=no \
+            -o ConnectTimeout="$ssh_timeout" "$host_name" \
+            "sudo -u exasol c4 ps -j 2>/dev/null" 2>/dev/null); then
+
+            # Check if all nodes are in stage d
+            if echo "$c4_output" | jq -e '.[].Instances.Configs | to_entries | map(.value.ground.boot_stage) | all(. == "d")' >/dev/null 2>&1; then
+                cluster_status="cluster_stage_d"
+                break
+            else
+                cluster_status="cluster_not_stage_d"
+                break
+            fi
+        fi
+    done
+
+    # Determine final status
+    if [[ "$cluster_status" == "cluster_stage_d" ]]; then
+        echo "database_ready"
+        return 0
+    elif [[ "$cluster_status" == "cluster_not_stage_d" ]]; then
+        echo "database_connection_failed"
+        return 0
+    else
+        echo "unknown"
+        return 1
+    fi
+}
+
 cmd_health() {
     local deploy_dir="."
     local do_refresh_terraform="false"
     local output_format="text"
     local verbosity="normal"  # normal, verbose, quiet
     local do_update_metadata="false"
+    local wait_for_status=""
+    local wait_timeout="15m"
 
 
 
@@ -755,6 +910,19 @@ cmd_health() {
                 do_update_metadata="true"
                 shift
                 ;;
+            --wait-for)
+                # Parse comma-separated status,timeout format
+                local wait_for_value="$2"
+                if [[ "$wait_for_value" =~ ^([^,]+),(.+)$ ]]; then
+                    wait_for_status="${BASH_REMATCH[1]}"
+                    wait_timeout="${BASH_REMATCH[2]}"
+                else
+                    # Only status provided, use default timeout
+                    wait_for_status="$wait_for_value"
+                    wait_timeout="15m"
+                fi
+                shift 2
+                ;;
             *)
                 log_error "Unknown option for health command: $1"
                 return 1
@@ -774,6 +942,129 @@ cmd_health() {
 
     local cloud_provider
     cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
+
+    # Handle --wait-for BEFORE acquiring lock and running checks
+    # We need to define the internal health check function that can be called without locks
+    if [[ -n "$wait_for_status" ]]; then
+        # Convert timeout to seconds
+        local timeout_seconds
+        if [[ "$wait_timeout" =~ ^([0-9]+)m$ ]]; then
+            timeout_seconds=$((BASH_REMATCH[1] * 60))
+        elif [[ "$wait_timeout" =~ ^([0-9]+)h$ ]]; then
+            timeout_seconds=$((BASH_REMATCH[1] * 3600))
+        elif [[ "$wait_timeout" =~ ^([0-9]+)s$ ]]; then
+            timeout_seconds="${BASH_REMATCH[1]}"
+        elif [[ "$wait_timeout" =~ ^([0-9]+)$ ]]; then
+            timeout_seconds="$wait_timeout"
+        else
+            die "Invalid timeout format: $wait_timeout (use format like 15m, 1h, 60s)"
+        fi
+
+        local start_time
+        start_time=$(date +%s)
+        local end_time=$((start_time + timeout_seconds + 1))
+        local check_interval=10
+        local iteration=0
+
+        log_info "Waiting for status '$wait_for_status' (timeout: $wait_timeout)..."
+        log_info "Running health checks every $check_interval seconds..."
+        log_info ""
+
+        while true; do
+            local current_time
+            current_time=$(date +%s)
+
+            if [[ $current_time -ge $end_time ]]; then
+                # Timeout - run one final health check with full output
+                log_error ""
+                log_error "Timeout waiting for status '$wait_for_status' after $wait_timeout"
+                log_error "Running final health check..."
+                log_error ""
+
+                # Continue to run the normal health check below (without --wait-for)
+                # This will show the full diagnostic output
+                break
+            fi
+
+            iteration=$((iteration + 1))
+
+            if [[ "$verbosity" == "verbose" ]]; then
+                log_info "Health check iteration $iteration..."
+            fi
+
+            # Wait for any existing health check lock to be released
+            local lock_wait_seconds=0
+            local max_lock_wait=30
+            while lock_exists "$deploy_dir"; do
+                local lock_op
+                lock_op=$(lock_info "$deploy_dir" | jq -r '.operation // "unknown"' 2>/dev/null || echo "unknown")
+
+                if [[ "$lock_op" == "health" ]]; then
+                    # Another health check is running, wait for it
+                    if [[ $lock_wait_seconds -ge $max_lock_wait ]]; then
+                        log_warn "Health check lock held for ${max_lock_wait}s, proceeding anyway"
+                        break
+                    fi
+                    sleep 1
+                    lock_wait_seconds=$((lock_wait_seconds + 1))
+                else
+                    # Different operation is running, skip this iteration
+                    log_warn "Operation '$lock_op' in progress, skipping health check iteration"
+                    sleep "$check_interval"
+                    continue 2  # Continue outer while loop
+                fi
+            done
+
+            # Run health check silently (suppress all output)
+            local health_args=(--deployment-dir "$deploy_dir" --output-format json --quiet)
+            [[ "$do_refresh_terraform" == "true" ]] && health_args+=(--refresh-terraform)
+            [[ "$do_update_metadata" == "true" ]] && health_args+=(--update)
+
+            # Run health check silently - we only care about the status it sets
+            local exasol_cmd="${LIB_DIR}/../exasol"
+            "$exasol_cmd" health "${health_args[@]}" >/dev/null 2>&1 || true
+
+            # Check current status
+            local current_status
+            current_status=$(state_get_status "$deploy_dir" 2>/dev/null || echo "unknown")
+
+            if [[ "$verbosity" == "verbose" ]]; then
+                log_debug "Current status: $current_status (waiting for: $wait_for_status)"
+            fi
+
+            if [[ "$current_status" == "$wait_for_status" ]]; then
+                # Success - run one final health check with full output
+                log_info ""
+                log_info "✓ Status reached: $wait_for_status"
+                log_info "Running final health check..."
+                log_info ""
+
+                # Continue to run the normal health check below (without --wait-for)
+                # This will show the full diagnostic output
+                break
+            fi
+
+            # Check if we're in a failure state that won't recover
+            case "$current_status" in
+                *_failed)
+                    # Failure - run one final health check with full output
+                    log_error ""
+                    log_error "Deployment is in failed state: $current_status"
+                    log_error "Running final health check..."
+                    log_error ""
+
+                    # Continue to run the normal health check below (without --wait-for)
+                    # This will show the full diagnostic output
+                    break
+                    ;;
+            esac
+
+            sleep "$check_interval"
+        done
+
+        # After the wait loop, continue with normal health check execution
+        # This will perform one final health check and print the full report
+    fi
 
     # Check if another operation is in progress
     if lock_exists "$deploy_dir"; then
@@ -1260,21 +1551,35 @@ cmd_health() {
         # +----------------------+---------------------------------------------+---------------------------+------------------------------------------------+
         # | database_ready       | cluster_status != "cluster_stage_d"        | database_connection_failed| Database should be ready (stage d) but isn't   |
         # | stopped              | ssh_passed > 0                              | stop_failed               | Claims stopped but SSH still reachable          |
+        # | started              | overall_issues == 0 && cluster_ready == "true"| database_ready           | Infrastructure powered on and cluster is ready |
         # | deployment_failed    | overall_issues == 0 && cluster_ready == "true"| database_ready           | Claims failed but cluster is healthy            |
         # | database_connection_failed | overall_issues == 0 && cluster_ready == "true"| database_ready           | Claims connection failed but cluster is healthy |
         # | start_failed         | overall_issues == 0 && cluster_ready == "true"| database_ready           | Claims start failed but cluster is running     |
         # | stop_failed          | overall_issues == 0 && cluster_ready == "true"| database_ready           | Claims stop failed but cluster is running      |
+        # | stop_failed          | ssh_passed == 0 && ssh_failed == cluster_size | stopped                  | Claims stop failed but all nodes are unreachable|
         # | destroy_failed       | overall_issues == 0 && cluster_ready == "true"| database_ready           | Claims destroy failed but cluster is running    |
         # +----------------------+---------------------------------------------+---------------------------+------------------------------------------------+
 
         # Update status to database_ready if cluster is healthy and running
         if [[ "$overall_issues" -eq 0 && "$cluster_ready" == "true" ]]; then
-            # Update from failure states to database_ready
-            # Transition: deployment_failed/database_connection_failed/start_failed/stop_failed/destroy_failed -> database_ready
-            if [[ "$current_status" == "deployment_failed" || "$current_status" == "database_connection_failed" || "$current_status" == "start_failed" || "$current_status" == "stop_failed" || "$current_status" == "destroy_failed" ]]; then
+            # Update from failure states, stopped, or started to database_ready
+            # Transition: deployment_failed/database_connection_failed/start_failed/stop_failed/destroy_failed/stopped/started -> database_ready
+            if [[ "$current_status" == "deployment_failed" || "$current_status" == "database_connection_failed" || "$current_status" == "start_failed" || "$current_status" == "stop_failed" || "$current_status" == "destroy_failed" || "$current_status" == "stopped" || "$current_status" == "started" ]]; then
                 state_set_status "$deploy_dir" "$STATE_DATABASE_READY"
                 if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
                     log_info "✅ Deployment status updated to 'database_ready' (cluster is healthy and running)"
+                fi
+            fi
+        # Update to stopped if stop_failed and all nodes are unreachable
+        elif [[ "$current_status" == "stop_failed" && "$ssh_passed" -eq 0 && "$ssh_failed" -gt 0 ]]; then
+            # Optionally, check cluster_size matches ssh_failed
+            local cluster_size
+            cluster_size=$(state_read "$deploy_dir" "cluster_size")
+            cluster_size=${cluster_size:-$ssh_failed}
+            if [[ "$ssh_failed" -eq "$cluster_size" ]]; then
+                state_set_status "$deploy_dir" "$STATE_STOPPED"
+                if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
+                    log_info "✅ Deployment status updated to 'stopped' (all nodes unreachable, VMs are powered off)"
                 fi
             fi
         # Update to database_connection_failed if database_ready but cluster not in stage d
@@ -1284,7 +1589,7 @@ cmd_health() {
             if [[ "$output_format" == "text" && "$verbosity" != "quiet" ]]; then
                 log_info "✅ Deployment status updated to 'database_connection_failed' (database not in ready stage)"
             fi
-        # Update to stop_failed if stopped but SSH reachable
+        # Update to stop_failed if stopped but SSH reachable and not healthy
         # Transition: stopped -> stop_failed
         elif [[ "$current_status" == "stopped" && "$ssh_passed" -gt 0 ]]; then
             state_set_status "$deploy_dir" "$STATE_STOP_FAILED"

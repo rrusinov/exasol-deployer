@@ -9,9 +9,46 @@ The workflow-based testing framework extends the existing E2E test infrastructur
 - **Sequential Workflow Execution**: Define test scenarios as a sequence of steps
 - **Node-Specific Operations**: Target individual nodes for operations (stop, start, restart, crash)
 - **Custom Validation**: Per-step validation with retry logic and failure handling
-- **Crash Simulation**: Simulate hard crashes and test recovery
+- **Crash Simulation**: Simulate hard crashes and test recovery (AWS/Azure/GCP only)
 - **External Commands**: Execute custom verification commands
 - **Rich Reporting**: Detailed step-by-step results with timing and validation data
+
+## Provider-Specific Limitations
+
+The workflow engine enforces provider-specific limitations on power control operations:
+
+### Power Control Support by Provider
+
+| Provider | Cluster Stop/Start | Node Stop/Start | Node Crash (SSH) | Node Crash (API) | Node Reboot (SSH) |
+|----------|-------------------|-----------------|------------------|------------------|-------------------|
+| **AWS** | ✅ Yes | ✅ Yes* | ✅ Yes | 🚧 Planned | ✅ Yes |
+| **Azure** | ✅ Yes | ✅ Yes* | ✅ Yes | 🚧 Planned | ✅ Yes |
+| **GCP** | ✅ Yes | ✅ Yes* | ✅ Yes | 🚧 Planned | ✅ Yes |
+| **DigitalOcean** | ⚠️ Manual | ❌ No | ✅ Yes | ❌ No | ✅ Yes |
+| **Hetzner** | ⚠️ Manual | ❌ No | ✅ Yes | ❌ No | ✅ Yes |
+| **libvirt** | ⚠️ Manual | ❌ No | ✅ Yes | ❌ No | ✅ Yes |
+
+\* Not yet implemented for AWS/Azure/GCP, but supported by provider APIs
+
+**Legend:**
+- ✅ **Yes**: Fully supported and implemented
+- ⚠️ **Manual**: Issues in-guest shutdown; requires manual power-on via provider interface
+- 🚧 **Planned**: Supported by provider but not yet implemented in framework
+- ❌ **No**: Not supported by provider; workflow steps will raise `NotImplementedError`
+
+### Unsupported Operations
+
+For **DigitalOcean, Hetzner, and libvirt**, the following workflow steps will raise `NotImplementedError`:
+- `stop_node` - Individual node power off via API
+- `start_node` - Individual node power on via API
+- `crash_node` with `method: "destroy"` - Hard crash via power API
+- `restart_node` with `method: "graceful"` - Power cycle restart
+
+### Universal Operations (Work on All Providers)
+
+The following operations work on **all providers** via SSH:
+- ✅ `restart_node` with `method: "ssh"` (default) - Graceful reboot via `sudo reboot`
+- ✅ `crash_node` with `method: "ssh"` (default) - Hard crash via SysRq or `poweroff -f`
 
 ## Workflow Configuration Format
 
@@ -96,7 +133,7 @@ The workflow-based testing framework extends the existing E2E test infrastructur
 }
 ```
 
-#### 6. `stop_node` - Stop Specific Node
+#### 6. `stop_node` - Stop Specific Node (AWS/Azure/GCP only)
 ```json
 {
   "step": "stop_node",
@@ -104,8 +141,9 @@ The workflow-based testing framework extends the existing E2E test infrastructur
   "target_node": "n12"
 }
 ```
+**Note:** Not supported for DigitalOcean, Hetzner, or libvirt. Will raise `NotImplementedError`.
 
-#### 7. `start_node` - Start Specific Node
+#### 7. `start_node` - Start Specific Node (AWS/Azure/GCP only)
 ```json
 {
   "step": "start_node",
@@ -113,26 +151,36 @@ The workflow-based testing framework extends the existing E2E test infrastructur
   "target_node": "n12"
 }
 ```
+**Note:** Not supported for DigitalOcean, Hetzner, or libvirt. Will raise `NotImplementedError`.
 
 #### 8. `restart_node` - Restart Specific Node
 ```json
 {
   "step": "restart_node",
-  "description": "Graceful restart of n12",
+  "description": "Reboot node via SSH",
   "target_node": "n12",
-  "method": "graceful"
+  "method": "ssh"
 }
 ```
+**Supported Methods:**
+- `ssh` (default): Reboot via SSH `sudo reboot` command - **works for all providers**
+- `graceful`: Power cycle (stop then start) - **only for AWS/Azure/GCP**, raises `NotImplementedError` for DigitalOcean/Hetzner/libvirt
 
 #### 9. `crash_node` - Simulate Node Crash
 ```json
 {
   "step": "crash_node",
-  "description": "Simulate crash on n11",
+  "description": "Simulate hard crash on n11",
   "target_node": "n11",
-  "method": "destroy"
+  "method": "ssh"
 }
 ```
+**Supported Methods:**
+- `ssh` (default): Hard crash via SSH using SysRq trigger or `poweroff -f` - **works for all providers**
+  - Attempts to use kernel SysRq trigger (`echo b > /proc/sysrq-trigger`) for immediate reboot without filesystem sync
+  - Falls back to `poweroff -f` which forces immediate shutdown, skipping systemd
+  - Simulates ungraceful shutdown similar to power loss or kernel panic
+- `destroy`: Hard power-off via provider API - **only for AWS/Azure/GCP** (not yet implemented)
 
 #### 10. `custom_command` - Execute Custom Command
 ```json

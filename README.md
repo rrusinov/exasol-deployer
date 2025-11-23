@@ -320,26 +320,36 @@ Use the health command to verify SSH connectivity, COS endpoints, critical c4-ma
 
 ### 7. Stop and Start the Database (Optional)
 
-For cost optimization, you can stop the database. On AWS/Azure/GCP/libvirt this also powers off the VMs via OpenTofu; on other providers (Hetzner/DigitalOcean) the VMs are halted in-guest and must be powered on manually before start will succeed.
+For cost optimization, you can stop the database. All providers follow the same workflow:
 
 ```bash
-# Stop the database (and power off VMs on AWS/Azure/GCP/libvirt)
+# Stop the database (powers off VMs)
 ./exasol stop --deployment-dir ./my-deployment
 
 # Check status
 ./exasol status --deployment-dir ./my-deployment
 # Status will be: "stopped"
 
-# Start the database again (power on VMs via tofu when supported)
+# Start the database again
 ./exasol start --deployment-dir ./my-deployment
-
-# Verify it's running
-./exasol health --deployment-dir ./my-deployment
 ```
 
-**Cost Savings Example:**
+**How it works:**
+
+**For AWS/Azure/GCP (Automatic Power Control):**
+- `stop`: Powers off VMs via OpenTofu and verifies shutdown
+- `start`: Powers on VMs via OpenTofu, waits for database to become healthy (15 min timeout)
+
+**For DigitalOcean/Hetzner/libvirt (Manual Power Control):**
+- `stop`: Issues in-guest shutdown command, displays restart instructions
+- `start`: Displays power-on instructions (provider-specific commands), then waits for database to become healthy (15 min timeout)
+  - You power on the machines while `start` command waits
+  - The command automatically detects when machines are online and continues
+  - If timeout occurs, status is set to `start_failed` and you can retry
+
+**Cost Savings Example (AWS):**
 - Running cluster: ~$2/hour (c7a.16xlarge x 4 nodes)
-- Stopped cluster: ~$0.50/hour (EBS volumes + instance charges)
+- Stopped cluster: ~$0.50/hour (EBS volumes + stopped instance charges)
 - Savings: ~75% during non-working hours
 
 ### 8. Destroy the Deployment
@@ -433,7 +443,7 @@ Deploy infrastructure using an existing deployment directory.
 
 ### `start`
 
-Start a stopped Exasol database deployment. This starts the database services on existing cloud instances that were previously stopped.
+Start a stopped Exasol database deployment. This powers on cloud instances (if supported) and waits for the database to become healthy.
 
 ```bash
 ./exasol start --deployment-dir ./my-deployment
@@ -446,18 +456,27 @@ Start a stopped Exasol database deployment. This starts the database services on
 
 **Prerequisites:**
 - Deployment must be in `stopped` or `start_failed` state
-- Cloud instances must still be running
 
-**What it does:**
-1. Validates deployment state
-2. On AWS/Azure/GCP: powers on instances via `tofu apply -var infra_desired_state=running` (other providers require manual power-on if previously halted)
-3. Starts systemd services via Ansible:
-   - `exasol-data-symlinks.service`
-   - `c4_cloud_command.service`
-   - `c4.service` (main database service, brings up Admin UI via PartOf)
-4. Waits for database to boot (stage 'd')
-5. Validates cluster is online
-6. Updates state to `database_ready` or `database_connection_failed`
+**What it does (unified flow for all providers):**
+
+1. Sets status to `start_in_progress`
+2. **Infrastructure start:**
+   - **AWS/Azure/GCP:** Powers on instances automatically via `tofu apply -var infra_desired_state=running`
+   - **DigitalOcean/Hetzner/libvirt:** Displays provider-specific power-on instructions (you power on manually)
+3. Sets status to `started` and releases operation lock
+4. Calls `health --update --wait-for database_ready,15m`:
+   - Polls deployment status every 10 seconds
+   - Refreshes inventory/SSH config when machines come online
+   - Waits for database services to start and become healthy
+   - Times out after 15 minutes if database doesn't become ready
+5. **On success:** Sets status to `database_ready` and prints success message
+6. **On timeout/failure:** Sets status to `start_failed` with diagnostic instructions
+
+**Key Benefits:**
+- Same workflow for all providers - just run `exasol start`
+- For manual providers, you power on machines while the command waits
+- Automatic detection when machines come online
+- Can retry from `start_failed` state
 
 ### `stop`
 
@@ -476,15 +495,25 @@ Stop a running Exasol database deployment. This gracefully stops database servic
 - Deployment must be in `database_ready`, `database_connection_failed`, or `stop_failed` state
 
 **What it does:**
+
+**For all providers:**
 1. Validates deployment state
 2. Stops systemd services via Ansible:
    - `c4.service` (main database service, stops Admin UI via PartOf)
    - `c4_cloud_command.service`
    - `exasol-admin-ui.service` (explicit ensure-stop)
-3. On AWS/Azure/GCP/libvirt: powers off instances via `tofu apply -var infra_desired_state=stopped`
-4. On other providers (Hetzner/DigitalOcean): issues in-guest `shutdown -h` and warns that manual power-on is required before start
-5. Verifies services are stopped
-6. Updates state to `stopped` or `stop_failed`
+
+**For AWS/Azure/GCP:**
+3. Powers off instances via `tofu apply -var infra_desired_state=stopped`
+4. Verifies VMs are powered off via SSH connectivity check
+5. Updates state to `stopped` or `stop_failed`
+
+**For DigitalOcean/Hetzner/libvirt:**
+3. Issues in-guest `shutdown -h` command to all nodes
+4. Displays message that you need to manually power on machines via provider interface before running start
+5. Reminds you to run `exasol health --update` after powering on
+6. Verifies VMs are powered off via SSH connectivity check
+7. Updates state to `stopped` or `stop_failed`
 
 **Note:** Use `destroy` to terminate instances and release all resources.
 
@@ -502,7 +531,8 @@ Get the current status of a deployment in JSON format.
 - `deployment_failed`: Deployment failed (check logs)
 - `database_connection_failed`: Infrastructure deployed but database connection failed
 - `database_ready`: Deployment complete and database is ready
-- `stopped`: Database services are stopped (instances still running)
+- `stopped`: Database services are stopped (instances powered off)
+- `started`: Infrastructure powered on, waiting for database to be ready
 - `start_in_progress`: Database start operation in progress
 - `start_failed`: Database start operation failed
 - `stop_in_progress`: Database stop operation in progress
@@ -517,13 +547,28 @@ Run connectivity and service health checks for an existing deployment. The comma
 
 Use `--update` to refresh `inventory.ini`, `ssh_config`, and `INFO.txt` when IPs change, and to correct deployment status from failure states to `database_ready` if all health checks pass and the cluster is confirmed operational.
 
+Use `--wait-for` to wait until the deployment reaches a specific status, useful when combined with the `start` command for providers without power control.
+
 ```bash
 # Basic health check
 ./exasol health --deployment-dir ./my-deployment
 
 # Refresh metadata and correct status if cluster is healthy
 ./exasol health --deployment-dir ./my-deployment --update
+
+# Wait for database to be ready (used internally by start command)
+./exasol health --deployment-dir ./my-deployment --update --wait-for database_ready,15m
+
+# Wait with default timeout (15m)
+./exasol health --deployment-dir ./my-deployment --update --wait-for database_ready
 ```
+
+**Flags:**
+- `--wait-for <status,timeout>`: Wait until deployment reaches status with timeout
+  - Format: `status,timeout` (e.g., `database_ready,15m`)
+  - If timeout omitted, defaults to 15m
+  - Status values: `database_ready`, `stopped`, `started`
+  - Timeout formats: `15m`, `1h`, `60s`
 
 ### `destroy`
 
