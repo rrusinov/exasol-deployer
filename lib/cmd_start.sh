@@ -147,9 +147,21 @@ cmd_start() {
             die "Infrastructure start (tofu apply) failed"
         fi
 
-        # Refresh IPs in inventory/ssh_config before Ansible
-        log_info "Refreshing inventory and ssh_config..."
-        "$exasol_cmd" health --deployment-dir "$deploy_dir" --update --quiet >/dev/null 2>&1 || true
+        # Refresh Terraform state to get updated IPs (critical for AWS where IPs change on stop/start)
+        log_info "Refreshing Terraform state to fetch updated IPs..."
+        if ! tofu refresh -var "infra_desired_state=running" >/dev/null 2>&1; then
+            log_warn "Failed to refresh Terraform state; inventory may have stale IPs"
+        fi
+
+        # Regenerate inventory and ssh_config with new IPs from refreshed state
+        log_info "Regenerating inventory and ssh_config with updated IPs..."
+        if ! tofu apply -auto-approve -refresh=false \
+            -target="local_file.ansible_inventory" \
+            -target="local_file.ssh_config" \
+            -target="local_file.info_file" \
+            -var "infra_desired_state=running" >/dev/null 2>&1; then
+            log_warn "Failed to regenerate inventory files; attempting to continue"
+        fi
 
         # Run Ansible to start the database services
         log_info "Starting database services via Ansible..."
