@@ -363,14 +363,14 @@ Expected output:
 ### SSH Access
 
 ```bash
-# Using generated SSH config
+# Recommended: Using generated SSH config
 ssh -F ./my-hetzner-deployment/ssh_config n11
 
-# Direct SSH
-ssh -i ./my-hetzner-deployment/exasol-key.pem root@<public-ip>
+# Alternative: Direct SSH (initial access or troubleshooting)
+ssh -i ./my-hetzner-deployment/exasol-key.pem exasol@<public-ip>
 ```
 
-**Note**: Hetzner uses `root` user by default, not `ubuntu`.
+**Note:** The generated SSH config uses the `exasol` user and is the recommended way to access your cluster. Cloud-init automatically copies your SSH keys to the exasol user during deployment. Hetzner servers initially use the `root` user, but the exasol user is configured with the same access.
 
 ### Database Connection
 

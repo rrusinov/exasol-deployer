@@ -54,8 +54,8 @@ locals {
     chmod 0440 /etc/sudoers.d/11-exasol-user
 
     # Copy SSH authorized_keys from default cloud user to exasol user
-    # Supports: ubuntu, azureuser, admin, ec2-user, debian
-    for user_home in /home/ubuntu /home/azureuser /home/admin /home/ec2-user /home/debian; do
+    # Supports: root (DigitalOcean, Hetzner), ubuntu, azureuser, admin, ec2-user, debian
+    for user_home in /root /home/ubuntu /home/azureuser /home/admin /home/ec2-user /home/debian; do
       if [ -d "$user_home/.ssh" ] && [ -f "$user_home/.ssh/authorized_keys" ]; then
         mkdir -p /home/exasol/.ssh
         cp "$user_home/.ssh/authorized_keys" /home/exasol/.ssh/

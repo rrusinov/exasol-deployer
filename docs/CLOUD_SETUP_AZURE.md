@@ -407,12 +407,14 @@ Expected output:
 ### SSH Access
 
 ```bash
-# Using generated SSH config
+# Recommended: Using generated SSH config
 ssh -F ./my-azure-deployment/ssh_config n11
 
-# Direct SSH
-ssh -i ./my-azure-deployment/exasol-key.pem azureuser@<public-ip>
+# Alternative: Direct SSH (initial access or troubleshooting)
+ssh -i ./my-azure-deployment/exasol-key.pem exasol@<public-ip>
 ```
+
+**Note:** The generated SSH config uses the `exasol` user and is the recommended way to access your cluster. Cloud-init automatically copies your SSH keys to the exasol user during deployment.
 
 ### Database Connection
 

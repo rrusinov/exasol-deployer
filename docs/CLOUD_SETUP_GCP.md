@@ -482,12 +482,14 @@ Expected output:
 ### SSH Access
 
 ```bash
-# Using generated SSH config
+# Recommended: Using generated SSH config
 ssh -F ./my-gcp-deployment/ssh_config n11
 
-# Direct SSH
-ssh -i ./my-gcp-deployment/exasol-key.pem <username>@<external-ip>
+# Alternative: Direct SSH (initial access or troubleshooting)
+ssh -i ./my-gcp-deployment/exasol-key.pem exasol@<external-ip>
 ```
+
+**Note:** The generated SSH config uses the `exasol` user and is the recommended way to access your cluster. Cloud-init automatically copies your SSH keys to the exasol user during deployment.
 
 ### Database Connection
 
