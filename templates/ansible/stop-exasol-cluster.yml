@@ -119,5 +119,7 @@
       ansible.builtin.shell: "shutdown now -h 'Exasol stop fallback'"
       become: true
       when: power_off_fallback | default(false)
+      async: 1
+      poll: 0
       ignore_errors: true
       changed_when: true
