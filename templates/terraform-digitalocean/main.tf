@@ -41,10 +41,11 @@ locals {
   region_name   = var.digitalocean_region
 
   # Group volume IDs by node for Ansible inventory
+  # Note: DigitalOcean uses volume names (not UUIDs) in /dev/disk/by-id/scsi-0DO_Volume_<name>
   node_volumes = {
     for node_idx in range(var.node_count) : node_idx => [
       for vol_idx in range(var.data_volumes_per_node) :
-      digitalocean_volume.data_volume[node_idx * var.data_volumes_per_node + vol_idx].id
+      digitalocean_volume.data_volume[node_idx * var.data_volumes_per_node + vol_idx].name
     ]
   }
 
@@ -60,7 +61,11 @@ locals {
 resource "digitalocean_vpc" "exasol_vpc" {
   name     = "exasol-vpc-${random_id.instance.hex}"
   region   = var.digitalocean_region
-  ip_range = "10.0.0.0/16"
+  # Use range derived from cluster ID to ensure uniqueness while being deterministic
+  # This avoids conflicts with existing VPCs from failed/previous deployments
+  # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
+  # Provides 254 × 256 = 65,024 possible unique networks
+  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.${parseint(substr(random_id.instance.hex, 2, 2), 16)}.0/24"
 }
 
 # ==============================================================================
@@ -91,18 +96,18 @@ resource "digitalocean_firewall" "exasol_cluster" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "1-65535"
-    source_addresses = ["10.0.0.0/16"]
+    source_addresses = [digitalocean_vpc.exasol_vpc.ip_range]
   }
 
   inbound_rule {
     protocol         = "udp"
     port_range       = "1-65535"
-    source_addresses = ["10.0.0.0/16"]
+    source_addresses = [digitalocean_vpc.exasol_vpc.ip_range]
   }
 
   inbound_rule {
     protocol         = "icmp"
-    source_addresses = ["10.0.0.0/16"]
+    source_addresses = [digitalocean_vpc.exasol_vpc.ip_range]
   }
 
   # Allow all outbound
@@ -156,9 +161,10 @@ resource "digitalocean_droplet" "exasol_node" {
   # Resize root disk if needed
   resize_disk = var.root_volume_size > 25 ? true : false
 
-  # Wait for droplet to be ready
+  # Wait for droplet and cloud-init to be ready
+  # DigitalOcean needs extra time for cloud-init to create exasol user and copy SSH keys
   provisioner "local-exec" {
-    command = "sleep 30"
+    command = "sleep 60"
   }
 }
 
@@ -168,11 +174,12 @@ resource "digitalocean_droplet" "exasol_node" {
 
 # Data Volumes
 resource "digitalocean_volume" "data_volume" {
-  count                   = var.node_count * var.data_volumes_per_node
-  name                    = "n${floor(count.index / var.data_volumes_per_node) + 11}-data-${(count.index % var.data_volumes_per_node) + 1}-${random_id.instance.hex}"
-  size                    = var.data_volume_size
-  region                  = var.digitalocean_region
-  initial_filesystem_type = "ext4"
+  count  = var.node_count * var.data_volumes_per_node
+  name   = "n${floor(count.index / var.data_volumes_per_node) + 11}-data-${(count.index % var.data_volumes_per_node) + 1}-${random_id.instance.hex}"
+  size   = var.data_volume_size
+  region = var.digitalocean_region
+  # Note: Leave unformatted so DigitalOcean doesn't auto-mount at /mnt/<volume-name>
+  # Exasol will format and manage the volumes directly via /dev/exasol_data_* symlinks
 
   description = "Data volume ${(count.index % var.data_volumes_per_node) + 1} for node n${floor(count.index / var.data_volumes_per_node) + 11}"
 
