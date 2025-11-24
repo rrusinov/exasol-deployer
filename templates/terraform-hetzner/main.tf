@@ -59,9 +59,14 @@ locals {
     ]
   }
 
+  # Private network details for per-node configuration
+  private_network_cidr = hcloud_network_subnet.exasol_subnet.ip_range
+  private_prefix_len   = tonumber(element(split("/", local.private_network_cidr), 1))
+  hetzner_private_ips  = [for idx in range(var.node_count) : cidrhost(local.private_network_cidr, idx + 10)]
+
   # Node IPs for common outputs
   node_public_ips  = [for server in hcloud_server.exasol_node : server.ipv4_address]
-  node_private_ips = [for network in hcloud_server_network.exasol_node_network : network.ip]
+  node_private_ips = local.hetzner_private_ips
 }
 
 # Get available Hetzner locations
@@ -124,20 +129,20 @@ resource "hcloud_firewall" "exasol_cluster" {
     direction  = "in"
     protocol   = "tcp"
     port       = "any"
-    source_ips = ["10.0.0.0/16"]
+    source_ips = [hcloud_network.exasol_network.ip_range]
   }
 
   rule {
     direction  = "in"
     protocol   = "udp"
     port       = "any"
-    source_ips = ["10.0.0.0/16"]
+    source_ips = [hcloud_network.exasol_network.ip_range]
   }
 
   rule {
     direction  = "in"
     protocol   = "icmp"
-    source_ips = ["10.0.0.0/16"]
+    source_ips = [hcloud_network.exasol_network.ip_range]
   }
 }
 
@@ -169,8 +174,15 @@ resource "hcloud_server" "exasol_node" {
     node    = "n${count.index + 11}"
   }
 
-  # Cloud-init user-data to create exasol user before Ansible runs
-  user_data = local.cloud_init_script
+  # Cloud-init user-data to create exasol user and normalize Hetzner private network prefix
+  # cloud-init template lives in .templates/ because the root files are symlinked
+  user_data = templatefile("${path.module}/.templates/cloud-init-hetzner.tftpl", {
+    base_cloud_init = local.cloud_init_script
+    priv_ip         = local.hetzner_private_ips[count.index]
+    priv_prefix     = local.private_prefix_len
+    priv_cidr       = local.private_network_cidr
+    peer_ips        = local.hetzner_private_ips
+  })
 
   public_net {
     ipv4_enabled = true
@@ -191,7 +203,7 @@ resource "hcloud_server_network" "exasol_node_network" {
   network_id = hcloud_network.exasol_network.id
   # Allocate server IPs from the created subnet. Use cidrhost to pick host addresses
   # Reserve the first 10 addresses for potential gateway/reserved use, start from host 10
-  ip         = cidrhost(hcloud_network_subnet.exasol_subnet.ip_range, count.index + 10)
+  ip         = local.hetzner_private_ips[count.index]
 }
 
 # ==============================================================================
