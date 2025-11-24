@@ -60,7 +60,8 @@ resource "azurerm_virtual_network" "exasol" {
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
   # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
   # Provides 254 × 256 = 65,024 possible unique networks
-  address_space       = ["10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.${parseint(substr(random_id.instance.hex, 2, 2), 16)}.0/24"]
+  # Use /16 network and carve subnets from it
+  address_space       = ["10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.0.0/16"]
   location            = azurerm_resource_group.exasol.location
   resource_group_name = azurerm_resource_group.exasol.name
 
@@ -73,8 +74,8 @@ resource "azurerm_subnet" "exasol" {
   name                 = "exasol-subnet"
   resource_group_name  = azurerm_resource_group.exasol.name
   virtual_network_name = azurerm_virtual_network.exasol.name
-  # Use same /24 as VNet since VNet is now /24
-  address_prefixes     = azurerm_virtual_network.exasol.address_space
+  # Carve a /24 subnet from the VNet /16
+  address_prefixes     = [cidrsubnet(azurerm_virtual_network.exasol.address_space[0], 8, 1)]
 }
 
 # ==============================================================================

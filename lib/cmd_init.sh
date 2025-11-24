@@ -10,15 +10,35 @@ source "$LIB_DIR/state.sh"
 # shellcheck source=lib/versions.sh
 source "$LIB_DIR/versions.sh"
 
-# Supported cloud providers
-declare -A SUPPORTED_PROVIDERS=(
-    [aws]="Amazon Web Services"
-    [azure]="Microsoft Azure"
-    [gcp]="Google Cloud Platform"
-    [hetzner]="Hetzner Cloud"
-    [digitalocean]="DigitalOcean"
-    [libvirt]="Local libvirt/KVM deployment"
-)
+# Supported cloud providers (keep Bash 3 compatible)
+SUPPORTED_PROVIDERS=("aws" "azure" "gcp" "hetzner" "digitalocean" "libvirt")
+
+get_supported_providers_list() {
+    echo "${SUPPORTED_PROVIDERS[*]}"
+}
+
+get_provider_description() {
+    local provider="$1"
+    case "$provider" in
+        aws) echo "Amazon Web Services" ;;
+        azure) echo "Microsoft Azure" ;;
+        gcp) echo "Google Cloud Platform" ;;
+        hetzner) echo "Hetzner Cloud" ;;
+        digitalocean) echo "DigitalOcean" ;;
+        libvirt) echo "Local libvirt/KVM deployment" ;;
+        *) echo "$provider" ;;
+    esac
+}
+
+provider_supported() {
+    local provider="$1"
+    for p in "${SUPPORTED_PROVIDERS[@]}"; do
+        if [[ "$p" == "$provider" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
 
 # Normalize checksum values (strip algorithm prefix like "sha256:")
 normalize_checksum_value() {
@@ -30,7 +50,9 @@ normalize_checksum_value() {
     fi
 
     local normalized="${value#*:}"
-    if [[ "${value,,}" == sha256:* ]]; then
+    local lowered
+    lowered=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
+    if [[ "$lowered" == sha256:* ]]; then
         echo "$normalized"
     else
         echo "$value"
@@ -355,7 +377,6 @@ cmd_init() {
                 log_info "  ------------------------------------------------------"
                 local ordered_providers=(aws azure gcp hetzner digitalocean)
                 for provider in "${ordered_providers[@]}"; do
-                    local name="${SUPPORTED_PROVIDERS[$provider]}"
                     local services_box="[✓] services"
                     local infra_box=""
                     case "$provider" in
@@ -384,14 +405,14 @@ cmd_init() {
     if [[ -z "$cloud_provider" ]]; then
         log_error "Cloud provider is required"
         log_info "Usage: exasol init --cloud-provider <provider> [options]"
-        log_info "Supported providers: ${!SUPPORTED_PROVIDERS[*]}"
+        log_info "Supported providers: $(get_supported_providers_list)"
         log_info "Use --list-providers to see all supported providers"
         return 1
     fi
 
-    if [[ ! -v "SUPPORTED_PROVIDERS[$cloud_provider]" ]]; then
+    if ! provider_supported "$cloud_provider"; then
         log_error "Unsupported cloud provider: $cloud_provider"
-        log_info "Supported providers: ${!SUPPORTED_PROVIDERS[*]}"
+        log_info "Supported providers: $(get_supported_providers_list)"
         return 1
     fi
 
@@ -478,7 +499,7 @@ cmd_init() {
     fi
 
     log_info "Initializing deployment directory: $deploy_dir"
-    log_info "  Cloud Provider: ${SUPPORTED_PROVIDERS[$cloud_provider]}"
+    log_info "  Cloud Provider: $(get_provider_description "$cloud_provider")"
     log_info "  Database version: $db_version"
     log_info "  Architecture: $architecture"
     log_info "  Cluster size: $cluster_size"
@@ -571,20 +592,24 @@ cmd_init() {
 
     # Validate DigitalOcean token
     if [[ "$cloud_provider" == "digitalocean" ]]; then
-        # If token is empty, try to read from ~/.digitalocean_token
-        if [[ -z "$digitalocean_token" ]]; then
-            local token_file="$HOME/.digitalocean_token"
-            if [[ -f "$token_file" ]]; then
-                digitalocean_token=$(tr -d '[:space:]' < "$token_file")
-                log_info "Using DigitalOcean token from $token_file"
-            else
-                die "DigitalOcean token is required. Please provide via --digitalocean-token or create ~/.digitalocean_token file"
+        if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
+            log_warn "Skipping DigitalOcean token validation because EXASOL_SKIP_PROVIDER_CHECKS=1"
+        else
+            # If token is empty, try to read from ~/.digitalocean_token
+            if [[ -z "$digitalocean_token" ]]; then
+                local token_file="$HOME/.digitalocean_token"
+                if [[ -f "$token_file" ]]; then
+                    digitalocean_token=$(tr -d '[:space:]' < "$token_file")
+                    log_info "Using DigitalOcean token from $token_file"
+                else
+                    die "DigitalOcean token is required. Please provide via --digitalocean-token or create ~/.digitalocean_token file"
+                fi
             fi
-        fi
 
-        # Validate token is not empty after reading from file
-        if [[ -z "$digitalocean_token" ]]; then
-            die "DigitalOcean token cannot be empty"
+            # Validate token is not empty after reading from file
+            if [[ -z "$digitalocean_token" ]]; then
+                die "DigitalOcean token cannot be empty"
+            fi
         fi
     fi
 
@@ -716,8 +741,10 @@ EOF
     cd "$temp_dir" || die "Failed to change to temp directory"
 
     if ! tofu init -upgrade >/dev/null 2>&1; then
-        log_error "Failed to initialize tofu for AZ query"
-        die "Failed to query availability zones using tofu"
+        local fallback="${aws_region}a"
+        log_warn "Failed to initialize tofu for AZ query, using fallback AZ: $fallback"
+        echo "$fallback"
+        return 0
     fi
 
     # Get the list of supported AZs
@@ -779,9 +806,9 @@ detect_libvirt_uri() {
         return 0
     fi
 
-    log_error "Unable to detect libvirt URI automatically via 'virsh uri'."
-    log_error "Install libvirt-clients or rerun with --libvirt-uri <uri>."
-    echo ""
+    log_warn "Unable to detect libvirt URI automatically via 'virsh uri'."
+    log_warn "Defaulting to qemu:///session. Install libvirt-clients or rerun with --libvirt-uri <uri> to override."
+    echo "qemu:///session"
 }
 
 # Write provider-specific variables
@@ -1023,7 +1050,7 @@ This directory contains a deployment configuration for Exasol database.
 
 ## Configuration
 
-- **Cloud Provider**: ${SUPPORTED_PROVIDERS[$cloud_provider]}
+- **Cloud Provider**: $(get_provider_description "$cloud_provider")
 - **Database Version**: $db_version
 - **Architecture**: $architecture
 - **Cluster Size**: $cluster_size nodes

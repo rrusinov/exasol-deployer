@@ -74,9 +74,9 @@ data "hcloud_locations" "available" {}
 resource "hcloud_network" "exasol_network" {
   name     = "exasol-network-${random_id.instance.hex}"
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
-  # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
-  # Provides 254 × 256 = 65,024 possible unique networks
-  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.${parseint(substr(random_id.instance.hex, 2, 2), 16)}.0/24"
+  # Format: 10.X.0.0/16 where X is derived from cluster ID hex digits
+  # Provides 65,024 possible unique /16 networks; a /24 subnet will be carved from it
+  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.0.0/16"
 
   labels = {
     owner = var.owner
@@ -87,7 +87,7 @@ resource "hcloud_network_subnet" "exasol_subnet" {
   network_id   = hcloud_network.exasol_network.id
   type         = "cloud"
   network_zone = var.hetzner_network_zone
-  # Use subnet within the dynamically assigned network range
+  # Carve a /24 subnet from the /16 network for the cluster private subnet
   ip_range     = cidrsubnet(hcloud_network.exasol_network.ip_range, 8, 1)
 }
 
@@ -189,7 +189,9 @@ resource "hcloud_server_network" "exasol_node_network" {
   count      = var.node_count
   server_id  = hcloud_server.exasol_node[count.index].id
   network_id = hcloud_network.exasol_network.id
-  ip         = "10.0.1.${count.index + 10}"
+  # Allocate server IPs from the created subnet. Use cidrhost to pick host addresses
+  # Reserve the first 10 addresses for potential gateway/reserved use, start from host 10
+  ip         = cidrhost(hcloud_network_subnet.exasol_subnet.ip_range, count.index + 10)
 }
 
 # ==============================================================================

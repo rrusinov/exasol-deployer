@@ -65,7 +65,8 @@ resource "digitalocean_vpc" "exasol_vpc" {
   # This avoids conflicts with existing VPCs from failed/previous deployments
   # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
   # Provides 254 × 256 = 65,024 possible unique networks
-  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.${parseint(substr(random_id.instance.hex, 2, 2), 16)}.0/24"
+  # Use a /16 network and carve /24 subnets from it to reduce collision risk
+  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.0.0/16"
 }
 
 # ==============================================================================

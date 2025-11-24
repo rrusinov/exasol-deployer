@@ -18,10 +18,9 @@ validate_help_matches_code() {
     echo "Test: exasol $command --help documents all options"
 
     local options=()
-    if ! mapfile -t options < <(extract_command_options "$source_file" "$function_name"); then
-        echo "Failed to extract options for $command" >&2
-        exit 1
-    fi
+    while IFS= read -r opt; do
+        [[ -n "$opt" ]] && options+=("$opt")
+    done < <(extract_command_options "$source_file" "$function_name")
 
     local help_output
     if ! help_output=$("$SCRIPT_ROOT/exasol" "$command" --help 2>&1); then

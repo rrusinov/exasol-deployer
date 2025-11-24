@@ -199,9 +199,11 @@ cleanup_test_dir() {
 # Global cleanup for any test directories that might be left behind
 global_cleanup() {
     # Cleanup tracked unit test directories
-    for test_dir in "${CREATED_TEST_DIRS[@]}"; do
-        cleanup_test_dir "$test_dir"
-    done
+    if [[ ${#CREATED_TEST_DIRS[@]} -gt 0 ]]; then
+        for test_dir in "${CREATED_TEST_DIRS[@]}"; do
+            cleanup_test_dir "$test_dir"
+        done
+    fi
     
     # Broad cleanup for e2e and legacy directories (not tracked)
     local username

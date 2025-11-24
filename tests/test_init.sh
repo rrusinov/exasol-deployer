@@ -14,6 +14,9 @@ source "$LIB_DIR/cmd_init.sh"
 echo "Testing cmd_init.sh multi-cloud functions"
 echo "========================================="
 
+# Provide a dummy DigitalOcean token so provider checks can run without real creds.
+export DIGITALOCEAN_TOKEN="${DIGITALOCEAN_TOKEN:-DUMMY_TOKEN}"
+
 # Test: Cloud provider validation
 test_cloud_provider_validation() {
     echo ""
@@ -545,7 +548,11 @@ test_digitalocean_token_validation() {
     echo ""
     echo "Test: DigitalOcean token validation"
 
-    local test_dir=$(setup_test_dir)
+    # Temporarily enforce provider checks for this block and unset dummy token
+    local prev_skip="${EXASOL_SKIP_PROVIDER_CHECKS:-}"
+    local prev_do_token="${DIGITALOCEAN_TOKEN:-}"
+    unset EXASOL_SKIP_PROVIDER_CHECKS
+    unset DIGITALOCEAN_TOKEN
 
     # Simulate different home directory to avoid modifying real ~/.digitalocean_token
     local original_home="$HOME"
@@ -555,8 +562,10 @@ test_digitalocean_token_validation() {
     # Test 1: Init without token should fail
     echo "  Testing: Init without token should fail"
     local output
+    local test_dir_missing_token
+    test_dir_missing_token=$(setup_test_dir)
     output=$(cmd_init --cloud-provider digitalocean \
-        --deployment-dir "$test_dir" \
+        --deployment-dir "$test_dir_missing_token" \
         --digitalocean-region nyc3 \
         2>&1)
     local exit_code=$?
@@ -583,10 +592,12 @@ test_digitalocean_token_validation() {
     echo "  Testing: Init with token from ~/.digitalocean_token should succeed"
     echo "test-token-from-file-12345" > "$HOME/.digitalocean_token"
 
-    cmd_init --cloud-provider digitalocean \
-        --deployment-dir "$test_dir" \
+    local test_dir_success
+    test_dir_success=$(setup_test_dir)
+    output=$(cmd_init --cloud-provider digitalocean \
+        --deployment-dir "$test_dir_success" \
         --digitalocean-region nyc3 \
-        2>/dev/null
+        2>&1)
     exit_code=$?
 
     assert_success "$exit_code" "DigitalOcean init with token from file should succeed"
@@ -595,7 +606,20 @@ test_digitalocean_token_validation() {
     export HOME="$original_home"
     rm -rf "$temp_home"
 
-    cleanup_test_dir "$test_dir"
+    cleanup_test_dir "$test_dir_missing_token"
+    cleanup_test_dir "$test_dir_success"
+
+    # Restore env flags
+    if [[ -n "$prev_skip" ]]; then
+        EXASOL_SKIP_PROVIDER_CHECKS="$prev_skip"
+    else
+        unset EXASOL_SKIP_PROVIDER_CHECKS
+    fi
+    if [[ -n "$prev_do_token" ]]; then
+        export DIGITALOCEAN_TOKEN="$prev_do_token"
+    else
+        unset DIGITALOCEAN_TOKEN
+    fi
 }
 
 test_hetzner_private_ip_template() {

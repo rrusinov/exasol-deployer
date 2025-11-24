@@ -21,7 +21,11 @@ if ! "$SHELLCHECK_BIN" --version >/dev/null 2>&1; then
     exit 0
 fi
 
-mapfile -t shell_scripts < <(git ls-files '*.sh' && git ls-files -o --exclude-standard '*.sh' | sort -u)
+# Collect shell scripts (tracked and untracked) without relying on Bash 4 mapfile
+shell_scripts=()
+while IFS= read -r script; do
+    [[ -n "$script" ]] && shell_scripts+=("$script")
+done < <((git ls-files '*.sh' && git ls-files -o --exclude-standard '*.sh') | sort -u || true)
 
 if [[ ${#shell_scripts[@]} -eq 0 ]]; then
     echo "No shell scripts found."

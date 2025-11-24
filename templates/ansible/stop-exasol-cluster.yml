@@ -96,7 +96,7 @@
         cmd: "c4 ps -e '.[].Instances.Configs | to_entries | map(.value.ground.boot_stage) | all(. == \"a\" or . == \"a1\")'"
       become_user: "{{ exa_user }}"
       register: stage_check
-      until: stage_check.stdout | regex_search('true')
+      until: stage_check.stdout is truthy
       retries: 60
       delay: 5
       changed_when: false
@@ -118,7 +118,7 @@
     - name: Power off hosts via in-guest shutdown (fallback for unsupported providers)
       ansible.builtin.shell: "shutdown now -h 'Exasol stop fallback'"
       become: true
-      when: power_off_fallback | default(false)
+      when: (power_off_fallback | default(false)) | bool
       async: 1
       poll: 0
       ignore_errors: true

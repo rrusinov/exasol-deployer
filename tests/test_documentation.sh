@@ -47,8 +47,9 @@ test_cloud_provider_docs_linked() {
         overview_content="$(cat "$CLOUD_OVERVIEW_DOC")"
     fi
 
-    for provider in "${!SUPPORTED_PROVIDERS[@]}"; do
-        local upper_provider="${provider^^}"
+    for provider in "${SUPPORTED_PROVIDERS[@]}"; do
+        local upper_provider
+        upper_provider=$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')
         local doc_name="CLOUD_SETUP_${upper_provider}.md"
         local doc_rel_path="docs/$doc_name"
         local doc_abs_path="$SCRIPT_ROOT/$doc_rel_path"
@@ -73,13 +74,17 @@ test_commands_documented_in_readme() {
     fi
 
     local commands=()
-    if ! mapfile -t commands < <("$SCRIPT_ROOT/exasol" --help 2>/dev/null | awk '
+    while IFS= read -r cmd; do
+        [[ -n "$cmd" ]] && commands+=("$cmd")
+    done < <("$SCRIPT_ROOT/exasol" --help 2>/dev/null | awk '
         /Available Commands:/ {capture=1; next}
         capture {
             if ($0 ~ /^[[:space:]]*$/) { exit }
             sub(/^[[:space:]]+/, "", $0)
             print $1
-        }'); then
+        }')
+
+    if [[ ${#commands[@]} -eq 0 ]]; then
         echo "Failed to parse exasol --help output" >&2
         exit 1
     fi
@@ -100,13 +105,21 @@ test_init_flags_documented() {
     fi
 
     local readme_flags=()
-    if ! mapfile -t readme_flags < <(extract_readme_init_flags "$README_FILE"); then
+    while IFS= read -r flag; do
+        [[ -n "$flag" ]] && readme_flags+=("$flag")
+    done < <(extract_readme_init_flags "$README_FILE")
+
+    if [[ ${#readme_flags[@]} -eq 0 ]]; then
         echo "Failed to extract init flags from README" >&2
         exit 1
     fi
 
     local code_flags=()
-    if ! mapfile -t code_flags < <(extract_command_options "$SCRIPT_ROOT/lib/cmd_init.sh" "cmd_init"); then
+    while IFS= read -r flag; do
+        [[ -n "$flag" ]] && code_flags+=("$flag")
+    done < <(extract_command_options "$SCRIPT_ROOT/lib/cmd_init.sh" "cmd_init")
+
+    if [[ ${#code_flags[@]} -eq 0 ]]; then
         echo "Failed to extract init flags from cmd_init" >&2
         exit 1
     fi

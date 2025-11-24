@@ -145,6 +145,8 @@ resource "libvirt_domain" "exasol_node" {
   dynamic "network_interface" {
     for_each = var.libvirt_network_bridge == "" ? [1] : []
     content {
+      # Ensure libvirt reports guest IP when using user-mode networking (slirp)
+      wait_for_lease = true
     }
   }
 

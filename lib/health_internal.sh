@@ -106,9 +106,11 @@ health_run_internal_checks() {
 
         local -a host_entries=()
 
-        # Parse inventory file using awk to extract host entries
+        # Parse inventory file using awk to extract host entries (portable across BSD/GNU awk)
         if [[ -f "$inventory_file" ]]; then
-            mapfile -t host_entries < <(awk '
+            while IFS= read -r entry; do
+                [[ -n "$entry" ]] && host_entries+=("$entry")
+            done < <(awk '
             BEGIN { section = "" }
             {
                 # Skip empty lines and comments
@@ -117,10 +119,10 @@ health_run_internal_checks() {
                 }
 
                 # Check for section headers
-                if ($0 ~ /^\[.*\]$/) {
-                    # Extract section name
-                    match($0, /\[(.*)\]/, arr)
-                    section = arr[1]
+                if ($0 ~ /^\[/) {
+                    section = $0
+                    gsub(/^[[:space:]]*\[/, "", section)
+                    gsub(/\].*$/, "", section)
                     next
                 }
 
@@ -173,7 +175,11 @@ health_run_internal_checks() {
 
         # Preload public IPs from Terraform state (if available) keyed by host order
         local -a state_public_ips=()
-        if mapfile -t state_public_ips < <(health_load_state_public_ips "$deploy_dir" 2>/dev/null); then
+        while IFS= read -r tf_ip; do
+            [[ -n "$tf_ip" ]] && state_public_ips+=("$tf_ip")
+        done < <(health_load_state_public_ips "$deploy_dir" 2>/dev/null || true)
+
+        if [[ ${#state_public_ips[@]} -gt 0 ]]; then
             local idx=0
             for entry in "${host_entries[@]}"; do
                 IFS='|' read -r host_name _ <<<"$entry"

@@ -557,11 +557,11 @@ Allows moving IP between servers during maintenance.
 
 For enhanced security:
 ```bash
-# Create private network
-hcloud network create --name exasol-private --ip-range 10.0.0.0/16
+# Create private network (example uses a /16; the template derives the `10.<X>.0.0/16` prefix)
+hcloud network create --name exasol-private --ip-range 10.<X>.0.0/16
 
-# Attach servers to network
-hcloud server attach-to-network SERVER_NAME --network exasol-private --ip 10.0.1.2
+# Attach servers to network (example: first usable host in subnet)
+hcloud server attach-to-network SERVER_NAME --network exasol-private --ip 10.<X>.1.2
 ```
 
 Keeps cluster communication off public internet.

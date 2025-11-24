@@ -13,16 +13,15 @@ PROGRESS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/progress_keywords.sh
 source "${PROGRESS_LIB_DIR}/progress_keywords.sh"
 
-# Load step labels and patterns for an operation into referenced arrays.
+# Arrays holding labels/patterns for current operation (kept global for Bash 3.x)
+PROGRESS_STEP_LABELS=()
+PROGRESS_STEP_PATTERNS=()
+
+# Load step labels and patterns for an operation.
 progress_load_steps() {
     local operation="$1"
-    local labels_var="$2"
-    local patterns_var="$3"
-
-    local -n labels_ref="$labels_var"
-    local -n patterns_ref="$patterns_var"
-    labels_ref=()
-    patterns_ref=()
+    PROGRESS_STEP_LABELS=()
+    PROGRESS_STEP_PATTERNS=()
 
     local definitions
     if ! definitions=$(progress_get_step_definitions "$operation"); then
@@ -33,8 +32,8 @@ progress_load_steps() {
         [[ -z "$line" ]] && continue
         local label="${line%%:::*}"
         local pattern="${line#*:::}"
-        labels_ref+=("$label")
-        patterns_ref+=("$pattern")
+        PROGRESS_STEP_LABELS+=("$label")
+        PROGRESS_STEP_PATTERNS+=("$pattern")
     done <<< "$definitions"
 }
 
@@ -60,9 +59,7 @@ progress_display_steps() {
     local operation="$1"
     shift || true
 
-    local -a step_labels=()
-    local -a step_patterns=()
-    if ! progress_load_steps "$operation" step_labels step_patterns; then
+    if ! progress_load_steps "$operation"; then
         # Unknown operation: pass-through
         while IFS= read -r line || [[ -n "$line" ]]; do
             echo "$line"
@@ -70,6 +67,8 @@ progress_display_steps() {
         return 0
     fi
 
+    local -a step_labels=("${PROGRESS_STEP_LABELS[@]}")
+    local -a step_patterns=("${PROGRESS_STEP_PATTERNS[@]}")
     local total_steps=${#step_labels[@]}
     local current_step=1
     local pad_width=${#total_steps}

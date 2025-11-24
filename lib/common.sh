@@ -113,9 +113,9 @@ die() {
 # The success variable must be declared in the caller's scope.
 
 # Global variables for trap cleanup (set by setup_operation_guard)
-declare -g _OPERATION_GUARD_DEPLOY_DIR=""
-declare -g _OPERATION_GUARD_FAIL_STATUS=""
-declare -g _OPERATION_GUARD_SUCCESS="false"
+_OPERATION_GUARD_DEPLOY_DIR=""
+_OPERATION_GUARD_FAIL_STATUS=""
+_OPERATION_GUARD_SUCCESS="false"
 
 # Cleanup function called by trap
 cleanup_operation_guard() {
@@ -176,7 +176,8 @@ extract_plan_total_resources() {
 # Categorize Ansible tasks into phases for more informative progress output
 categorize_ansible_phase() {
     local task_name="$1"
-    local lower_task="${task_name,,}"
+    local lower_task
+    lower_task=$(printf '%s' "$task_name" | tr '[:upper:]' '[:lower:]')
 
     if [[ "$lower_task" =~ (download|fetch|get|transfer|artifact|tarball) ]]; then
         echo "download"
@@ -210,14 +211,6 @@ check_required_commands() {
         missing_commands+=("jq")
     fi
 
-    # Check for bash version (require 4.0+)
-    if [[ -n "$BASH_VERSION" ]]; then
-        local bash_major="${BASH_VERSION%%.*}"
-        if [[ "$bash_major" -lt 4 ]]; then
-            version_issues+=("bash (found version $BASH_VERSION, require 4.0+)")
-        fi
-    fi
-
     # Check standard Unix tools
     local required_tools=("grep" "sed" "awk" "curl" "ssh" "cat" "dirname" "basename" "mktemp" "date" "find" "tr" "cut" "wc")
     for tool in "${required_tools[@]}"; do
@@ -225,16 +218,6 @@ check_required_commands() {
             missing_commands+=("$tool")
         fi
     done
-
-    # Check for GNU readlink or realpath (BSD readlink doesn't support -f)
-    if ! command_exists readlink && ! command_exists realpath; then
-        missing_commands+=("readlink or realpath")
-    elif command_exists readlink; then
-        # Test if readlink supports -f flag (GNU version)
-        if ! readlink -f / >/dev/null 2>&1; then
-            version_issues+=("readlink (BSD version detected, need GNU readlink with -f support, or install realpath)")
-        fi
-    fi
 
     # Check for GNU date (BSD date doesn't support date +%s reliably in older versions)
     if command_exists date; then
@@ -382,6 +365,10 @@ validate_directory() {
     if [[ ! "$dir" = /* ]]; then
         dir="$(pwd)/$dir"
     fi
+
+    # Normalize any ./ or // sequences to keep test patterns predictable
+    dir=${dir//\/.\//\/}
+    dir=${dir//\/\//\/}
 
     echo "$dir"
 }

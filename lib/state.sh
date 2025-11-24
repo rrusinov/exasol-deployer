@@ -328,7 +328,7 @@ validate_stop_transition() {
     local current_state="$1"
 
     case "$current_state" in
-        "$STATE_DATABASE_READY"|"$STATE_DATABASE_CONNECTION_FAILED"|"$STATE_STOP_FAILED")
+        "$STATE_DATABASE_READY"|"$STATE_DATABASE_CONNECTION_FAILED"|"$STATE_STOP_FAILED"|"$STATE_STARTED")
             # Valid states to stop from
             return 0
             ;;
