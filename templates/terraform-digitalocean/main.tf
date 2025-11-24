@@ -158,8 +158,9 @@ resource "digitalocean_droplet" "exasol_node" {
   # Cloud-init user-data to create exasol user before Ansible runs
   user_data = local.cloud_init_script
 
-  # Resize root disk if needed
-  resize_disk = var.root_volume_size > 25 ? true : false
+  # Note: resize_disk parameter is not used because DigitalOcean droplet disk size
+  # is determined by the instance type slug and cannot be customized independently
+  # (e.g., s-2vcpu-4gb always comes with 80GB disk)
 
   # Wait for droplet and cloud-init to be ready
   # DigitalOcean needs extra time for cloud-init to create exasol user and copy SSH keys

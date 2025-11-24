@@ -236,7 +236,7 @@
         group: "{{ exa_user }}"
         mode: '0644'
       vars:
-        internal_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, ['ansible_default_ipv4', 'address']) | join(' ') }}"
+        internal_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, 'private_ip') | join(' ') }}"
         external_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, 'ansible_host') | join(' ') }}"
         data_disk_paths_var: "{{ data_disk_paths | join(',') }}"
         exa_image_password: "{{ random_image_pass }}"

@@ -48,11 +48,12 @@ variable "allowed_cidr" {
 }
 
 variable "root_volume_size" {
-  description = "The size of the root volume in GB."
+  description = "The size of the root volume in GB. NOTE: This parameter is ignored for DigitalOcean."
   type        = number
   default     = 50
-  # Note: DigitalOcean droplets come with fixed root disk sizes (usually 25GB minimum)
-  # This variable can trigger disk resize if value is larger than the default
+  # Note: DigitalOcean droplet disk size is determined by the instance type slug
+  # (e.g., s-2vcpu-4gb = 80GB, s-4vcpu-8gb = 160GB) and cannot be customized independently.
+  # This variable is kept for consistency with other cloud providers but has no effect.
 }
 
 variable "data_volume_size" {

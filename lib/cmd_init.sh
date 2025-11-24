@@ -460,6 +460,9 @@ cmd_init() {
             ;;
         digitalocean)
             log_info "  DigitalOcean Region: $digitalocean_region"
+            if [[ "$root_volume_size" -ne 50 ]]; then
+                log_warn "  Note: --root-volume-size is ignored for DigitalOcean. Disk size is determined by the instance type (e.g., s-2vcpu-4gb = 80GB)"
+            fi
             ;;
         libvirt)
             log_info "  Libvirt Memory: ${libvirt_memory_gb}GB"
