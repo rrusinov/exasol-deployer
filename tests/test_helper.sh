@@ -19,6 +19,10 @@ TESTS_PASSED=0
 TESTS_FAILED=0
 TEST_RUN_ID="${EXASOL_TEST_RUN_ID:-$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 6)}"
 declare -a CREATED_TEST_DIRS=()
+TEST_FILE_NAME="${TEST_FILE_NAME:-${BASH_SOURCE[1]:-${0:-tests}}}"
+if [[ "$TEST_FILE_NAME" == /* && -n "${PWD:-}" ]]; then
+    TEST_FILE_NAME="./${TEST_FILE_NAME#"$PWD"/}"
+fi
 
 # Test assertion functions
 assert_equals() {
@@ -153,9 +157,10 @@ assert_greater_than() {
 
 # Test summary
 test_summary() {
+    local summary_label="${TEST_FILE_NAME:-Tests}"
     echo ""
     echo "========================================="
-    echo "Test Summary"
+    echo "Test Summary: $summary_label"
     echo "========================================="
     echo "Total:  $TESTS_TOTAL"
     echo -e "Passed: ${GREEN}$TESTS_PASSED${NC}"
@@ -173,7 +178,8 @@ test_summary() {
 # Setup and teardown helpers
 setup_test_dir() {
     # Create unique test directory in /var/tmp for persistence
-    local username=$(whoami)
+    local username
+    username=$(whoami)
     local test_dir
     test_dir=$(mktemp -d "/var/tmp/exasol-deployer-utest-${username}-${TEST_RUN_ID}-XXXXXX" 2>/dev/null || mktemp -d "/tmp/exasol-deployer-utest-${username}-${TEST_RUN_ID}-XXXXXX")
     CREATED_TEST_DIRS+=("$test_dir")
@@ -183,7 +189,8 @@ setup_test_dir() {
 cleanup_test_dir() {
     local test_dir="$1"
     # Only cleanup directories that match our unit test pattern and belong to this user
-    local username=$(whoami)
+    local username
+    username=$(whoami)
     if [[ -n "$test_dir" && "$test_dir" =~ ^/(var/tmp|tmp)/exasol-deployer-utest-${username}(-[a-zA-Z0-9]+)?-[a-zA-Z0-9-]+$ ]]; then
         rm -rf "$test_dir"
     fi
@@ -197,7 +204,8 @@ global_cleanup() {
     done
     
     # Broad cleanup for e2e and legacy directories (not tracked)
-    local username=$(whoami)
+    local username
+    username=$(whoami)
     
     # Clean up any e2e test directories in /var/tmp that belong to this user
     find /var/tmp -maxdepth 1 -name "exasol-deployer-e2e-${username}-*" -type d -exec rm -rf {} + 2>/dev/null || true

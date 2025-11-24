@@ -132,10 +132,11 @@ All cloud providers support these common options:
 
 ### Credential Management
 - **Never commit credentials**: Keep API tokens and passwords out of version control
-- **Use environment variables**: Export credentials instead of hardcoding
+- **Use environment variables/token files**: Export credentials instead of hardcoding. When `--hetzner-token` or `--digitalocean-token` is omitted, `exasol init` will try `$HETZNER_TOKEN`/`$DIGITALOCEAN_TOKEN` first and then `~/.hetzner_token`/`~/.digitalocean_token`.
   ```bash
   export HETZNER_TOKEN="your-token"
-  ./exasol init --hetzner-token "$HETZNER_TOKEN"
+  echo "$HETZNER_TOKEN" > ~/.hetzner_token
+  ./exasol init --cloud-provider hetzner  # uses env/file automatically
   ```
 - **Rotate credentials regularly**: Update API tokens and passwords periodically
 - **Use IAM roles when possible**: Especially for AWS/Azure/GCP

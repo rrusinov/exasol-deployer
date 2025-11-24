@@ -170,70 +170,6 @@ progress_get_estimated_duration() {
 }
 
 # ==============================================================================
-# SIMPLIFIED PROGRESS DISPLAY WITH ETA
-# ==============================================================================
-
-# Display progress with simplified ETA calculation
-# Usage: command 2>&1 | progress_display_with_eta <estimated_lines> <estimated_duration>
-progress_display_with_eta() {
-    local estimated_lines="${1:-1000}"
-    local estimated_duration="${2:-0}"
-    local start_time
-    start_time=$(date +%s)
-
-    # Use awk for better input handling
-    awk -v total="$estimated_lines" \
-        -v duration="$estimated_duration" \
-        -v start="$start_time" \
-        'BEGIN {
-            line_count = 0
-        }
-        {
-            line_count++
-            percent = int((line_count * 100) / total)
-            if (percent > 100) percent = 100
-            
-            # Get current time using external command
-            "date +%s" | getline current_time
-            close("date +%s")
-            elapsed = current_time - start
-            
-            # Simple ETA calculation based on estimated duration
-            eta_str = "   ???"
-            if (duration > 0 && percent > 0) {
-                eta_seconds = int(duration * (100 - percent) / 100)
-                if (eta_seconds < 0) eta_seconds = 0
-                
-                # Format ETA
-                if (eta_seconds < 60) {
-                    eta_str = eta_seconds "s"
-                } else if (eta_seconds < 3600) {
-                    eta_min = int(eta_seconds / 60)
-                    eta_str = eta_min "m"
-                } else {
-                    eta_hours = int(eta_seconds / 3600)
-                    eta_min = int((eta_seconds % 3600) / 60)
-                    eta_str = eta_hours "h" eta_min "m"
-                }
-            }
-            
-            printf "[%3d%%] [ETA: %6s] %s\n", percent, eta_str, $0
-            fflush()
-        }
-        END {
-            if (ENVIRON["PROGRESS_RECORD_FILE"] != "") {
-                # Record final stats for calibration (simplified - no per-line offsets)
-                "date +%s" | getline final_time
-                close("date +%s")
-                duration = final_time - start
-                print "total_lines=" line_count > ENVIRON["PROGRESS_RECORD_FILE"]
-                print "duration=" duration >> ENVIRON["PROGRESS_RECORD_FILE"]
-                close(ENVIRON["PROGRESS_RECORD_FILE"])
-            }
-        }'
-}
-
-# ==============================================================================
 # MAIN PROGRESS WRAPPER
 # ==============================================================================
 
@@ -259,54 +195,8 @@ progress_wrap_command() {
         nodes=${nodes:-1}
     fi
 
-    # Calculate estimated lines
-    local estimated_lines
-    local base_lines per_node_lines
-
-    if read -r base_lines per_node_lines < <(progress_calculate_regression "$provider" "$operation" 2>/dev/null); then
-        estimated_lines=$((base_lines + (nodes - 1) * per_node_lines))
-    else
-        # Fallback to max known metric
-        estimated_lines=$(progress_get_fallback_estimate)
-    fi
-
-    # Get estimated duration from metrics
-    local estimated_duration
-    if estimated_duration=$(progress_get_estimated_duration "$provider" "$operation" "$nodes" 2>/dev/null); then
-        :
-    else
-        estimated_duration=0
-    fi
-
-    # Setup calibration recording if requested
-    local record_file=""
-    if [[ "${PROGRESS_CALIBRATE:-}" == "true" ]]; then
-        mkdir -p "$deploy_dir/metrics"
-        record_file="$deploy_dir/metrics/${provider}.${operation}.${nodes}.txt"
-        export PROGRESS_RECORD_FILE="$record_file"
-
-        # Add metadata
-        {
-            echo "provider=$provider"
-            echo "operation=$operation"
-            echo "nodes=$nodes"
-            echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        } > "$record_file"
-    fi
-
-    # Execute command with progress tracking inside a subshell
-    (
-        "$@" 2>&1 | progress_display_with_eta "$estimated_lines" "$estimated_duration"
-        subs_exit_code=${PIPESTATUS[0]}
-        exit "$subs_exit_code"
-    )
-
-    local exit_code=$?
-
-    # Cleanup
-    unset PROGRESS_RECORD_FILE
-
-    return "$exit_code"
+    "$@"
+    return $?
 }
 
 # ==============================================================================

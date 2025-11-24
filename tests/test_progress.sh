@@ -315,79 +315,6 @@ test_progress_get_estimated_duration() {
     cleanup_test_dir "$(dirname "$test_metrics_dir")"
 }
 
-# Test progress_display_with_eta output format
-test_progress_display_format() {
-    echo ""
-    echo "Test: progress_display_with_eta produces correct output format"
-
-    # Create test input and pipe through progress display
-    printf "line1\nline2\nline3\nline4\nline5" | progress_display_with_eta 5 0 2>/dev/null
-    
-    local output
-    output=$(printf "line1\nline2\nline3\nline4\nline5" | progress_display_with_eta 5 0 2>/dev/null)
-    
-    # Check that each line has the format: "[XX%] [ETA: ???] <text>"
-    local line_count=0
-    while IFS= read -r line; do
-        line_count=$((line_count + 1))
-
-        # Check format: starts with percentage in brackets (format: "[ XX%]" or "[100%]")
-        if ! echo "$line" | grep -qE '^\[ ?[0-9]+%\] \[ETA:    [0-9?]+\] '; then
-            TESTS_TOTAL=$((TESTS_TOTAL + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
-            echo -e "${RED}✗${NC} Line $line_count does not match progress format: $line"
-            return 1
-        fi
-    done <<< "$output"
-
-    assert_equals "5" "$line_count" "Should have 5 output lines"
-    TESTS_TOTAL=$((TESTS_TOTAL + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
-    echo -e "${GREEN}✓${NC} All lines match progress format ([XX%] [ETA: time] text)"
-}
-
-# Test progress percentage calculation in display
-test_progress_percentage_calculation() {
-    echo ""
-    echo "Test: progress percentages are calculated correctly"
-
-    # Test with known input size
-    local output
-    output=$(printf "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10" | progress_display_with_eta 10 0 2>/dev/null)
-    
-    # Extract the last percentage
-    local last_percent
-    last_percent=$(echo "$output" | tail -1 | grep -oE '\[[0-9]+%\]' | grep -oE '[0-9]+')
-
-    # 10 out of 10 lines should show 100%
-    assert_equals "100" "$last_percent" "10 out of 10 lines should show 100%"
-}
-
-# Test progress capping at 100%
-test_progress_caps_at_100() {
-    echo ""
-    echo "Test: progress caps at 100% even with more lines"
-
-    # Process more lines than estimated
-    local output
-    output=$(printf "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20" | progress_display_with_eta 10 0 2>/dev/null)
-
-    # Extract all percentages and check none exceed 100
-    local max_percent=0
-    while IFS= read -r line; do
-        local percent
-        percent=$(echo "$line" | grep -oE '\[[0-9]+%\]' | grep -oE '[0-9]+')
-        if [[ $percent -gt $max_percent ]]; then
-            max_percent=$percent
-        fi
-        if [[ $percent -gt 100 ]]; then
-            TESTS_TOTAL=$((TESTS_TOTAL + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
-            echo -e "${RED}✗${NC} Progress exceeded 100%: $percent"
-            return 1
-        fi
-    done <<< "$output"
-
-    assert_equals "100" "$max_percent" "Progress should cap at 100%"
-}
-
 # Test that command output validation helper
 validate_output_format() {
     local output="$1"
@@ -451,9 +378,6 @@ test_progress_load_metrics
 test_progress_parse_metric_file
 test_progress_calculate_regression
 test_progress_get_estimated_duration
-test_progress_display_format
-test_progress_percentage_calculation
-test_progress_caps_at_100
 test_init_output_format
 
 test_summary

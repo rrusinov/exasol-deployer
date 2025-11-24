@@ -425,6 +425,7 @@ Initialize a new deployment directory with configuration files.
 - `--libvirt-vcpus integer`: vCPUs per VM (default: `2`).
 - `--libvirt-network string`: Libvirt network name (default: `default`).
 - `--libvirt-pool string`: Storage pool name (default: `default`).
+- `--libvirt-uri string`: Libvirt URI (auto-detected when omitted).
 
 **Configuration Flow:**
 1. Parse command-line arguments
@@ -569,6 +570,15 @@ Use `--wait-for` to wait until the deployment reaches a specific status, useful 
   - If timeout omitted, defaults to 15m
   - Status values: `database_ready`, `stopped`, `started`
   - Timeout formats: `15m`, `1h`, `60s`
+
+### `add-metrics`
+
+Copy calibrated metrics (progress line counts and durations) from a deployment back into the shared metrics repository. Useful when you've run with `PROGRESS_CALIBRATE=true` and want to persist improved estimates for future runs.
+
+```bash
+PROGRESS_CALIBRATE=true ./exasol deploy --deployment-dir ./my-deployment
+./exasol add-metrics --deployment-dir ./my-deployment
+```
 
 ### `destroy`
 

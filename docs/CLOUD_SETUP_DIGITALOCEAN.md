@@ -65,6 +65,8 @@ chmod 600 ~/.digitalocean_token
 export DIGITALOCEAN_TOKEN=$(cat ~/.digitalocean_token)
 ```
 
+When `--digitalocean-token` is omitted, `exasol init` automatically checks `$DIGITALOCEAN_TOKEN` first and then `~/.digitalocean_token`.
+
 **Never commit tokens to version control!**
 
 ## Step 3: Choose DigitalOcean Region

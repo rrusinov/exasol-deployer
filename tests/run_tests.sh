@@ -3,19 +3,6 @@
 
 set -euo pipefail
 
-# Re-exec with a modern bash if the current shell is too old (e.g., macOS /bin/bash 3.2)
-if [[ -z "${BASH_VERSINFO:-}" || ${BASH_VERSINFO[0]} -lt 4 ]]; then
-    for candidate in "$HOME/.local/homebrew/bin/bash" "/usr/local/bin/bash"; do
-        if [[ -x "$candidate" ]]; then
-            exec "$candidate" "$0" "$@"
-        fi
-    done
-    echo "A Bash version >=4 is required to run the test suite. Install Homebrew bash and ensure it's on PATH." >&2
-    exit 1
-fi
-
-export PATH="$HOME/.local/homebrew/bin:/usr/local/bin:$PATH"
-
 # Get script directory
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

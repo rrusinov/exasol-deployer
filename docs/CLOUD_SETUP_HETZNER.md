@@ -75,6 +75,8 @@ chmod 600 ~/.hetzner_token
 export HETZNER_TOKEN=$(cat ~/.hetzner_token)
 ```
 
+`exasol init` will automatically read `HETZNER_TOKEN` or `~/.hetzner_token` (in that order) when `--hetzner-token` is omitted, so you rarely need to pass the flag explicitly.
+
 ## Step 4: Choose Hetzner Location
 
 Hetzner has three datacenter locations in Germany and one in Finland:
