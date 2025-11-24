@@ -1,0 +1,153 @@
+${base_cloud_init}
+
+# Hetzner: normalize private network prefix so cluster traffic can broadcast
+cat >/usr/local/sbin/exasol-hetzner-network.sh <<'EOF'
+#!/usr/bin/env bash
+set -eo pipefail
+
+log_file="/var/log/exasol-hetzner-network.log"
+exec >>"$log_file" 2>&1
+echo "=== $(date -Is) starting hetzner network fix ==="
+
+priv_ip="${priv_ip}"
+priv_prefix="${priv_prefix}"
+priv_cidr="${priv_cidr}"
+
+echo "priv_ip=${priv_ip} priv_prefix=${priv_prefix} priv_cidr=${priv_cidr}"
+
+detect_iface() {
+    ip -o addr show to "${priv_ip}/32" 2>/dev/null | awk '{print $2}' | head -n1
+}
+
+iface="$(detect_iface)"
+if [[ -z "$iface" ]]; then
+    # Fallback: find any non-eth0 interface with a 10.x.x.x/32 address
+    iface="$(ip -o addr show to 10.0.0.0/8 2>/dev/null | awk '$2!="eth0"{print $2}' | head -n1)"
+fi
+
+attempt=0
+max_attempts=5
+while [[ -z "$iface" && $attempt -lt $max_attempts ]]; do
+    attempt=$((attempt + 1))
+    echo "No interface yet, retry ${attempt}/${max_attempts}..."
+    sleep 2
+    iface="$(detect_iface)"
+done
+
+if [[ -z "$iface" ]]; then
+    echo "Could not detect Hetzner private interface for ${priv_ip}, skipping prefix fix"
+    exit 0
+fi
+
+ip address replace "${priv_ip}/${priv_prefix}" broadcast + dev "$iface"
+ip route replace "${priv_cidr}" dev "$iface" scope link src "${priv_ip}"
+
+ip -o addr show dev "$iface"
+ip route show dev "$iface"
+echo "=== $(date -Is) completed hetzner network fix ==="
+EOF
+chmod +x /usr/local/sbin/exasol-hetzner-network.sh
+
+# Run once at boot and on first cloud-init pass
+cat >/etc/systemd/system/exasol-hetzner-network.service <<'EOF'
+[Unit]
+Description=Exasol Hetzner network prefix fix
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/exasol-hetzner-network.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable exasol-hetzner-network.service
+systemctl start exasol-hetzner-network.service
+
+# Also run immediately during cloud-init in case systemd start is delayed
+/usr/local/sbin/exasol-hetzner-network.sh || true
+
+# Multicast forwarder: emulate multicast by unicasting packets to peers
+cat >/usr/local/sbin/exasol-mcast-forwarder.py <<'EOF'
+#!/usr/bin/env python3
+import ipaddress
+import os
+import socket
+import struct
+import sys
+
+GROUPS = [g for g in os.getenv("EXASOL_MCAST_GROUPS", "224.0.0.1").split(",") if g]
+PEERS = [p for p in os.getenv("EXASOL_MCAST_PEERS", "").split(",") if p]
+PORT = int(os.getenv("EXASOL_MCAST_PORT", "5001"))
+SELF_IP = os.getenv("EXASOL_SELF_IP", "")
+IFACE_IP = os.getenv("EXASOL_MCAST_IFACE", SELF_IP)
+
+if not SELF_IP or not IFACE_IP:
+    sys.exit("Self IP not set; cannot start multicast forwarder")
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.setsockopt(socket.IPPROTO_IP, socket.IP_PKTINFO, 1)
+if IFACE_IP:
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(IFACE_IP))
+sock.bind(("", PORT))
+
+for group in GROUPS:
+    try:
+        mreq = socket.inet_aton(group) + socket.inet_aton(IFACE_IP)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    except OSError:
+        continue
+
+def is_multicast(addr: str) -> bool:
+    try:
+        return ipaddress.ip_address(addr).is_multicast
+    except ValueError:
+        return False
+
+while True:
+    data, ancdata, _, src = sock.recvmsg(65535, 1024)
+    dst_addr = None
+    for level, ctype, cdata in ancdata:
+        if level == socket.IPPROTO_IP and ctype == socket.IP_PKTINFO:
+            dst_addr = socket.inet_ntoa(cdata[4:8])
+            break
+
+    if dst_addr and is_multicast(dst_addr):
+        for peer in PEERS:
+            if peer == SELF_IP:
+                continue
+            try:
+                sock.sendto(data, (peer, PORT))
+            except OSError:
+                continue
+EOF
+chmod +x /usr/local/sbin/exasol-mcast-forwarder.py
+
+cat >/etc/systemd/system/exasol-mcast-forwarder.service <<'EOF'
+[Unit]
+Description=Exasol multicast forwarder (unicast fan-out)
+After=network-online.target exasol-hetzner-network.service
+Wants=network-online.target
+
+[Service]
+Environment=EXASOL_MCAST_GROUPS=224.0.0.1
+Environment=EXASOL_MCAST_PORT=5001
+Environment=EXASOL_SELF_IP=${priv_ip}
+Environment=EXASOL_MCAST_IFACE=${priv_ip}
+Environment=EXASOL_MCAST_PEERS=${join(",", peer_ips)}
+ExecStart=/usr/local/sbin/exasol-mcast-forwarder.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable exasol-mcast-forwarder.service
+systemctl start exasol-mcast-forwarder.service
