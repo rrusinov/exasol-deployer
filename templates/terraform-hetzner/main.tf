@@ -48,6 +48,9 @@ locals {
   # Hetzner uses different naming: cx, cpx, ccx series for x86_64, cax for arm64
   server_type_prefix = var.instance_architecture == "arm64" ? "cax" : "cpx"
 
+  # Hetzner API expects architecture values 'x86' or 'arm'
+  image_architecture = var.instance_architecture == "arm64" ? "arm" : "x86"
+
   # Group volume IDs by node for Ansible inventory
   node_volumes = {
     for node_idx in range(var.node_count) : node_idx => [
@@ -140,10 +143,10 @@ resource "hcloud_firewall" "exasol_cluster" {
 
 # Get latest Ubuntu 24.04 image
 data "hcloud_image" "ubuntu" {
-  with_selector     = "os-flavor=ubuntu"
-  with_architecture = var.instance_architecture
+  name              = "ubuntu-24.04"
+  with_architecture = local.image_architecture
   most_recent       = true
-  # Filter for Ubuntu 24.04 - Hetzner uses format like "ubuntu-24.04"
+  # Explicitly pick Ubuntu 24.04 image name to avoid empty selector results
 }
 
 resource "hcloud_server" "exasol_node" {
