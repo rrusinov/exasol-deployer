@@ -129,5 +129,3 @@ test_progress_stop_steps_sequence
 
 # Summary is printed by test_helper via test_summary
 test_summary
-
-test_summary

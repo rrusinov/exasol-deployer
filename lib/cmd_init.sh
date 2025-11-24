@@ -37,6 +37,42 @@ normalize_checksum_value() {
     fi
 }
 
+# Resolve API token from explicit flag, environment variable, or fallback file
+# Usage: resolve_provider_token "<current_value>" "<ENV_VAR_NAME>" "<file_path>" "<Provider Name>"
+resolve_provider_token() {
+    local current_value="${1:-}"
+    local env_var_name="${2:-}"
+    local file_path="${3:-}"
+    local provider_name="${4:-Token}"
+
+    if [[ -n "$current_value" ]]; then
+        echo "$current_value"
+        return 0
+    fi
+
+    # shellcheck disable=SC2016
+    local env_value="${!env_var_name:-}"
+    if [[ -n "$env_value" ]]; then
+        log_info "Using $provider_name token from \$$env_var_name"
+        echo "$env_value"
+        return 0
+    fi
+
+    if [[ -n "$file_path" && -f "$file_path" ]]; then
+        local file_value
+        file_value=$(<"$file_path")
+        file_value="${file_value//$'\r'/}"
+        file_value="${file_value//$'\n'/}"
+        if [[ -n "$file_value" ]]; then
+            log_info "Using $provider_name token from $file_path"
+            echo "$file_value"
+            return 0
+        fi
+    fi
+
+    echo ""
+}
+
 # Show help for init command
 show_init_help() {
     cat <<'EOF'
@@ -405,6 +441,15 @@ cmd_init() {
 
     if [[ "$cloud_provider" == "digitalocean" && "$architecture" == "arm64" ]]; then
         die "DigitalOcean deployments currently support only x86_64 database versions. Please select an x86_64 build instead of $db_version."
+    fi
+
+    # Resolve provider tokens from environment or default files when not passed explicitly
+    if [[ "$cloud_provider" == "hetzner" ]]; then
+        hetzner_token=$(resolve_provider_token "$hetzner_token" "HETZNER_TOKEN" "$HOME/.hetzner_token" "Hetzner")
+    fi
+
+    if [[ "$cloud_provider" == "digitalocean" ]]; then
+        digitalocean_token=$(resolve_provider_token "$digitalocean_token" "DIGITALOCEAN_TOKEN" "$HOME/.digitalocean_token" "DigitalOcean")
     fi
 
     # Set default instance type if not provided

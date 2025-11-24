@@ -67,9 +67,7 @@ export DIGITALOCEAN_TOKEN="your-token-here"
 export DIGITALOCEAN_TOKEN=$(cat ~/.digitalocean_token)
 ```
 
-**Token Priority:**
-1. Command-line argument `--digitalocean-token` (highest priority)
-2. File at `~/.digitalocean_token` (automatic fallback)
+When `--digitalocean-token` is omitted, `exasol init` automatically checks `$DIGITALOCEAN_TOKEN` first and then `~/.digitalocean_token`.
 
 **Never commit tokens to version control!**
 

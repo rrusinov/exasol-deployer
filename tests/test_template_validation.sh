@@ -5,16 +5,6 @@
 # Get script directory
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Ensure a modern bash and Homebrew path when running on macOS
-if [[ -z "${BASH_VERSINFO:-}" || ${BASH_VERSINFO[0]} -lt 4 ]]; then
-    for candidate in "$HOME/.local/homebrew/bin/bash" "/usr/local/bin/bash"; do
-        if [[ -x "$candidate" ]]; then
-            exec "$candidate" "$0" "$@"
-        fi
-    done
-fi
-export PATH="$HOME/.local/homebrew/bin:/usr/local/bin:$PATH"
-
 source "$TEST_DIR/test_helper.sh"
 
 # Source the libraries we're testing
