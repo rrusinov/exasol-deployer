@@ -68,7 +68,7 @@ progress_destroy_steps() {
 Infrastructure planning:::Destroying cloud infrastructure|execution plan|will be destroyed
 Destroying instances:::exasol_node.*destroy|aws_instance.*destroy|instance .*destroy
 Destroying storage:::volume.*destroy|disk.*destroy|block device.*destroy
-Destroying network:::vpc.*destroy|subnet.*destroy|security group.*destroy|network.*destroy
+Destroying network:::vpc.*destroy|subnet.*destroy|security group.*destroy|network.*destroy|random_id\\.|ssh_config|ansible_inventory
 Cleanup verification:::Destroy complete!|Deployment Destroyed Successfully|resources have been destroyed
 EOF
 }
