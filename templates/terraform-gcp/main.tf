@@ -41,7 +41,10 @@ resource "google_compute_network" "exasol" {
 
 resource "google_compute_subnetwork" "exasol" {
   name          = "exasol-subnet"
-  ip_cidr_range = "10.0.1.0/24"
+  # Use range derived from cluster ID to ensure uniqueness while being deterministic
+  # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
+  # Provides 254 × 256 = 65,024 possible unique networks
+  ip_cidr_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.${parseint(substr(random_id.instance.hex, 2, 2), 16)}.0/24"
   region        = var.gcp_region
   network       = google_compute_network.exasol.id
 }

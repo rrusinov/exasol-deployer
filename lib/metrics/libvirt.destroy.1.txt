@@ -1,6 +1,0 @@
-total_lines=514
-provider=libvirt
-operation=destroy
-nodes=1
-duration=6
-timestamp=2025-01-18T10:00:00Z

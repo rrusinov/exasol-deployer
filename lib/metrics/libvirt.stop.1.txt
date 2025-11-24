@@ -1,6 +1,0 @@
-total_lines=97
-provider=libvirt
-operation=stop
-nodes=1
-duration=37
-timestamp=2025-01-18T10:00:00Z

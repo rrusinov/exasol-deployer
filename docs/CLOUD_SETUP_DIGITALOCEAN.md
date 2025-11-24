@@ -54,14 +54,16 @@ DigitalOcean frequently offers:
 ### Secure Token Storage
 
 ```bash
-# Store token securely in environment variable
-export DIGITALOCEAN_TOKEN="your-token-here"
-
-# Or store in a secure file
+# Option 1: Store token in ~/.digitalocean_token (recommended)
+# The exasol CLI will automatically read from this file
 echo "your-token-here" > ~/.digitalocean_token
 chmod 600 ~/.digitalocean_token
 
-# Use in deployment
+# Option 2: Pass token via command line
+# Use this for one-off deployments or CI/CD
+export DIGITALOCEAN_TOKEN="your-token-here"
+
+# Option 3: Store in environment variable and use in commands
 export DIGITALOCEAN_TOKEN=$(cat ~/.digitalocean_token)
 ```
 
@@ -116,13 +118,22 @@ doctl compute size list
 Single-node deployment with defaults:
 
 ```bash
+# With token in ~/.digitalocean_token (recommended - no --digitalocean-token needed)
+./exasol init \
+  --cloud-provider digitalocean \
+  --deployment-dir ./my-do-deployment
+
+# Or with explicit token
 ./exasol init \
   --cloud-provider digitalocean \
   --digitalocean-token "$DIGITALOCEAN_TOKEN" \
   --deployment-dir ./my-do-deployment
 ```
 
-**Warning**: Never commit the token to version control. Use environment variables.
+**Token handling**:
+- If you have `~/.digitalocean_token`, the token is loaded automatically
+- Use `--digitalocean-token` to override or for CI/CD pipelines
+- Never commit tokens to version control
 
 **Architecture note**: DigitalOcean currently offers only x86_64 droplets. `exasol init` will reject `--db-version` values that target arm64 when `--cloud-provider digitalocean` is used.
 
@@ -165,7 +176,12 @@ Cost-effective small cluster:
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--digitalocean-region` | Datacenter region | `nyc3` |
-| `--digitalocean-token` | DigitalOcean API token (required) | - |
+| `--digitalocean-token` | DigitalOcean API token | Reads from `~/.digitalocean_token` if not provided |
+
+**Token behavior**:
+- If `--digitalocean-token` is provided: Uses that token
+- If `--digitalocean-token` is NOT provided: Reads from `~/.digitalocean_token`
+- If neither exists: Init fails with error message
 
 **Note**: DigitalOcean does not support spot instances - all droplets are on-demand.
 
@@ -180,7 +196,7 @@ DigitalOcean offers simple, straightforward droplet types with all-SSD storage.
 | `s-1vcpu-1gb` | 1 | 1 GB | 25 GB | 1 TB | $6 | Small dev |
 | `s-1vcpu-2gb` | 1 | 2 GB | 50 GB | 2 TB | $12 | Dev/test |
 | `s-2vcpu-2gb` | 2 | 2 GB | 60 GB | 3 TB | $18 | Small apps |
-| `s-2vcpu-4gb` | 2 | 4 GB | 80 GB | 4 TB | $24 | Dev cluster |
+| `s-2vcpu-4gb` | 2 | 4 GB | 80 GB | 4 TB | $24 | **Default** - Dev cluster |
 | `s-4vcpu-8gb` | 4 | 8 GB | 160 GB | 5 TB | $48 | Small production |
 
 *Current pricing as of 2025, check https://www.digitalocean.com/pricing for latest
@@ -368,14 +384,14 @@ Expected output:
 ### SSH Access
 
 ```bash
-# Using generated SSH config
+# Recommended: Using generated SSH config
 ssh -F ./my-do-deployment/ssh_config n11
 
-# Direct SSH
-ssh -i ./my-do-deployment/exasol-key.pem root@<public-ip>
+# Alternative: Direct SSH (initial access or troubleshooting)
+ssh -i ./my-do-deployment/exasol-key.pem exasol@<public-ip>
 ```
 
-**Note**: DigitalOcean droplets use `root` user by default.
+**Note:** The generated SSH config uses the `exasol` user and is the recommended way to access your cluster. Cloud-init automatically copies your SSH keys to the exasol user during deployment. DigitalOcean droplets initially use the `root` user, but the exasol user is configured with the same access.
 
 ### Database Connection
 

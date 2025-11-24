@@ -90,7 +90,10 @@ data "aws_ami" "ubuntu" {
 
 # Create a new VPC
 resource "aws_vpc" "exasol_vpc" {
-  cidr_block           = "10.0.0.0/16"
+  # Use range derived from cluster ID to ensure uniqueness while being deterministic
+  # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
+  # Provides 254 × 256 = 65,024 possible unique networks
+  cidr_block           = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.${parseint(substr(random_id.instance.hex, 2, 2), 16)}.0/24"
   enable_dns_support   = true
   enable_dns_hostnames = true
 
@@ -99,10 +102,10 @@ resource "aws_vpc" "exasol_vpc" {
   }
 }
 
-# Create a subnet
+# Create a subnet (uses same /24 as VPC since VPC is now /24)
 resource "aws_subnet" "exasol_subnet" {
   vpc_id                  = aws_vpc.exasol_vpc.id
-  cidr_block              = "10.0.1.0/24"
+  cidr_block              = aws_vpc.exasol_vpc.cidr_block
   map_public_ip_on_launch = true
   availability_zone       = var.availability_zone
 

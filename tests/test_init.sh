@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Unit tests for lib/cmd_init.sh (multi-cloud support)
 
-# Get script directory
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TEST_DIR/test_helper.sh"
 
@@ -209,6 +208,42 @@ test_credentials_file() {
     cleanup_test_dir "$test_dir"
 }
 
+test_exasol_entrypoint_init_providers() {
+    echo ""
+    echo "Test: exasol entrypoint init works for all providers"
+
+    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean" "libvirt")
+
+    for provider in "${providers[@]}"; do
+        local test_dir
+        test_dir=$(setup_test_dir)
+
+        if "$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} exasol init should succeed for provider: $provider"
+
+            local cloud_from_state
+            cloud_from_state=$(jq -r '.cloud_provider' "$test_dir/.exasol.json")
+            if [[ "$cloud_from_state" == "$provider" ]]; then
+                TESTS_TOTAL=$((TESTS_TOTAL + 1))
+                TESTS_PASSED=$((TESTS_PASSED + 1))
+                echo -e "${GREEN}✓${NC} State file records provider via entrypoint: $provider"
+            else
+                TESTS_TOTAL=$((TESTS_TOTAL + 1))
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                echo -e "${RED}✗${NC} State file should contain provider: $provider (got: $cloud_from_state)"
+            fi
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} exasol init should succeed for provider: $provider"
+        fi
+
+        cleanup_test_dir "$test_dir"
+    done
+}
+
 test_list_providers_shows_capabilities() {
     echo ""
     echo "Test: --list-providers shows capabilities"
@@ -261,6 +296,14 @@ test_data_volumes_per_node() {
     cmd_init --cloud-provider aws \
         --deployment-dir "$test_dir" \
         --data-volumes-per-node 3 \
+        --aws-region us-east-1 \
+        --instance-type t3a.large \
+        --db-password testpass \
+        --adminui-password testpass \
+        --cluster-size 1 \
+        --data-volume-size 100 \
+        --db-version exasol-2025.1.4 \
+        --owner testuser \
         2>/dev/null
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
@@ -498,6 +541,63 @@ EOF
     cleanup_test_dir "$test_dir"
 }
 
+test_digitalocean_token_validation() {
+    echo ""
+    echo "Test: DigitalOcean token validation"
+
+    local test_dir=$(setup_test_dir)
+
+    # Simulate different home directory to avoid modifying real ~/.digitalocean_token
+    local original_home="$HOME"
+    local temp_home=$(mktemp -d)
+    export HOME="$temp_home"
+
+    # Test 1: Init without token should fail
+    echo "  Testing: Init without token should fail"
+    local output
+    output=$(cmd_init --cloud-provider digitalocean \
+        --deployment-dir "$test_dir" \
+        --digitalocean-region nyc3 \
+        2>&1)
+    local exit_code=$?
+
+    assert_failure "$exit_code" "DigitalOcean init without token should fail"
+    assert_contains "$output" "DigitalOcean token is required" "Error should mention token requirement"
+
+    # Test 2: Init with empty token should fail
+    echo "  Testing: Init with empty token should fail"
+    local test_dir2=$(setup_test_dir)
+    output=$(cmd_init --cloud-provider digitalocean \
+        --deployment-dir "$test_dir2" \
+        --digitalocean-region nyc3 \
+        --digitalocean-token "" \
+        2>&1)
+    exit_code=$?
+
+    cleanup_test_dir "$test_dir2"
+
+    assert_failure "$exit_code" "DigitalOcean init with empty token should fail"
+    assert_contains "$output" "DigitalOcean token" "Error should mention token"
+
+    # Test 3: Init with token from file should succeed
+    echo "  Testing: Init with token from ~/.digitalocean_token should succeed"
+    echo "test-token-from-file-12345" > "$HOME/.digitalocean_token"
+
+    cmd_init --cloud-provider digitalocean \
+        --deployment-dir "$test_dir" \
+        --digitalocean-region nyc3 \
+        2>/dev/null
+    exit_code=$?
+
+    assert_success "$exit_code" "DigitalOcean init with token from file should succeed"
+
+    # Restore original home
+    export HOME="$original_home"
+    rm -rf "$temp_home"
+
+    cleanup_test_dir "$test_dir"
+}
+
 test_hetzner_private_ip_template() {
     echo ""
     echo "Test: Hetzner template uses network private IPs"
@@ -619,8 +719,10 @@ test_hetzner_initialization
 test_hetzner_network_zone_configuration
 test_digitalocean_initialization
 test_digitalocean_arm64_guard
+test_digitalocean_token_validation
 test_hetzner_private_ip_template
 test_config_datadisk_format
+test_exasol_entrypoint_init_providers
 
 # Show summary
 test_summary

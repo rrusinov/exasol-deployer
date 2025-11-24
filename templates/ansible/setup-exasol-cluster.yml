@@ -7,6 +7,11 @@
   hosts: exasol_nodes
   become: yes
   tasks:
+    - name: Wait for SSH to become available (cloud-init may still be running)
+      ansible.builtin.wait_for_connection:
+        timeout: 180
+        delay: 10
+
     - name: Ensure all host facts are gathered
       ansible.builtin.setup:
 
@@ -72,7 +77,7 @@
       block:
         - name: Wait for system to be ready
           ansible.builtin.wait_for_connection:
-            timeout: 300
+            timeout: 600
 
         - name: Set hostname to n11, n12, etc.
           ansible.builtin.hostname:
@@ -231,7 +236,7 @@
         group: "{{ exa_user }}"
         mode: '0644'
       vars:
-        internal_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, ['ansible_default_ipv4', 'address']) | join(' ') }}"
+        internal_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, 'private_ip') | join(' ') }}"
         external_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, 'ansible_host') | join(' ') }}"
         data_disk_paths_var: "{{ data_disk_paths | join(',') }}"
         exa_image_password: "{{ random_image_pass }}"
@@ -369,7 +374,7 @@
             chdir: "/home/{{ exa_user }}/exasol-release"
           become_user: "{{ exa_user }}"
           register: c4_wait
-          timeout: 300  # 5 minutes timeout
+          timeout: 600  # 10 minutes timeout
           changed_when: false
 
         - name: Display database boot status

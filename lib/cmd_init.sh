@@ -458,8 +458,11 @@ cmd_init() {
             instance_type=$(get_version_config "$db_version" "DEFAULT_INSTANCE_TYPE_LIBVIRT" || echo "libvirt-custom")
             log_info "Using default instance type for libvirt: $instance_type"
         else
-            instance_type=$(get_version_config "$db_version" "DEFAULT_INSTANCE_TYPE")
-            log_info "Using default instance type for $cloud_provider: $instance_type"
+            instance_type=$(get_instance_type_default "$cloud_provider" "$architecture")
+            if [[ -z "$instance_type" ]]; then
+                die "No default instance type found for provider '$cloud_provider' and architecture '$architecture'"
+            fi
+            log_info "Using default instance type for $cloud_provider ($architecture): $instance_type"
         fi
     fi
 
@@ -502,6 +505,9 @@ cmd_init() {
             ;;
         digitalocean)
             log_info "  DigitalOcean Region: $digitalocean_region"
+            if [[ "$root_volume_size" -ne 50 ]]; then
+                log_warn "  Note: --root-volume-size is ignored for DigitalOcean. Disk size is determined by the instance type (e.g., s-2vcpu-4gb = 80GB)"
+            fi
             ;;
         libvirt)
             log_info "  Libvirt Memory: ${libvirt_memory_gb}GB"
@@ -560,6 +566,25 @@ cmd_init() {
         libvirt_uri=$(detect_libvirt_uri "$libvirt_uri")
         if [[ -z "$libvirt_uri" ]]; then
             die "Failed to determine libvirt URI automatically. Please rerun with --libvirt-uri <uri>."
+        fi
+    fi
+
+    # Validate DigitalOcean token
+    if [[ "$cloud_provider" == "digitalocean" ]]; then
+        # If token is empty, try to read from ~/.digitalocean_token
+        if [[ -z "$digitalocean_token" ]]; then
+            local token_file="$HOME/.digitalocean_token"
+            if [[ -f "$token_file" ]]; then
+                digitalocean_token=$(tr -d '[:space:]' < "$token_file")
+                log_info "Using DigitalOcean token from $token_file"
+            else
+                die "DigitalOcean token is required. Please provide via --digitalocean-token or create ~/.digitalocean_token file"
+            fi
+        fi
+
+        # Validate token is not empty after reading from file
+        if [[ -z "$digitalocean_token" ]]; then
+            die "DigitalOcean token cannot be empty"
         fi
     fi
 

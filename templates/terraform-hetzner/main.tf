@@ -73,7 +73,10 @@ data "hcloud_locations" "available" {}
 
 resource "hcloud_network" "exasol_network" {
   name     = "exasol-network-${random_id.instance.hex}"
-  ip_range = "10.0.0.0/16"
+  # Use range derived from cluster ID to ensure uniqueness while being deterministic
+  # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
+  # Provides 254 × 256 = 65,024 possible unique networks
+  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.${parseint(substr(random_id.instance.hex, 2, 2), 16)}.0/24"
 
   labels = {
     owner = var.owner
@@ -84,7 +87,8 @@ resource "hcloud_network_subnet" "exasol_subnet" {
   network_id   = hcloud_network.exasol_network.id
   type         = "cloud"
   network_zone = var.hetzner_network_zone
-  ip_range     = "10.0.1.0/24"
+  # Use subnet within the dynamically assigned network range
+  ip_range     = cidrsubnet(hcloud_network.exasol_network.ip_range, 8, 1)
 }
 
 # ==============================================================================
@@ -173,9 +177,10 @@ resource "hcloud_server" "exasol_node" {
     ipv6_enabled = false
   }
 
-  # Wait for server to be ready
+  # Wait for server and cloud-init to be ready
+  # Hetzner needs extra time for cloud-init to create exasol user and copy SSH keys
   provisioner "local-exec" {
-    command = "sleep 30"
+    command = "sleep 60"
   }
 }
 

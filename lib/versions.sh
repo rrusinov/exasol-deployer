@@ -119,3 +119,31 @@ parse_version() {
             ;;
     esac
 }
+
+# Get instance types config file path
+get_instance_types_config_path() {
+    if [[ -n "${EXASOL_INSTANCE_TYPES_CONFIG:-}" ]]; then
+        echo "$EXASOL_INSTANCE_TYPES_CONFIG"
+        return
+    fi
+
+    local script_root
+    script_root="$(cd "$LIB_DIR/.." && pwd)"
+    echo "$script_root/instance-types.conf"
+}
+
+# Get default instance type for provider and architecture
+get_instance_type_default() {
+    local provider="$1"
+    local architecture="$2"
+
+    local config_file
+    config_file=$(get_instance_types_config_path)
+
+    if [[ ! -f "$config_file" ]]; then
+        log_error "Instance types config file not found: $config_file"
+        return 1
+    fi
+
+    parse_config_file "$config_file" "$provider" "$architecture"
+}

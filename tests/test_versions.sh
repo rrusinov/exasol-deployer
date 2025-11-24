@@ -96,8 +96,8 @@ test_get_version_config() {
     result=$(get_version_config "exasol-2025.1.4" "ARCHITECTURE")
     assert_equals "x86_64" "$result" "Should get architecture from version config"
 
-    result=$(get_version_config "exasol-2025.1.4" "DEFAULT_INSTANCE_TYPE")
-    assert_equals "t3a.large" "$result" "Should get default instance type from version config"
+    result=$(get_version_config "exasol-2025.1.4" "DEFAULT_INSTANCE_TYPE_LIBVIRT")
+    assert_equals "libvirt-custom" "$result" "Should get libvirt instance type from version config"
 
     result=$(get_version_config "exasol-2025.1.4" "C4_VERSION")
     assert_equals "4.28.4" "$result" "Should get C4 version from config"
@@ -125,6 +125,54 @@ test_list_versions() {
     assert_contains "$versions" "exasol-2025.1.4" "Should list available version"
 }
 
+# Test get_instance_types_config_path
+test_get_instance_types_config_path() {
+    echo ""
+    echo "Test: get_instance_types_config_path"
+
+    local result
+    result=$(get_instance_types_config_path)
+
+    # Should return path to instance-types.conf in script root
+    if [[ "$result" == */instance-types.conf ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Should return path to instance-types.conf"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should return path to instance-types.conf, got: $result"
+    fi
+}
+
+# Test get_instance_type_default
+test_get_instance_type_default() {
+    echo ""
+    echo "Test: get_instance_type_default"
+
+    local result
+
+    # Test AWS x86_64
+    result=$(get_instance_type_default "aws" "x86_64")
+    assert_equals "t3a.medium" "$result" "Should get AWS x86_64 default instance type"
+
+    # Test AWS arm64
+    result=$(get_instance_type_default "aws" "arm64")
+    assert_equals "t4g.medium" "$result" "Should get AWS arm64 default instance type"
+
+    # Test DigitalOcean x86_64
+    result=$(get_instance_type_default "digitalocean" "x86_64")
+    assert_equals "s-2vcpu-4gb" "$result" "Should get DigitalOcean x86_64 default instance type"
+
+    # Test libvirt x86_64
+    result=$(get_instance_type_default "libvirt" "x86_64")
+    assert_equals "libvirt-custom" "$result" "Should get libvirt x86_64 default instance type"
+
+    # Test non-existent provider
+    result=$(get_instance_type_default "nonexistent" "x86_64")
+    assert_equals "" "$result" "Should return empty for non-existent provider"
+}
+
 # Run all tests
 test_validate_version_format
 test_parse_version
@@ -132,6 +180,8 @@ test_version_exists
 test_get_version_config
 test_get_default_version
 test_list_versions
+test_get_instance_types_config_path
+test_get_instance_type_default
 
 # Show summary
 test_summary

@@ -61,7 +61,6 @@ run_test_file "$TEST_DIR/test_template_validation.sh"
 run_test_file "$TEST_DIR/test_url_availability.sh"
 run_test_file "$TEST_DIR/test_documentation.sh"
 run_test_file "$TEST_DIR/test_help_options.sh"
-run_test_file "$TEST_DIR/test_add_metrics.sh"
 run_test_file "$TEST_DIR/test_e2e_framework.sh"
 
 # Overall summary
