@@ -137,3 +137,95 @@ echo "Exasol should use GRE IP $GRE_IP for clustering"
 echo "Multicast will work natively over the GRE mesh"
 
 # GRE supports native multicast - no forwarder needed!
+
+# ------------------------------------------------------------------------------
+# Make GRE setup resilient across reboots / stop-start cycles
+# ------------------------------------------------------------------------------
+cat > /usr/local/bin/setup-gre-mesh.sh <<GRE_SETUP
+#!/usr/bin/env bash
+set -euo pipefail
+
+GRE_IP="${GRE_IP}"
+GRE_NETWORK="${GRE_NETWORK}"
+LOCAL_PRIVATE_IP="${LOCAL_PRIVATE_IP}"
+PRIVATE_IFACE=$(ip -o -4 addr show | awk -v ip="\$LOCAL_PRIVATE_IP" '\$4 ~ ip"/" {print \$2; exit}')
+PRIVATE_IFACE=${PRIVATE_IFACE:-enp7s0}
+BRIDGE_IF="grebr0"
+
+PEERS=(
+%{ for peer in peer_endpoints ~}
+%{ if !peer.is_self ~}
+"gre${index(peer_endpoints, peer) + 1}:${peer.ip}"
+%{ endif ~}
+%{ endfor ~}
+)
+
+wait_for_local_ip() {
+  for _ in $(seq 1 30); do
+    if ip -4 addr show "\$PRIVATE_IFACE" | grep -q "\$LOCAL_PRIVATE_IP"; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Local IP \$LOCAL_PRIVATE_IP not present on \$PRIVATE_IFACE" >&2
+  return 1
+}
+
+ensure_bridge() {
+  if ! ip link show "\$BRIDGE_IF" >/dev/null 2>&1; then
+    ip link add name "\$BRIDGE_IF" type bridge
+  fi
+  if ! ip addr show "\$BRIDGE_IF" | grep -q "\$GRE_IP/24"; then
+    ip addr flush dev "\$BRIDGE_IF"
+    ip addr add "\$GRE_IP/24" dev "\$BRIDGE_IF"
+  fi
+  ip link set "\$BRIDGE_IF" up
+  ip link set "\$BRIDGE_IF" multicast on
+  if [[ -f /sys/class/net/\${BRIDGE_IF}/bridge/multicast_snooping ]]; then
+    echo 0 > "/sys/class/net/\${BRIDGE_IF}/bridge/multicast_snooping"
+  fi
+  ip route replace 224.0.0.0/4 dev "\$BRIDGE_IF"
+}
+
+ensure_tunnel() {
+  local name="$1"
+  local remote="$2"
+  ip link del "$name" >/dev/null 2>&1 || true
+  ip link add "$name" type gretap remote "$remote" local "$LOCAL_PRIVATE_IP" ttl 255
+  ip link set "$name" up
+  ip link set "$name" multicast on
+  ip link set "$name" master "$BRIDGE_IF"
+}
+
+main() {
+  wait_for_local_ip
+  ensure_bridge
+  for peer in "\${PEERS[@]}"; do
+    IFS=":" read -r name remote <<<"\$peer"
+    ensure_tunnel "\$name" "\$remote"
+  done
+}
+
+main
+GRE_SETUP
+
+chmod +x /usr/local/bin/setup-gre-mesh.sh
+
+cat > /etc/systemd/system/gre-mesh.service <<'GRE_SERVICE'
+[Unit]
+Description=Ensure GRE mesh overlay for Exasol cluster
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-gre-mesh.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+GRE_SERVICE
+
+systemctl daemon-reload
+systemctl enable gre-mesh.service
+systemctl start gre-mesh.service
