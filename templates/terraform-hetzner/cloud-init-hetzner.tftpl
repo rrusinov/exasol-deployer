@@ -145,11 +145,11 @@ cat > /usr/local/bin/setup-gre-mesh.sh <<GRE_SETUP
 #!/usr/bin/env bash
 set -euo pipefail
 
-GRE_IP="${GRE_IP}"
-GRE_NETWORK="${GRE_NETWORK}"
-LOCAL_PRIVATE_IP="${LOCAL_PRIVATE_IP}"
-PRIVATE_IFACE=$(ip -o -4 addr show | awk -v ip="\$LOCAL_PRIVATE_IP" '\$4 ~ ip"/" {print \$2; exit}')
-PRIVATE_IFACE=${PRIVATE_IFACE:-enp7s0}
+GRE_IP="${gre_ip}"
+GRE_NETWORK="10.254.0.0/24"
+LOCAL_PRIVATE_IP="${local_private_ip}"
+PRIVATE_IFACE=$(ip -o -4 addr show | awk -v ip="$$LOCAL_PRIVATE_IP" '$4 ~ ip"/" {print $2; exit}')
+PRIVATE_IFACE=$${PRIVATE_IFACE:-enp7s0}
 BRIDGE_IF="grebr0"
 
 PEERS=(
@@ -162,29 +162,29 @@ PEERS=(
 
 wait_for_local_ip() {
   for _ in $(seq 1 30); do
-    if ip -4 addr show "\$PRIVATE_IFACE" | grep -q "\$LOCAL_PRIVATE_IP"; then
+    if ip -4 addr show "$$PRIVATE_IFACE" | grep -q "$$LOCAL_PRIVATE_IP"; then
       return 0
     fi
     sleep 1
   done
-  echo "Local IP \$LOCAL_PRIVATE_IP not present on \$PRIVATE_IFACE" >&2
+  echo "Local IP $$LOCAL_PRIVATE_IP not present on $$PRIVATE_IFACE" >&2
   return 1
 }
 
 ensure_bridge() {
-  if ! ip link show "\$BRIDGE_IF" >/dev/null 2>&1; then
-    ip link add name "\$BRIDGE_IF" type bridge
+  if ! ip link show "$$BRIDGE_IF" >/dev/null 2>&1; then
+    ip link add name "$$BRIDGE_IF" type bridge
   fi
-  if ! ip addr show "\$BRIDGE_IF" | grep -q "\$GRE_IP/24"; then
-    ip addr flush dev "\$BRIDGE_IF"
-    ip addr add "\$GRE_IP/24" dev "\$BRIDGE_IF"
+  if ! ip addr show "$$BRIDGE_IF" | grep -q "$$GRE_IP/24"; then
+    ip addr flush dev "$$BRIDGE_IF"
+    ip addr add "$$GRE_IP/24" dev "$$BRIDGE_IF"
   fi
-  ip link set "\$BRIDGE_IF" up
-  ip link set "\$BRIDGE_IF" multicast on
-  if [[ -f /sys/class/net/\${BRIDGE_IF}/bridge/multicast_snooping ]]; then
-    echo 0 > "/sys/class/net/\${BRIDGE_IF}/bridge/multicast_snooping"
+  ip link set "$$BRIDGE_IF" up
+  ip link set "$$BRIDGE_IF" multicast on
+  if [[ -f /sys/class/net/$${BRIDGE_IF}/bridge/multicast_snooping ]]; then
+    echo 0 > "/sys/class/net/$${BRIDGE_IF}/bridge/multicast_snooping"
   fi
-  ip route replace 224.0.0.0/4 dev "\$BRIDGE_IF"
+  ip route replace 224.0.0.0/4 dev "$$BRIDGE_IF"
 }
 
 ensure_tunnel() {
@@ -200,9 +200,9 @@ ensure_tunnel() {
 main() {
   wait_for_local_ip
   ensure_bridge
-  for peer in "\${PEERS[@]}"; do
-    IFS=":" read -r name remote <<<"\$peer"
-    ensure_tunnel "\$name" "\$remote"
+  for peer in "$${PEERS[@]}"; do
+    IFS=":" read -r name remote <<<"$peer"
+    ensure_tunnel "$name" "$remote"
   done
 }
 
