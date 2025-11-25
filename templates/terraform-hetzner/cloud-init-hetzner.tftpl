@@ -29,6 +29,8 @@ ip link add name grebr0 type bridge
 ip addr add $GRE_IP/24 dev grebr0
 ip link set grebr0 up
 ip link set grebr0 multicast on
+# Enable STP to prevent broadcast loops
+ip link set grebr0 type bridge stp_state 1
 # Disable multicast snooping so multicast floods to all GRE members
 if [[ -f /sys/class/net/grebr0/bridge/multicast_snooping ]]; then
   echo 0 > /sys/class/net/grebr0/bridge/multicast_snooping
@@ -82,6 +84,7 @@ Multicast=on
 IPv6AcceptRA=no
 
 [Bridge]
+STP=yes
 MulticastSnooping=no
 
 [Route]
@@ -175,6 +178,8 @@ ensure_bridge() {
   if ! ip link show "$$BRIDGE_IF" >/dev/null 2>&1; then
     ip link add name "$$BRIDGE_IF" type bridge
   fi
+  # Enable STP to avoid broadcast loops in the GRE mesh
+  ip link set "$$BRIDGE_IF" type bridge stp_state 1
   if ! ip addr show "$$BRIDGE_IF" | grep -q "$$GRE_IP/24"; then
     ip addr flush dev "$$BRIDGE_IF"
     ip addr add "$$GRE_IP/24" dev "$$BRIDGE_IF"
