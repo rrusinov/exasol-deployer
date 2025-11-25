@@ -131,11 +131,42 @@
           delegate_to: "{{ ansible_play_hosts[0] }}"
           run_once: true
 
+        - name: Fetch the exasol user private key from n11
+          ansible.builtin.slurp:
+            src: "/home/{{ exa_user }}/.ssh/id_rsa"
+          register: exasol_user_priv_key
+          delegate_to: "{{ ansible_play_hosts[0] }}"
+          run_once: true
+
         - name: Distribute n11's exasol public key to all nodes
           ansible.posix.authorized_key:
             user: "{{ exa_user }}"
             state: present
             key: "{{ exasol_user_pub_key['content'] | b64decode }}"
+
+        - name: Distribute n11's exasol private key to all nodes
+          ansible.builtin.copy:
+            content: "{{ exasol_user_priv_key['content'] | b64decode }}"
+            dest: "/home/{{ exa_user }}/.ssh/id_rsa"
+            owner: "{{ exa_user }}"
+            group: "{{ exa_user }}"
+            mode: '0600'
+
+        - name: Add COS SSH config entry to exasol user's SSH config on all nodes
+          ansible.builtin.blockinfile:
+            path: "/home/{{ exa_user }}/.ssh/config"
+            create: yes
+            owner: "{{ exa_user }}"
+            group: "{{ exa_user }}"
+            mode: '0600'
+            marker: "# {mark} ANSIBLE MANAGED BLOCK - COS Access"
+            block: |
+              Host cos
+                  HostName localhost
+                  User root
+                  Port 20002
+                  StrictHostKeyChecking no
+                  UserKnownHostsFile /dev/null
 
     # ==============================================================================
     # SECTION 3A: DISCOVER DATA DISKS AND CREATE SYMLINKS (RUNS ON EVERY NODE)
@@ -380,22 +411,6 @@
         - name: Display database boot status
           ansible.builtin.debug:
             msg: "Database is now running at stage 'd'"
-
-        - name: Add COS SSH config entry to exasol user's SSH config
-          ansible.builtin.blockinfile:
-            path: "/home/{{ exa_user }}/.ssh/config"
-            create: yes
-            owner: "{{ exa_user }}"
-            group: "{{ exa_user }}"
-            mode: '0600'
-            marker: "# {mark} ANSIBLE MANAGED BLOCK - COS Access"
-            block: |
-              Host cos
-                  HostName localhost
-                  User root
-                  Port 20002
-                  StrictHostKeyChecking no
-                  UserKnownHostsFile /dev/null
 
         - name: Display deployment completion message
           ansible.builtin.debug:

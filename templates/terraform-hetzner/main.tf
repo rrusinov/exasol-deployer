@@ -64,9 +64,14 @@ locals {
   private_prefix_len   = tonumber(element(split("/", local.private_network_cidr), 1))
   hetzner_private_ips  = [for idx in range(var.node_count) : cidrhost(local.private_network_cidr, idx + 10)]
 
+  # GRE overlay network IPs (10.254.0.0/24) - used for Exasol clustering
+  # Fixed range to avoid overlap with Hetzner private subnets
+  gre_overlay_ips = [for idx in range(var.node_count) : "10.254.0.${idx + 11}"]
+
   # Node IPs for common outputs
+  # IMPORTANT: Use GRE IPs as "private IPs" so Exasol uses them for clustering
   node_public_ips  = [for server in hcloud_server.exasol_node : server.ipv4_address]
-  node_private_ips = local.hetzner_private_ips
+  node_private_ips = local.gre_overlay_ips  # GRE overlay IPs
 }
 
 # Get available Hetzner locations
@@ -146,7 +151,6 @@ resource "hcloud_firewall" "exasol_cluster" {
   }
 }
 
-# ==============================================================================
 # COMPUTE INSTANCES
 # ==============================================================================
 
@@ -174,14 +178,19 @@ resource "hcloud_server" "exasol_node" {
     node    = "n${count.index + 11}"
   }
 
-  # Cloud-init user-data to create exasol user and normalize Hetzner private network prefix
+  # Cloud-init user-data to create exasol user and setup GRE mesh network
   # cloud-init template lives in .templates/ because the root files are symlinked
   user_data = templatefile("${path.module}/.templates/cloud-init-hetzner.tftpl", {
     base_cloud_init = local.cloud_init_script
-    priv_ip         = local.hetzner_private_ips[count.index]
-    priv_prefix     = local.private_prefix_len
-    priv_cidr       = local.private_network_cidr
-    peer_ips        = local.hetzner_private_ips
+    cluster_id      = random_id.instance.hex                  # Cluster ID (kept for compatibility)
+    node_index      = count.index                             # Node index
+    gre_ip          = local.gre_overlay_ips[count.index]      # GRE overlay IP for Exasol
+    local_private_ip = local.hetzner_private_ips[count.index] # Endpoint IP for GRE tunnels
+    peer_endpoints  = [for idx, ip in local.hetzner_private_ips : {
+      ip       = ip
+      gre_ip   = local.gre_overlay_ips[idx]
+      is_self  = idx == count.index
+    }]
   })
 
   public_net {

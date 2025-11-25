@@ -1,153 +1,139 @@
 ${base_cloud_init}
 
-# Hetzner: normalize private network prefix so cluster traffic can broadcast
-cat >/usr/local/sbin/exasol-hetzner-network.sh <<'EOF'
-#!/usr/bin/env bash
-set -eo pipefail
+# ==============================================================================
+# GRE Tunnel Mesh Network Setup for Multicast Support
+# ==============================================================================
+# Hetzner assigns /32 addresses which breaks multicast subnet detection in Exasol.
+# Solution: Create GRE tunnel mesh with proper /24 subnet where multicast works natively.
+# Physical IPs: Used for tunnel endpoints
+# GRE IPs (10.254.0.0/24): Used for Exasol clustering with native multicast support
 
-log_file="/var/log/exasol-hetzner-network.log"
-exec >>"$log_file" 2>&1
-echo "=== $(date -Is) starting hetzner network fix ==="
+GRE_IP="${gre_ip}"
+GRE_NETWORK="10.254.0.0/24"
+LOCAL_PRIVATE_IP="${local_private_ip}"
 
-priv_ip="${priv_ip}"
-priv_prefix="${priv_prefix}"
-priv_cidr="${priv_cidr}"
+echo "Setting up GRE tunnel mesh for multicast..."
+echo "  GRE IP: $GRE_IP"
+echo "  GRE Network: $GRE_NETWORK"
 
-echo "priv_ip=${priv_ip} priv_prefix=${priv_prefix} priv_cidr=${priv_cidr}"
+# Enable IP forwarding (required for GRE)
+sysctl -w net.ipv4.ip_forward=1
+echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 
-detect_iface() {
-    ip -o addr show to "${priv_ip}/32" 2>/dev/null | awk '{print $2}' | head -n1
-}
+# Load GRE kernel module
+modprobe ip_gre
+echo "ip_gre" >> /etc/modules
 
-iface="$(detect_iface)"
-if [[ -z "$iface" ]]; then
-    # Fallback: find any non-eth0 interface with a 10.x.x.x/32 address
-    iface="$(ip -o addr show to 10.0.0.0/8 2>/dev/null | awk '$2!="eth0"{print $2}' | head -n1)"
+# Create a bridge interface for the GRE network before attaching tunnels
+ip link add name grebr0 type bridge
+ip addr add $GRE_IP/24 dev grebr0
+ip link set grebr0 up
+ip link set grebr0 multicast on
+# Disable multicast snooping so multicast floods to all GRE members
+if [[ -f /sys/class/net/grebr0/bridge/multicast_snooping ]]; then
+  echo 0 > /sys/class/net/grebr0/bridge/multicast_snooping
 fi
 
-attempt=0
-max_attempts=5
-while [[ -z "$iface" && $attempt -lt $max_attempts ]]; do
-    attempt=$((attempt + 1))
-    echo "No interface yet, retry ${attempt}/${max_attempts}..."
-    sleep 2
-    iface="$(detect_iface)"
-done
+# Add multicast route via grebr0
+ip route add 224.0.0.0/4 dev grebr0
 
-if [[ -z "$iface" ]]; then
-    echo "Could not detect Hetzner private interface for ${priv_ip}, skipping prefix fix"
-    exit 0
-fi
+# Create GRE TAP tunnels to each peer (layer-2 capable for multicast)
+TUNNEL_COUNT=0
+%{ for peer in peer_endpoints ~}
+%{ if !peer.is_self ~}
 
-ip address replace "${priv_ip}/${priv_prefix}" broadcast + dev "$iface"
-ip route replace "${priv_cidr}" dev "$iface" scope link src "${priv_ip}"
+echo "  Creating GRE tunnel to ${peer.ip} (${peer.gre_ip})..."
 
-ip -o addr show dev "$iface"
-ip route show dev "$iface"
-echo "=== $(date -Is) completed hetzner network fix ==="
-EOF
-chmod +x /usr/local/sbin/exasol-hetzner-network.sh
+# Create GRE TAP tunnel (ethernet over GRE)
+ip link add gre${index(peer_endpoints, peer) + 1} type gretap remote ${peer.ip} local $LOCAL_PRIVATE_IP ttl 255
 
-# Run once at boot and on first cloud-init pass
-cat >/etc/systemd/system/exasol-hetzner-network.service <<'EOF'
-[Unit]
-Description=Exasol Hetzner network prefix fix
-After=network-online.target
-Wants=network-online.target
+# Configure tunnel interface
+ip link set gre${index(peer_endpoints, peer) + 1} up
+ip link set gre${index(peer_endpoints, peer) + 1} multicast on
+ip link set gre${index(peer_endpoints, peer) + 1} master grebr0
 
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/exasol-hetzner-network.sh
-RemainAfterExit=yes
+TUNNEL_COUNT=$((TUNNEL_COUNT + 1))
 
-[Install]
-WantedBy=multi-user.target
-EOF
+%{ endif ~}
+%{ endfor ~}
 
-systemctl daemon-reload
-systemctl enable exasol-hetzner-network.service
-systemctl start exasol-hetzner-network.service
+echo "  Created $TUNNEL_COUNT GRE tunnels"
+echo ""
 
-# Also run immediately during cloud-init in case systemd start is delayed
-/usr/local/sbin/exasol-hetzner-network.sh || true
+# Make GRE configuration persistent with systemd-networkd
+mkdir -p /etc/systemd/network
 
-# Multicast forwarder: emulate multicast by unicasting packets to peers
-cat >/usr/local/sbin/exasol-mcast-forwarder.py <<'EOF'
-#!/usr/bin/env python3
-import ipaddress
-import os
-import socket
-import struct
-import sys
+# Create netdev file for bridge
+cat > /etc/systemd/network/10-grebr0.netdev <<NETDEV_CONFIG
+[NetDev]
+Name=grebr0
+Kind=bridge
+NETDEV_CONFIG
 
-GROUPS = [g for g in os.getenv("EXASOL_MCAST_GROUPS", "224.0.0.1").split(",") if g]
-PEERS = [p for p in os.getenv("EXASOL_MCAST_PEERS", "").split(",") if p]
-PORT = int(os.getenv("EXASOL_MCAST_PORT", "5001"))
-SELF_IP = os.getenv("EXASOL_SELF_IP", "")
-IFACE_IP = os.getenv("EXASOL_MCAST_IFACE", SELF_IP)
+# Create network file for bridge
+cat > /etc/systemd/network/10-grebr0.network <<NETWORK_CONFIG
+[Match]
+Name=grebr0
 
-if not SELF_IP or not IFACE_IP:
-    sys.exit("Self IP not set; cannot start multicast forwarder")
+[Network]
+Address=$GRE_IP/24
+MulticastDNS=yes
+Multicast=on
+IPv6AcceptRA=no
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-sock.setsockopt(socket.IPPROTO_IP, socket.IP_PKTINFO, 1)
-if IFACE_IP:
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(IFACE_IP))
-sock.bind(("", PORT))
+[Bridge]
+MulticastSnooping=no
 
-for group in GROUPS:
-    try:
-        mreq = socket.inet_aton(group) + socket.inet_aton(IFACE_IP)
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-    except OSError:
-        continue
+[Route]
+Destination=224.0.0.0/4
+NETWORK_CONFIG
 
-def is_multicast(addr: str) -> bool:
-    try:
-        return ipaddress.ip_address(addr).is_multicast
-    except ValueError:
-        return False
+# Create GRE tunnel netdev files
+%{ for peer in peer_endpoints ~}
+%{ if !peer.is_self ~}
+cat > /etc/systemd/network/20-gre${index(peer_endpoints, peer) + 1}.netdev <<GRE_NETDEV
+[NetDev]
+Name=gre${index(peer_endpoints, peer) + 1}
+Kind=gretap
 
-while True:
-    data, ancdata, _, src = sock.recvmsg(65535, 1024)
-    dst_addr = None
-    for level, ctype, cdata in ancdata:
-        if level == socket.IPPROTO_IP and ctype == socket.IP_PKTINFO:
-            dst_addr = socket.inet_ntoa(cdata[4:8])
-            break
+[Tunnel]
+Local=$LOCAL_PRIVATE_IP
+Remote=${peer.ip}
+TTL=255
+GRE_NETDEV
 
-    if dst_addr and is_multicast(dst_addr):
-        for peer in PEERS:
-            if peer == SELF_IP:
-                continue
-            try:
-                sock.sendto(data, (peer, PORT))
-            except OSError:
-                continue
-EOF
-chmod +x /usr/local/sbin/exasol-mcast-forwarder.py
+cat > /etc/systemd/network/20-gre${index(peer_endpoints, peer) + 1}.network <<GRE_NETWORK
+[Match]
+Name=gre${index(peer_endpoints, peer) + 1}
 
-cat >/etc/systemd/system/exasol-mcast-forwarder.service <<'EOF'
-[Unit]
-Description=Exasol multicast forwarder (unicast fan-out)
-After=network-online.target exasol-hetzner-network.service
-Wants=network-online.target
+[Network]
+MulticastDNS=yes
+Bridge=grebr0
+GRE_NETWORK
 
-[Service]
-Environment=EXASOL_MCAST_GROUPS=224.0.0.1
-Environment=EXASOL_MCAST_PORT=5001
-Environment=EXASOL_SELF_IP=${priv_ip}
-Environment=EXASOL_MCAST_IFACE=${priv_ip}
-Environment=EXASOL_MCAST_PEERS=${join(",", peer_ips)}
-ExecStart=/usr/local/sbin/exasol-mcast-forwarder.py
-Restart=always
-RestartSec=2
+%{ endif ~}
+%{ endfor ~}
 
-[Install]
-WantedBy=multi-user.target
-EOF
+# Enable and restart systemd-networkd
+systemctl enable systemd-networkd
+systemctl restart systemd-networkd
 
-systemctl daemon-reload
-systemctl enable exasol-mcast-forwarder.service
-systemctl start exasol-mcast-forwarder.service
+# Wait for tunnels to stabilize
+sleep 3
+
+# Verify GRE setup
+echo "GRE interface status:"
+ip addr show grebr0
+echo ""
+echo "GRE tunnels:"
+ip -d link show | grep -A 3 "gre[0-9]"
+echo ""
+echo "GRE routes:"
+ip route | grep gre
+echo ""
+
+echo "GRE mesh network setup complete!"
+echo "Exasol should use GRE IP $GRE_IP for clustering"
+echo "Multicast will work natively over the GRE mesh"
+
+# GRE supports native multicast - no forwarder needed!
