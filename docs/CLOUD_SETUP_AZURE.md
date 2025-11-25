@@ -99,40 +99,32 @@ If you have multiple subscriptions:
 az account set --subscription "YOUR_SUBSCRIPTION_ID"
 ```
 
-## Step 5: Create Service Principal (Optional but Recommended)
+## Step 5: Create Service Principal Credential File
 
-For automated deployments, create a service principal:
+Create a service principal and store the JSON output in `~/.azure_credentials`
+(this is the default location the deployer reads):
 
 ```bash
-# Create service principal with contributor role
 az ad sp create-for-rbac \
   --name "exasol-deployer" \
   --role contributor \
-  --scopes /subscriptions/YOUR_SUBSCRIPTION_ID
-
-# Output will show:
-# {
-#   "appId": "...",
-#   "displayName": "exasol-deployer",
-#   "password": "...",
-#   "tenant": "..."
-# }
+  --scopes /subscriptions/YOUR_SUBSCRIPTION_ID \
+  > ~/.azure_credentials
+chmod 600 ~/.azure_credentials
 ```
 
-**Save these credentials securely!**
-
-### Use Service Principal
-
-Set environment variables:
-
-```bash
-export ARM_CLIENT_ID="appId from above"
-export ARM_CLIENT_SECRET="password from above"
-export ARM_SUBSCRIPTION_ID="YOUR_SUBSCRIPTION_ID"
-export ARM_TENANT_ID="tenant from above"
+Output looks like:
+```json
+{
+  "appId": "...",
+  "displayName": "exasol-deployer",
+  "password": "...",
+  "tenant": "..."
+}
 ```
 
-OpenTofu will automatically use these credentials.
+The deployer automatically reads this file during `exasol init`. To use a custom
+path, pass `--azure-credentials-file /path/to/creds.json`.
 
 ## Step 6: Choose Azure Region
 
@@ -164,6 +156,10 @@ az vm list-skus --location eastus --size Standard_D --output table
 ```
 
 ## Step 7: Initialize Exasol Deployment
+
+`exasol init` automatically loads Azure service principal credentials from
+`~/.azure_credentials` (or from the path passed via `--azure-credentials-file`)
+and requires your subscription ID.
 
 ### Basic Deployment
 
@@ -215,6 +211,7 @@ Save up to 90% with spot instances (suitable for dev/test):
 |------|-------------|---------|
 | `--azure-region` | Azure region for deployment | `eastus` |
 | `--azure-subscription` | Azure subscription ID (required) | - |
+| `--azure-credentials-file` | Path to service principal JSON (`appId`, `password`, `tenant`) | `~/.azure_credentials` |
 | `--azure-spot-instance` | Enable spot instances | `false` |
 
 ## VM Sizes (Instance Types)

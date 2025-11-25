@@ -211,6 +211,65 @@ test_credentials_file() {
     cleanup_test_dir "$test_dir"
 }
 
+test_azure_credentials_file_usage() {
+    echo ""
+    echo "Test: Azure credentials file is written to tfvars"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+    local creds_file="$test_dir/azure_credentials.json"
+    cat > "$creds_file" <<'EOF'
+{
+  "appId": "app-id-123",
+  "password": "secret-abc",
+  "tenant": "tenant-xyz"
+}
+EOF
+
+    cmd_init --cloud-provider azure \
+        --deployment-dir "$test_dir" \
+        --azure-credentials-file "$creds_file" \
+        2>/dev/null
+
+    if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
+        if grep -q 'azure_client_id = "app-id-123"' "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} variables.auto.tfvars contains azure_client_id"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} variables.auto.tfvars should contain azure_client_id"
+        fi
+
+        if grep -q 'azure_client_secret = "secret-abc"' "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} variables.auto.tfvars contains azure_client_secret"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} variables.auto.tfvars should contain azure_client_secret"
+        fi
+
+        if grep -q 'azure_tenant_id = "tenant-xyz"' "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} variables.auto.tfvars contains azure_tenant_id"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} variables.auto.tfvars should contain azure_tenant_id"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should create variables.auto.tfvars for Azure"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
 test_exasol_entrypoint_init_providers() {
     echo ""
     echo "Test: exasol entrypoint init works for all providers"
@@ -734,6 +793,7 @@ test_aws_initialization
 test_template_directory_selection
 test_inventory_cloud_provider
 test_credentials_file
+test_azure_credentials_file_usage
 test_list_providers_shows_capabilities
 test_readme_generation
 test_data_volumes_per_node

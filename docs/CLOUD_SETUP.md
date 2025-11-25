@@ -33,13 +33,19 @@ See [detailed AWS setup instructions](CLOUD_SETUP_AWS.md).
 
 ### Azure
 ```bash
-# Login to Azure
+# Login to Azure and capture subscription ID
 az login
-
-# Get subscription ID
 az account show --query id -o tsv
 
-# Initialize deployment
+# Create service principal credentials file (default path the deployer reads)
+az ad sp create-for-rbac \
+  --name "exasol-deployer" \
+  --role contributor \
+  --scopes /subscriptions/<subscription-id> \
+  > ~/.azure_credentials
+chmod 600 ~/.azure_credentials
+
+# Initialize deployment (reads ~/.azure_credentials automatically)
 ./exasol init \
   --cloud-provider azure \
   --azure-subscription <subscription-id> \

@@ -178,6 +178,15 @@ Install libvirt and KVM, then ensure your user is in the `libvirt` and `kvm` gro
 #### Azure Deployment
 
 ```bash
+# Create (or reuse) service principal credentials file (default path)
+az ad sp create-for-rbac \
+  --name "exasol-deployer" \
+  --role contributor \
+  --scopes /subscriptions/<your-subscription-id> \
+  > ~/.azure_credentials
+chmod 600 ~/.azure_credentials
+
+# Initialize deployment (reads ~/.azure_credentials automatically)
 ./exasol init \
   --cloud-provider azure \
   --deployment-dir ./my-azure-deployment \
