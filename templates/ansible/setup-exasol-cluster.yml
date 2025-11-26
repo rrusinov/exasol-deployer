@@ -15,6 +15,11 @@
     - name: Ensure all host facts are gathered
       ansible.builtin.setup:
 
+    - name: "PROGRESS: Ansible connection established"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: deploy:05:Ansible_Connection"
+      run_once: true
+
 # ==============================================================================
 # PLAY 2: SETUP AND CONFIGURE EXASOL CLUSTER
 # This play runs serially (one node at a time) to perform the configuration.
@@ -104,6 +109,11 @@
             state: present
           loop: "{{ ansible_play_hosts }}"
 
+        - name: "PROGRESS: Node configuration complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:06:Node_Configuration"
+          run_once: true
+
     # ==============================================================================
     # SECTION 2: CONFIGURE SSH FOR INTER-NODE COMMUNICATION
     # ==============================================================================
@@ -168,6 +178,11 @@
                   StrictHostKeyChecking no
                   UserKnownHostsFile /dev/null
 
+        - name: "PROGRESS: SSH key distribution complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:07:SSH_Key_Distribution"
+          run_once: true
+
     # ==============================================================================
     # SECTION 3A: DISCOVER DATA DISKS AND CREATE SYMLINKS (RUNS ON EVERY NODE)
     # ==============================================================================
@@ -225,6 +240,11 @@
           ansible.builtin.set_fact:
             host_data_disk_paths: "{{ data_disks_result.stdout_lines }}"
 
+        - name: "PROGRESS: Disk discovery complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:08:Disk_Discovery"
+          run_once: true
+
   handlers:
     - name: Reload systemd
       ansible.builtin.systemd:
@@ -272,6 +292,10 @@
         data_disk_paths_var: "{{ data_disk_paths | join(',') }}"
         exa_image_password: "{{ random_image_pass }}"
         exa_working_copy: "{{ exa_working_copy }}"
+
+    - name: "PROGRESS: Config generation complete"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: deploy:09:Config_Generation"
 
     - name: Create installation directory on primary node
       ansible.builtin.file:
@@ -328,6 +352,10 @@
       retries: 3
       delay: 5
 
+    - name: "PROGRESS: Artifact transfer complete"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: deploy:10:Artifact_Transfer"
+
     # ==============================================================================
     # SECTION 5: VERIFY CHECKSUMS AND DEPLOY EXASOL
     # ==============================================================================
@@ -358,6 +386,10 @@
               - "{{ 'OK db_tarball_checksum' if db_checksum_available else 'SKIPPED db_tarball_checksum: no checksum provided' }}"
               - "{{ 'OK c4_binary_checksum' if c4_checksum_available else 'SKIPPED c4_binary_checksum: no checksum provided' }}"
 
+        - name: "PROGRESS: Checksum verification complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:11:Checksum_Verification"
+
         - name: Rename c4 binary to 'c4' for convenience
           ansible.builtin.command:
             cmd: "mv /home/{{ exa_user }}/exasol-release/{{ c4_artifact_filename }} /home/{{ exa_user }}/exasol-release/c4"
@@ -376,6 +408,10 @@
         - name: Display C4 diagnostic output
           ansible.builtin.debug:
             msg: "{{ c4_diag.stdout_lines }}"
+
+        - name: "PROGRESS: C4 diagnostic complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:12:C4_Diagnostic"
 
         - name: Start Exasol database deployment
           ansible.builtin.command:
@@ -399,6 +435,10 @@
           ansible.builtin.debug:
             msg: "{{ c4_play_result.stdout_lines | default(['No output']) }}"
 
+        - name: "PROGRESS: Exasol deployment complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:13:Exasol_Deployment"
+
         - name: Wait for database to boot (stage 'd')
           ansible.builtin.command:
             cmd: "./c4 wait --stage d"
@@ -412,6 +452,10 @@
           ansible.builtin.debug:
             msg: "Database is now running at stage 'd'"
 
+        - name: "PROGRESS: Database startup complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:14:Database_Startup"
+
         - name: Display deployment completion message
           ansible.builtin.debug:
             msg:
@@ -419,3 +463,7 @@
               - "Exasol cluster deployment completed!"
               - "========================================"
               - "Review connection details in INFO.txt or run 'exasol status --show-details' within the deployment directory."
+
+        - name: "PROGRESS: Deploy complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:15:Deploy_Complete"
