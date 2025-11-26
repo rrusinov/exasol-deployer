@@ -24,9 +24,11 @@ echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 modprobe ip_gre
 echo "ip_gre" >> /etc/modules
 
-# Create a bridge interface for the GRE network before attaching tunnels
-ip link add name grebr0 type bridge
-ip addr add $GRE_IP/24 dev grebr0
+# Create a bridge interface for the GRE network before attaching tunnels (idempotent)
+if ! ip link show grebr0 >/dev/null 2>&1; then
+  ip link add name grebr0 type bridge
+fi
+ip addr replace $GRE_IP/24 dev grebr0
 ip link set grebr0 up
 ip link set grebr0 multicast on
 # Enable STP to prevent broadcast loops
@@ -37,7 +39,7 @@ if [[ -f /sys/class/net/grebr0/bridge/multicast_snooping ]]; then
 fi
 
 # Add multicast route via grebr0
-ip route add 224.0.0.0/4 dev grebr0
+ip route replace 224.0.0.0/4 dev grebr0
 
 # Create GRE TAP tunnels to each peer (layer-2 capable for multicast)
 TUNNEL_COUNT=0
@@ -46,8 +48,10 @@ TUNNEL_COUNT=0
 
 echo "  Creating GRE tunnel to ${peer.ip} (${peer.gre_ip})..."
 
-# Create GRE TAP tunnel (ethernet over GRE)
-ip link add gre${index(peer_endpoints, peer) + 1} type gretap remote ${peer.ip} local $LOCAL_PRIVATE_IP ttl 255
+# Create GRE TAP tunnel (ethernet over GRE), idempotent
+if ! ip link show gre${index(peer_endpoints, peer) + 1} >/dev/null 2>&1; then
+  ip link add gre${index(peer_endpoints, peer) + 1} type gretap remote ${peer.ip} local $LOCAL_PRIVATE_IP ttl 255
+fi
 
 # Configure tunnel interface
 ip link set gre${index(peer_endpoints, peer) + 1} up
