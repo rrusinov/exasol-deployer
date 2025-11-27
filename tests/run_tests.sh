@@ -12,6 +12,9 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Provide dummy token so DigitalOcean init paths work in tests
+export DIGITALOCEAN_TOKEN="${DIGITALOCEAN_TOKEN:-test-token}"
+
 echo -e "${BLUE}=========================================${NC}"
 echo -e "${BLUE}Exasol Deployer - Unit Tests${NC}"
 echo -e "${BLUE}=========================================${NC}"
