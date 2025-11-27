@@ -574,14 +574,6 @@ cmd_init() {
         die "Templates directory templates/terraform-$cloud_provider does not exist"
     fi
 
-    # For libvirt, keep only one main template variant to avoid Terraform loading both.
-    if [[ "$cloud_provider" == "libvirt" && -f "$templates_dir/main-osx.tf" ]]; then
-        if [[ "$(uname)" == "Darwin" ]]; then
-            rm -f "$templates_dir/main.tf" 2>/dev/null || true
-        else
-            rm -f "$templates_dir/main-osx.tf" 2>/dev/null || true
-        fi
-    fi
 
     # Ansible templates are cloud-agnostic
     cp -r "$script_root/templates/ansible/"* "$templates_dir/" 2>/dev/null || true
@@ -792,33 +784,23 @@ detect_libvirt_uri() {
         return 0
     fi
 
-    if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
-        echo "qemu:///session"
-        return 0
-    fi
-
     local virsh_uri=""
     if command -v virsh >/dev/null 2>&1; then
         virsh_uri="$(virsh uri 2>/dev/null | tr -d '\r\n' || true)"
     fi
 
     if [[ -n "$virsh_uri" ]]; then
-        log_info "Detected libvirt URI via 'virsh uri': $virsh_uri"
-        # Adjust URI for macOS session to include socket path
-        if [[ "$virsh_uri" == "qemu:///session" ]] && [[ "$(uname)" == "Darwin" ]]; then
-            socket_path="$HOME/.cache/libvirt/libvirt-sock"
-            if [[ -S "$socket_path" ]]; then
-                virsh_uri="qemu+unix:///session?socket=$socket_path"
-                log_info "Adjusted libvirt URI for macOS session: $virsh_uri"
-            fi
+        if [[ "$virsh_uri" == *session* ]]; then
+            log_error "Detected libvirt URI is a session daemon ($virsh_uri). Only system libvirt is supported."
+            return 1
         fi
+        log_info "Detected libvirt URI via 'virsh uri': $virsh_uri"
         echo "$virsh_uri"
         return 0
     fi
 
-    log_warn "Unable to detect libvirt URI automatically via 'virsh uri'."
-    log_warn "Defaulting to qemu:///session. Install libvirt-clients or rerun with --libvirt-uri <uri> to override."
-    echo "qemu:///session"
+    log_error "Unable to detect libvirt URI automatically via 'virsh uri'. Install libvirt-clients/daemon and rerun with --libvirt-uri qemu:///system or qemu+ssh://user@host/system."
+    return 1
 }
 
 # Write provider-specific variables
@@ -933,14 +915,6 @@ write_provider_variables() {
         libvirt)
             local libvirt_domain_type="kvm"
             local libvirt_firmware="efi"
-            # Session URIs typically indicate a user-level daemon. On macOS use HVF and slirp; on Linux keep KVM.
-            if [[ "$libvirt_uri" == *session* ]]; then
-                libvirt_firmware=""
-                if [[ "$(uname)" == "Darwin" ]]; then
-                    libvirt_domain_type="hvf"
-                    libvirt_network_bridge=""
-                fi
-            fi
             write_variables_file "$deploy_dir" \
                 "libvirt_memory_gb=$libvirt_memory_gb" \
                 "libvirt_vcpus=$libvirt_vcpus" \
@@ -963,15 +937,7 @@ write_provider_variables() {
                 log_warn "Cannot connect to libvirt URI $libvirt_uri, ensure libvirt daemon is running. Skipping pool creation."
             elif ! virsh -c "$libvirt_uri" pool-list --name 2>/dev/null | grep -q "^default$"; then
                 log_info "Default libvirt storage pool not found, attempting to create it"
-                if [[ "$(uname)" == "Darwin" ]]; then
-                    if [[ "$libvirt_uri" == *session* ]]; then
-                        pool_path="$HOME/libvirt/images"
-                    else
-                        pool_path="/usr/local/var/lib/libvirt/images"
-                    fi
-                else
-                    pool_path="/var/lib/libvirt/images"
-                fi
+                pool_path="/var/lib/libvirt/images"
                 mkdir -p "$pool_path" || log_warn "Could not create pool directory $pool_path, you may need to adjust permissions"
                 if virsh -c "$libvirt_uri" pool-define-as default dir --target "$pool_path" 2>/dev/null; then
                     log_info "Default pool defined successfully"
@@ -988,8 +954,8 @@ write_provider_variables() {
                 fi
             fi
 
-            # Check and create default libvirt network if it doesn't exist (skip for session mode, which uses user networking)
-            if [[ "$libvirt_uri" != *session* ]] && ! virsh -c "$libvirt_uri" net-list --name 2>/dev/null | grep -q "^default$"; then
+            # Check and create default libvirt network if it doesn't exist
+            if ! virsh -c "$libvirt_uri" net-list --name 2>/dev/null | grep -q "^default$"; then
                 log_info "Default libvirt network not found, attempting to create it"
                 if virsh -c "$libvirt_uri" net-define /dev/stdin 2>/dev/null <<EOF; then
 <network>
@@ -1100,15 +1066,7 @@ create_terraform_files() {
     ln -sf ".templates/common.tf" "$deploy_dir/common.tf"
     ln -sf ".templates/common-firewall.tf" "$deploy_dir/common-firewall.tf"
     ln -sf ".templates/common-outputs.tf" "$deploy_dir/common-outputs.tf"
-    # Prefer macOS-specific template when deployment variables indicate hvf
-    local vars_file="$deploy_dir/variables.auto.tfvars"
-    if [[ -f "$vars_file" ]] && grep -q "libvirt_domain_type\s*=\s*\"hvf\"" "$vars_file" && [[ -f "$templates_dir/main-osx.tf" ]]; then
-        ln -sf ".templates/main-osx.tf" "$deploy_dir/main.tf"
-    elif [[ "$(uname)" == "Darwin" && -f "$templates_dir/main-osx.tf" ]]; then
-        ln -sf ".templates/main-osx.tf" "$deploy_dir/main.tf"
-    else
-        ln -sf ".templates/main.tf" "$deploy_dir/main.tf"
-    fi
+    ln -sf ".templates/main.tf" "$deploy_dir/main.tf"
     ln -sf ".templates/variables.tf" "$deploy_dir/variables.tf"
     ln -sf ".templates/outputs.tf" "$deploy_dir/outputs.tf"
         # No provider-specific cloud-init templates are symlinked by default.
