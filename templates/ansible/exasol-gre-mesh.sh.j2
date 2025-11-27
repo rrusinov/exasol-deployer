@@ -94,9 +94,9 @@ ensure_tunnel() {
 
 wait_for_peer_connectivity() {
   local remote="$1"
-  # Retry until a 10-packet ping succeeds
+  # Retry until a 3-packet ping succeeds
   for _ in $(seq 1 30); do
-    if ping -I "$BRIDGE_IF" -c 10 -w 20 "$remote" >/dev/null 2>&1; then
+    if ping -I "$BRIDGE_IF" -c 3 -w 20 "$remote" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1

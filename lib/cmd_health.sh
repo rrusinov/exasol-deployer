@@ -275,8 +275,8 @@ health_update_ssh_config() {
             next
         }
 
-        # Check if we are in the target host section (not its -cos entry) and this is a HostName line
-        if (current_host == host &&
+        # Check if we are in the target host section (including its -cos entry) and this is a HostName line
+        if ((current_host == host || current_host == host "-cos") &&
             lower_line ~ /^[[:space:]]*hostname[[:space:]]/) {
             # Extract current IP
             split($0, tokens)
@@ -885,17 +885,6 @@ cmd_health() {
             current_status=$(health_determine_status "$deploy_dir" "$ssh_passed" "$ssh_failed" "$cluster_status" "$overall_issues" 2>/dev/null || echo "unknown")
             log_debug "Current status: $current_status (overall_issues=$overall_issues, cluster_status=$cluster_status, ssh_passed=$ssh_passed, ssh_failed=$ssh_failed)"
 
-            # Update persistent state if --update flag is set and status changed
-            if [[ "$do_update_metadata" == "true" && "$current_status" != "unknown" ]]; then
-                local persistent_status
-                persistent_status=$(state_get_status "$deploy_dir" 2>/dev/null || echo "unknown")
-
-                if [[ "$persistent_status" != "$current_status" ]]; then
-                    state_set_status "$deploy_dir" "$current_status"
-                    log_debug "Status updated: $persistent_status -> $current_status"
-                fi
-            fi
-
             if [[ "$current_status" == "$wait_for_status" ]]; then
                 # Success - run one final health check with full output
                 log_info ""
@@ -938,12 +927,12 @@ cmd_health() {
     # shellcheck disable=SC2064
     trap "lock_remove '$deploy_dir'" EXIT INT TERM
 
-    # Check deployment state
-    local current_state
-    current_state=$(state_get_status "$deploy_dir" 2>/dev/null || echo "unknown")
-    if [[ "$current_state" != "database_ready" && "$current_state" != "database_connection_failed" ]]; then
-        log_warn "Deployment is in state: $current_state (health check may be incomplete)"
-    fi
+    # # Check deployment state
+    # local current_state
+    # current_state=$(state_get_status "$deploy_dir" 2>/dev/null || echo "unknown")
+    # if [[ "$current_state" != "database_ready" && "$current_state" != "database_connection_failed" ]]; then
+    #     log_warn "Deployment is in state: $current_state (health check may be incomplete)"
+    # fi
 
     # Run internal health checks
     # This function sets all health check variables: overall_issues, ssh_passed, ssh_failed, 
