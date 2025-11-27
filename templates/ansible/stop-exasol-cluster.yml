@@ -56,10 +56,25 @@
         state: stopped
       register: stop_c4
 
-    - name: Wait for c4.service to stop completely
-      ansible.builtin.wait_for:
-        timeout: 30
+    - name: Wait for c4.service to stop completely (grace period)
+      ansible.builtin.command: systemctl is-active --quiet c4.service
+      register: c4_stop_check
+      until: c4_stop_check.rc != 0
+      retries: 12  # ~60s total
+      delay: 5
+      changed_when: false
+      failed_when: false
       when: stop_c4.changed
+
+    - name: Force-stop c4.service if still active after grace period
+      ansible.builtin.command: systemctl kill --kill-who=main --signal=SIGKILL c4.service
+      register: c4_force_kill
+      failed_when: false
+      changed_when: c4_force_kill.rc == 0
+      when:
+        - stop_c4.changed
+        - c4_stop_check is defined
+        - c4_stop_check.rc == 0
 
     - name: "PROGRESS: Service shutdown initiated"
       ansible.builtin.debug:
@@ -131,8 +146,8 @@
       run_once: true
       when: (power_off_fallback | default(false)) | bool
 
-    - name: Power off hosts via in-guest shutdown (fallback for unsupported providers)
-      ansible.builtin.shell: "shutdown now -h 'Exasol stop fallback'"
+    - name: Power off hosts via systemd (graceful shutdown)
+      ansible.builtin.command: systemctl poweroff
       become: true
       when: (power_off_fallback | default(false)) | bool
       async: 1
