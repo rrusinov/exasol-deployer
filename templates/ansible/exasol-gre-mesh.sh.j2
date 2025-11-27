@@ -49,14 +49,13 @@ ensure_bridge() {
 }
 
 wait_for_bridge_ready() {
-  # Wait for grebr0 to have the expected IP and be UP
+  # Wait for grebr0 to have the expected IP and be administratively up
   for _ in $(seq 1 "$BRIDGE_READY_RETRIES"); do
     # Re-assert link state and address in case another manager toggled it
     ip link set "$BRIDGE_IF" up >/dev/null 2>&1 || true
     ip addr replace "$GRE_IP/$GRE_PREFIX" dev "$BRIDGE_IF" >/dev/null 2>&1 || true
 
-    if ip -4 addr show "$BRIDGE_IF" | grep -q "$GRE_IP/$GRE_PREFIX" && \
-       ip link show "$BRIDGE_IF" | grep -q "state UP"; then
+    if ip -4 addr show "$BRIDGE_IF" | grep -q "$GRE_IP/$GRE_PREFIX"; then
       return 0
     fi
     sleep 1
@@ -109,10 +108,16 @@ wait_for_peer_connectivity() {
 main() {
   wait_for_local_ip
   ensure_bridge
-  wait_for_bridge_ready
+  # First create all tunnels
   for peer in "${PEERS[@]}"; do
     IFS=":" read -r name remote <<<"$peer"
     ensure_tunnel "$name" "$remote"
+  done
+  # Ensure bridge is ready before validating connectivity
+  wait_for_bridge_ready
+  # Then validate connectivity for all peers
+  for peer in "${PEERS[@]}"; do
+    IFS=":" read -r _ remote <<<"$peer"
     wait_for_peer_connectivity "$remote"
   done
 }

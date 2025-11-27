@@ -127,6 +127,9 @@ locals {
   # Node IPs for common outputs
   node_public_ips  = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].access_config[0].nat_ip]
   node_private_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].network_ip]
+
+  # GRE mesh overlay not used on GCP; keep empty to satisfy common inventory template
+  gre_data = {}
 }
 
 # ==============================================================================

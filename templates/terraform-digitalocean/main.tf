@@ -52,6 +52,9 @@ locals {
   # Node IPs for common outputs
   node_public_ips  = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address]
   node_private_ips = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address_private]
+
+  # GRE mesh overlay not used on DigitalOcean; keep empty to satisfy common inventory template
+  gre_data = {}
 }
 
 # ==============================================================================

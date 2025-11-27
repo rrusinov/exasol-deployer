@@ -275,8 +275,8 @@ health_update_ssh_config() {
             next
         }
 
-        # Check if we are in the target host section and this is a HostName line
-        if ((current_host == host || current_host == host "-cos") &&
+        # Check if we are in the target host section (not its -cos entry) and this is a HostName line
+        if (current_host == host &&
             lower_line ~ /^[[:space:]]*hostname[[:space:]]/) {
             # Extract current IP
             split($0, tokens)
@@ -908,20 +908,10 @@ cmd_health() {
                 break
             fi
 
-            # Check if we're in a failure state that won't recover
-            case "$current_status" in
-                *_failed)
-                    # Failure - run one final health check with full output
-                    log_error ""
-                    log_error "Deployment is in failed state: $current_status"
-                    log_error "Running final health check..."
-                    log_error ""
-
-                    # Continue to run the normal health check below (without --wait-for)
-                    # This will show the full diagnostic output
-                    break
-                    ;;
-            esac
+            # Do not abort early on failure states; continue polling until timeout or success
+            if [[ "$current_status" == *_failed ]]; then
+                log_warn "Deployment currently in state: $current_status (continuing to wait until timeout)"
+            fi
 
             sleep "$check_interval"
         done

@@ -574,6 +574,15 @@ cmd_init() {
         die "Templates directory templates/terraform-$cloud_provider does not exist"
     fi
 
+    # For libvirt, keep only one main template variant to avoid Terraform loading both.
+    if [[ "$cloud_provider" == "libvirt" && -f "$templates_dir/main-osx.tf" ]]; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            rm -f "$templates_dir/main.tf" 2>/dev/null || true
+        else
+            rm -f "$templates_dir/main-osx.tf" 2>/dev/null || true
+        fi
+    fi
+
     # Ansible templates are cloud-agnostic
     cp -r "$script_root/templates/ansible/"* "$templates_dir/" 2>/dev/null || true
     log_debug "Copied Ansible templates"

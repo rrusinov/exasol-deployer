@@ -300,6 +300,9 @@ locals {
   # Node IPs for common outputs
   node_public_ips  = azurerm_public_ip.exasol_node[*].ip_address
   node_private_ips = azurerm_network_interface.exasol_node[*].private_ip_address
+
+  # GRE mesh overlay not used on Azure; keep empty to satisfy common inventory template
+  gre_data = {}
 }
 
 # ==============================================================================

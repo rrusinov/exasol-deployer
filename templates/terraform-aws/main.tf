@@ -63,6 +63,9 @@ locals {
   # Node public IPs for common outputs
   node_public_ips  = [for instance in aws_instance.exasol_node : instance.public_ip]
   node_private_ips = [for instance in aws_instance.exasol_node : instance.private_ip]
+
+  # GRE mesh overlay not used on AWS; keep empty to satisfy common inventory template
+  gre_data = {}
 }
 
 # Get latest Ubuntu 24.04 AMI

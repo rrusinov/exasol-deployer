@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # Shared logic for template validation (Terraform/OpenTofu and Ansible)
 
-# Get script directory
-TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get script directory (lib) and project test dir
+TEST_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_DIR="$(cd "$TEST_LIB_DIR/.." && pwd)"
 
 source "$TEST_DIR/test_helper.sh"
 
 # Source the libraries we're testing
-LIB_DIR="$TEST_DIR/../lib"
-source "$LIB_DIR/common.sh"
-source "$LIB_DIR/state.sh"
-source "$LIB_DIR/versions.sh"
-source "$LIB_DIR/cmd_init.sh"
+PROJECT_LIB_DIR="$TEST_DIR/../lib"
+source "$PROJECT_LIB_DIR/common.sh"
+source "$PROJECT_LIB_DIR/state.sh"
+source "$PROJECT_LIB_DIR/versions.sh"
+source "$PROJECT_LIB_DIR/cmd_init.sh"
 
 echo "Testing template validation (Terraform + Ansible)"
 echo "================================================="
@@ -84,8 +85,8 @@ check_tool_availability() {
     fi
 }
 
-# shellcheck source=tests/test_template_validation_body.sh
-source "$TEST_DIR/test_template_validation_body.sh"
+# shellcheck source=tests/lib/test_template_validation_body.sh
+source "$TEST_LIB_DIR/test_template_validation_body.sh"
 
 template_validation_run() {
     case "$TARGET" in

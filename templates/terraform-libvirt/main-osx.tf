@@ -35,6 +35,9 @@ locals {
 
   node_public_ips  = [for idx, domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "")] 
   node_private_ips = [for idx, domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "")] 
+
+  # GRE mesh overlay not used on libvirt macOS template; keep empty to satisfy common inventory template
+  gre_data = {}
 }
 
 provider "libvirt" {

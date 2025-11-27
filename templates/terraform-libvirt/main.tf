@@ -40,6 +40,9 @@ locals {
   # Node IPs for common outputs (libvirt uses private IPs only)
   node_public_ips  = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "") ]
   node_private_ips = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "") ]
+
+  # GRE mesh overlay not used on libvirt; keep empty to satisfy common inventory template
+  gre_data = {}
 }
 
 provider "libvirt" {

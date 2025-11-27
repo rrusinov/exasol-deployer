@@ -55,6 +55,7 @@ test_yaml_syntax_validation() {
 
 # Provider-specific and supporting tests are unchanged from the original monolithic script
 # (code omitted here for brevity)
-source "$TEST_DIR/test_template_validation_provider_tests.sh"
+LIB_TEST_DIR="${TEST_DIR}/lib"
+source "${LIB_TEST_DIR}/test_template_validation_provider_tests.sh"
 # Ansible/common validations
-source "$TEST_DIR/test_template_validation_ansible.sh"
+source "${LIB_TEST_DIR}/test_template_validation_ansible.sh"
