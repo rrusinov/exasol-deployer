@@ -784,6 +784,12 @@ detect_libvirt_uri() {
         return 0
     fi
 
+    if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
+        log_warn "EXASOL_SKIP_PROVIDER_CHECKS=1 set; defaulting libvirt URI to qemu:///system without validation."
+        echo "qemu:///system"
+        return 0
+    fi
+
     local virsh_uri=""
     if command -v virsh >/dev/null 2>&1; then
         virsh_uri="$(virsh uri 2>/dev/null | tr -d '\r\n' || true)"
