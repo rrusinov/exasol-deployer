@@ -210,7 +210,6 @@ cmd_start() {
         log_info "The database services have been started and should be ready for use."
         return 0
     else
-        log_warn "Provider '$cloud_provider' does not support automatic power control."
         log_info ""
 
         # Provider-specific power-on instructions or auto-start attempts
@@ -242,7 +241,7 @@ cmd_start() {
                 fi
 
                 if [[ "$auto_started" != "true" ]]; then
-                    log_info "Please power on the VMs using virsh:"
+                    log_warn "Provider 'libvirt' does not support automatic power control in Terraform; please power on the VMs using virsh:"
                     log_info "  virsh list --all  # List all VMs to find the VM names"
                     log_info "  virsh start <vm-name>  # Start each VM"
                     log_info ""
