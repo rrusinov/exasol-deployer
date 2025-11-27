@@ -62,8 +62,8 @@ locals {
 # ==============================================================================
 
 resource "digitalocean_vpc" "exasol_vpc" {
-  name     = "exasol-vpc-${random_id.instance.hex}"
-  region   = var.digitalocean_region
+  name   = "exasol-vpc-${random_id.instance.hex}"
+  region = var.digitalocean_region
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
   # This avoids conflicts with existing VPCs from failed/previous deployments
   # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits

@@ -238,10 +238,10 @@ cmd_start() {
         log_info ""
     fi
 
-    # Step 3: For manual providers, set status to 'started' and wait for health
+    # Step 3: For manual providers, set status to 'started' and wait for health.
+    # Keep the start operation lock in place so only this command updates state;
+    # do not mark operation_success until health completes.
     state_set_status "$deploy_dir" "$STATE_STARTED"
-    operation_success  # Mark operation as successful
-    lock_remove "$deploy_dir"  # Actually remove lock so health command can run
 
     # Step 4: Call health --update --wait-for database_ready,15m
     log_info "Waiting for cluster to become healthy (timeout: 15 minutes)..."
@@ -253,6 +253,7 @@ cmd_start() {
         log_info "✓ Exasol Database Started Successfully!"
         log_info ""
         log_info "The database services have been started and are ready for use."
+        operation_success
         return 0
     else
         # Step 5: Failure - print error and return
@@ -271,6 +272,7 @@ cmd_start() {
         log_error "Run 'exasol health --deployment-dir $deploy_dir' for detailed diagnostics"
         log_error ""
         state_set_status "$deploy_dir" "$STATE_START_FAILED"
+        operation_success
         return 1
     fi
 }

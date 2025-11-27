@@ -40,7 +40,7 @@ resource "google_compute_network" "exasol" {
 }
 
 resource "google_compute_subnetwork" "exasol" {
-  name          = "exasol-subnet"
+  name = "exasol-subnet"
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
   # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
   # Provides 254 × 256 = 65,024 possible unique networks
@@ -137,10 +137,10 @@ locals {
 # ==============================================================================
 
 resource "google_compute_instance" "exasol_node" {
-  count        = var.node_count
-  name         = "n${count.index + 11}"
-  machine_type = var.instance_type
-  zone         = local.selected_gcp_zone
+  count          = var.node_count
+  name           = "n${count.index + 11}"
+  machine_type   = var.instance_type
+  zone           = local.selected_gcp_zone
   desired_status = var.infra_desired_state == "stopped" ? "TERMINATED" : "RUNNING"
 
   # Spot (preemptible) instance configuration
