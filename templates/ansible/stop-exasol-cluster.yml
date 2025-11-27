@@ -56,10 +56,30 @@
         state: stopped
       register: stop_c4
 
-    - name: Wait for c4.service to stop completely
-      ansible.builtin.wait_for:
-        timeout: 30
+    - name: Wait for c4.service to stop completely (grace period)
+      ansible.builtin.command: systemctl is-active --quiet c4.service
+      register: c4_stop_check
+      until: c4_stop_check.rc != 0
+      retries: 12  # ~60s total
+      delay: 5
+      changed_when: false
+      failed_when: false
       when: stop_c4.changed
+
+    - name: Force-stop c4.service if still active after grace period
+      ansible.builtin.command: systemctl kill --kill-who=main --signal=SIGKILL c4.service
+      register: c4_force_kill
+      failed_when: false
+      changed_when: c4_force_kill.rc == 0
+      when:
+        - stop_c4.changed
+        - c4_stop_check is defined
+        - c4_stop_check.rc == 0
+
+    - name: "PROGRESS: Service shutdown initiated"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: stop:01:Service_Shutdown"
+      run_once: true
 
     # Stop auxiliary services if they are running
     - name: Stop c4_cloud_command.service
@@ -88,6 +108,11 @@
         - c4_cloud_command.service
         - exasol-admin-ui.service
 
+    - name: "PROGRESS: Stage verification starting"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: stop:02:Stage_Verification"
+      run_once: true
+
     # ==============================================================================
     # WAIT FOR ALL NODES TO REACH STAGE a/a1
     # ==============================================================================
@@ -115,11 +140,27 @@
         msg: "✓ Exasol database cluster stopped successfully on all nodes (stage a/a1)"
       when: inventory_hostname == groups['exasol_nodes'][0]
 
-    - name: Power off hosts via in-guest shutdown (fallback for unsupported providers)
-      ansible.builtin.shell: "shutdown now -h 'Exasol stop fallback'"
+    - name: "PROGRESS: Infrastructure power-off starting"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: stop:03:Infrastructure_Power-Off"
+      run_once: true
+      when: (power_off_fallback | default(false)) | bool
+
+    - name: Power off hosts via systemd (graceful shutdown)
+      ansible.builtin.command: systemctl poweroff
       become: true
       when: (power_off_fallback | default(false)) | bool
       async: 1
       poll: 0
       ignore_errors: true
       changed_when: true
+
+    - name: "PROGRESS: Stop validation"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: stop:04:Stop_Validation"
+      run_once: true
+
+    - name: "PROGRESS: Stop complete"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: stop:05:Stop_Complete"
+      run_once: true

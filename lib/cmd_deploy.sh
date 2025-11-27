@@ -60,6 +60,7 @@ cmd_deploy() {
 
     # Set deployment directory for progress tracking
     export EXASOL_DEPLOY_DIR="$deploy_dir"
+    log_plugin_cache_dir
 
     # Validate deployment directory
     if [[ ! -d "$deploy_dir" ]]; then

@@ -634,14 +634,14 @@ test_hetzner_private_ip_template() {
         return
     fi
 
-    if grep -q "node_private_ips = \\[for network in hcloud_server_network.exasol_node_network" "$template_file"; then
+    if grep -q "node_private_ips = local.gre_overlay_ips" "$template_file"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
-        echo -e "${GREEN}✓${NC} Hetzner node_private_ips sourced from server network"
+        echo -e "${GREEN}✓${NC} Hetzner node_private_ips use GRE overlay"
     else
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} Hetzner node_private_ips should read from hcloud_server_network.exasol_node_network"
+        echo -e "${RED}✗${NC} Hetzner node_private_ips should use GRE overlay IPs"
     fi
 }
 

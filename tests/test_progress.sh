@@ -33,11 +33,11 @@ EOF
     first_line=$(echo "$output" | head -n1)
     last_line=$(echo "$output" | tail -n1)
 
-    assert_contains "$first_line" "[01/10]" "First deploy step should start at 1"
-    assert_contains "$first_line" "Infrastructure planning" "Step 1 label should be Infrastructure planning"
+    assert_contains "$first_line" "[01/15]" "First deploy step should start at 1"
+    assert_contains "$first_line" "Terraform Init" "Step 1 label should be Terraform Init"
 
-    assert_contains "$last_line" "[10/10]" "Last deploy step should reach 10"
-    assert_contains "$last_line" "Deployment validation" "Final label should be Deployment validation"
+    assert_contains "$last_line" "[15/15]" "Last deploy step should reach 15"
+    assert_contains "$last_line" "Deploy Complete" "Final label should be Deploy Complete"
 }
 
 test_progress_display_steps_unknown_operation_passthrough() {
@@ -61,20 +61,23 @@ test_progress_step_does_not_regress() {
     echo ""
     echo "Test: progress does not move backwards when later lines match earlier steps"
 
-    local input output third_line
+    local input output second_line third_line
     input=$(
         cat <<'EOF'
-Creating cloud infrastructure...
-libvirt_volume.root_volume[0]: Creating...
+tofu init
 aws_vpc.exasol_vpc: Creating...
+aws_volume.data_volume[0]: Creating...
 EOF
     )
 
     output=$(printf "%s" "$input" | progress_display_steps "deploy")
+    second_line=$(echo "$output" | sed -n '2p')
     third_line=$(echo "$output" | sed -n '3p')
 
-    assert_contains "$third_line" "[04/10]" "Progress should stay on step 4 after storage detection"
-    assert_contains "$third_line" "Storage provisioning" "Label should remain at latest detected step"
+    assert_contains "$second_line" "[02/15]" "Second line should show step 2 for network"
+    assert_contains "$second_line" "Network Creation" "Second line should show Network Creation"
+    assert_contains "$third_line" "[04/15]" "Third line should advance to step 4 for volume"
+    assert_contains "$third_line" "Volume Provisioning" "Third line should show Volume Provisioning"
 }
 
 test_progress_start_steps_sequence() {
@@ -86,16 +89,16 @@ test_progress_start_steps_sequence() {
         cat <<'EOF'
 Starting Exasol database cluster...
 Waiting for status 'database_ready' (timeout: 15m)...
-Status reached: database_ready
-Health report for /tmp/deploy
+All cluster nodes reached stage 'd' (database ready)
+Exasol database cluster started successfully on all nodes
 EOF
     )
 
     output=$(printf "%s" "$input" | progress_display_steps "start")
     last_line=$(echo "$output" | tail -n1)
 
-    assert_contains "$last_line" "[4/4]" "Start should reach final step"
-    assert_contains "$last_line" "Health checks" "Start final label should be Health checks"
+    assert_contains "$last_line" "[5/5]" "Start should reach final step"
+    assert_contains "$last_line" "Start Complete" "Start final label should be Start Complete"
 }
 
 test_progress_stop_steps_sequence() {
@@ -109,6 +112,7 @@ Stopping Exasol database cluster...
 Verify all services are stopped
 Power off hosts via in-guest shutdown (fallback for unsupported providers)
 PLAY RECAP *********************************************************************
+Exasol database cluster stopped successfully
 EOF
     )
 
@@ -116,9 +120,10 @@ EOF
     third_line=$(echo "$output" | sed -n '3p')
     last_line=$(echo "$output" | tail -n1)
 
-    assert_contains "$third_line" "[3/4]" "Stop should reach power-off step"
-    assert_contains "$third_line" "Powering off instances" "Step 3 label should be Powering off instances"
-    assert_contains "$last_line" "[4/4]" "Stop should reach final verification step"
+    assert_contains "$third_line" "[3/5]" "Stop should reach power-off step"
+    assert_contains "$third_line" "Infrastructure Power-Off" "Step 3 label should be Infrastructure Power-Off"
+    assert_contains "$last_line" "[5/5]" "Stop should reach final verification step"
+    assert_contains "$last_line" "Stop Complete" "Stop final label should be Stop Complete"
 }
 
 test_progress_display_steps_deploy_sequence

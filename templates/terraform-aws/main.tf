@@ -63,6 +63,9 @@ locals {
   # Node public IPs for common outputs
   node_public_ips  = [for instance in aws_instance.exasol_node : instance.public_ip]
   node_private_ips = [for instance in aws_instance.exasol_node : instance.private_ip]
+
+  # GRE mesh overlay not used on AWS; keep empty to satisfy common inventory template
+  gre_data = {}
 }
 
 # Get latest Ubuntu 24.04 AMI
@@ -92,9 +95,9 @@ data "aws_ami" "ubuntu" {
 resource "aws_vpc" "exasol_vpc" {
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
   # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
-  # Provides 254 × 256 = 65,024 possible unique networks
+  # Provides 253 × 256 = 64,768 possible unique networks (10.254.0.0/16 reserved for GRE overlay)
   # Use a /16 network and carve subnets from it to avoid collisions across clusters
-  cidr_block           = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.0.0/16"
+  cidr_block           = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 253) + 1}.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
 

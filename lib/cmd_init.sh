@@ -427,6 +427,7 @@ cmd_init() {
 
     # Set deployment directory for progress tracking
     export EXASOL_DEPLOY_DIR="$deploy_dir"
+    log_plugin_cache_dir
 
     if [[ -z "$db_version" ]]; then
         db_version=$(get_default_version)
@@ -571,6 +572,15 @@ cmd_init() {
     else
         log_error "No templates found for cloud provider: $cloud_provider"
         die "Templates directory templates/terraform-$cloud_provider does not exist"
+    fi
+
+    # For libvirt, keep only one main template variant to avoid Terraform loading both.
+    if [[ "$cloud_provider" == "libvirt" && -f "$templates_dir/main-osx.tf" ]]; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            rm -f "$templates_dir/main.tf" 2>/dev/null || true
+        else
+            rm -f "$templates_dir/main-osx.tf" 2>/dev/null || true
+        fi
     fi
 
     # Ansible templates are cloud-agnostic
