@@ -877,7 +877,8 @@ cmd_health() {
 
             # Run the internal health check function (same as final check but quiet)
             # This function sets variables: overall_issues, ssh_passed, ssh_failed, cluster_status, etc.
-            health_run_internal_checks "$deploy_dir" "quiet" "json" "$do_update_metadata" "$cloud_provider" 2>/dev/null || true
+            # Skip persistent status updates during the wait loop; apply them after timeout/final check
+            health_run_internal_checks "$deploy_dir" "quiet" "json" "$do_update_metadata" "$cloud_provider" "false" 2>/dev/null || true
 
             # Determine current status from health check results
             local current_status

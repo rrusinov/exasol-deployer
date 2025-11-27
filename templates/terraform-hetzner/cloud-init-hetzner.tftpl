@@ -4,12 +4,12 @@ ${base_cloud_init}
 # GRE Tunnel Mesh Network Setup for Multicast Support
 # ==============================================================================
 # Hetzner assigns /32 addresses which breaks multicast subnet detection in Exasol.
-# Solution: Create GRE tunnel mesh with proper /24 subnet where multicast works natively.
+# Solution: Create GRE tunnel mesh with proper /16 subnet where multicast works natively.
 # Physical IPs: Used for tunnel endpoints
-# GRE IPs (10.254.0.0/24): Used for Exasol clustering with native multicast support
+# GRE IPs (10.254.0.0/16): Used for Exasol clustering with native multicast support
 
 GRE_IP="${gre_ip}"
-GRE_NETWORK="10.254.0.0/24"
+GRE_NETWORK="10.254.0.0/16"
 LOCAL_PRIVATE_IP="${local_private_ip}"
 
 echo "Setting up GRE tunnel mesh for multicast..."
@@ -28,7 +28,8 @@ echo "ip_gre" >> /etc/modules
 if ! ip link show grebr0 >/dev/null 2>&1; then
   ip link add name grebr0 type bridge
 fi
-ip addr replace $GRE_IP/24 dev grebr0
+ip addr flush dev grebr0
+ip addr add $GRE_IP/16 dev grebr0
 ip link set grebr0 up
 ip link set grebr0 multicast on
 # Enable STP to prevent broadcast loops
@@ -82,7 +83,7 @@ cat > /etc/systemd/network/10-grebr0.network <<NETWORK_CONFIG
 Name=grebr0
 
 [Network]
-Address=$GRE_IP/24
+Address=$GRE_IP/16
 MulticastDNS=yes
 Multicast=on
 IPv6AcceptRA=no
@@ -153,7 +154,7 @@ cat > /usr/local/bin/setup-gre-mesh.sh <<GRE_SETUP
 set -euo pipefail
 
 GRE_IP="${gre_ip}"
-GRE_NETWORK="10.254.0.0/24"
+GRE_NETWORK="10.254.0.0/16"
 LOCAL_PRIVATE_IP="${local_private_ip}"
 PRIVATE_IFACE=$(ip -o -4 addr show | awk -v ip="$$LOCAL_PRIVATE_IP" '$4 ~ ip"/" {print $2; exit}')
 PRIVATE_IFACE=$${PRIVATE_IFACE:-enp7s0}

@@ -129,6 +129,7 @@ resource "local_file" "ansible_inventory" {
     node_volumes   = local.node_volumes
     cloud_provider = local.provider_code
     ssh_key        = local_file.exasol_private_key_pem.filename
+    gre_data       = try(local.gre_data, {})
   })
   filename        = "${path.module}/inventory.ini"
   file_permission = "0644"

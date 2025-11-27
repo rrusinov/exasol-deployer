@@ -24,6 +24,10 @@ health_determine_status() {
     local current_status
     current_status=$(state_get_status "$deploy_dir" 2>/dev/null || echo "unknown")
 
+    local cluster_size
+    cluster_size=$(state_read "$deploy_dir" "cluster_size" 2>/dev/null)
+    cluster_size=${cluster_size:-$ssh_failed}
+
     # Determine if cluster is ready (all checks passed and in stage d)
     local cluster_ready="false"
     [[ "$overall_issues" -eq 0 && "$cluster_status" == "cluster_stage_d" ]] && cluster_ready="true"
@@ -31,21 +35,19 @@ health_determine_status() {
     # Apply status transition rules (same logic as in full health check)
     local new_status="$current_status"
 
-    if [[ "$cluster_ready" == "true" ]]; then
+    if [[ "$ssh_passed" -eq 0 && "$ssh_failed" -eq "$cluster_size" && "$cluster_size" -gt 0 ]]; then
+        # All nodes unreachable via SSH -> treat as stopped regardless of previous status
+        new_status="stopped"
+    elif [[ "$current_status" == "database_connection_failed" && "$ssh_passed" -eq 0 && "$ssh_failed" -eq "$cluster_size" && "$cluster_size" -gt 0 ]]; then
+        # If database connection failed and nothing is reachable, mark as stopped
+        new_status="stopped"
+    elif [[ "$cluster_ready" == "true" ]]; then
         # Cluster is healthy - transition to database_ready from failure/stopped/started states
         case "$current_status" in
             deployment_failed|database_connection_failed|start_failed|stop_failed|destroy_failed|stopped|started)
                 new_status="database_ready"
                 ;;
         esac
-    elif [[ "$current_status" == "stop_failed" && "$ssh_passed" -eq 0 && "$ssh_failed" -gt 0 ]]; then
-        # All nodes unreachable - transition to stopped
-        local cluster_size
-        cluster_size=$(state_read "$deploy_dir" "cluster_size" 2>/dev/null)
-        cluster_size=${cluster_size:-$ssh_failed}
-        if [[ "$ssh_failed" -eq "$cluster_size" ]]; then
-            new_status="stopped"
-        fi
     elif [[ "$current_status" == "database_ready" && "$cluster_status" != "cluster_stage_d" ]]; then
         # Database claims ready but cluster not in stage d
         new_status="database_connection_failed"
@@ -78,6 +80,7 @@ health_determine_status() {
 #   $3 - output_format (text|json)
 #   $4 - do_update_metadata (true|false)
 #   $5 - cloud_provider
+#   $6 - update_status (true|false) - optional, defaults to true
 #
 # Returns via global variables (because bash):
 #   Sets: overall_issues, ssh_passed, ssh_failed, cluster_status, cluster_ready
@@ -88,6 +91,7 @@ health_run_internal_checks() {
     local output_format="$3"
     local do_update_metadata="$4"
     local cloud_provider="$5"
+    local update_status="${6:-true}"
 
         local inventory_file="$deploy_dir/inventory.ini"
         local ssh_config_file="$deploy_dir/ssh_config"
@@ -549,7 +553,7 @@ health_run_internal_checks() {
 
         # Update deployment status if health checks pass and --update is used
         # This must happen AFTER all issues are counted above
-        if [[ "$do_update_metadata" == "true" ]]; then
+        if [[ "$do_update_metadata" == "true" && "$update_status" == "true" ]]; then
             local current_status
             current_status=$(state_get_status "$deploy_dir")
 

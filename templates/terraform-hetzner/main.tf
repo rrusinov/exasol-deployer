@@ -59,12 +59,25 @@ locals {
     ]
   }
 
+  # GRE mesh data for Ansible inventory (Hetzner-specific)
+  gre_data = {
+    for idx in range(var.node_count) : idx => {
+      gre_ip            = local.gre_overlay_ips[idx]
+      local_private_ip  = local.hetzner_private_ips[idx]
+      gre_peers = [
+        for peer_idx in range(var.node_count) : {
+          ip = local.hetzner_private_ips[peer_idx]
+        } if peer_idx != idx
+      ]
+    }
+  }
+
   # Private network details for per-node configuration
   private_network_cidr = hcloud_network_subnet.exasol_subnet.ip_range
   private_prefix_len   = tonumber(element(split("/", local.private_network_cidr), 1))
   hetzner_private_ips  = [for idx in range(var.node_count) : cidrhost(local.private_network_cidr, idx + 10)]
 
-  # GRE overlay network IPs (10.254.0.0/24) - used for Exasol clustering
+  # GRE overlay network IPs (10.254.0.0/16) - used for Exasol clustering
   # Fixed range to avoid overlap with Hetzner private subnets
   gre_overlay_ips = [for idx in range(var.node_count) : "10.254.0.${idx + 11}"]
 
@@ -72,6 +85,9 @@ locals {
   # IMPORTANT: Use GRE IPs as "private IPs" so Exasol uses them for clustering
   node_public_ips  = [for server in hcloud_server.exasol_node : server.ipv4_address]
   node_private_ips = local.gre_overlay_ips  # GRE overlay IPs
+
+  # Allow running Terraform from either deployment root (symlinked files) or .templates/
+  cloud_init_template_path = fileexists("${path.module}/cloud-init-hetzner.tftpl") ? "${path.module}/cloud-init-hetzner.tftpl" : "${path.module}/.templates/cloud-init-hetzner.tftpl"
 }
 
 # Get available Hetzner locations
@@ -86,7 +102,8 @@ resource "hcloud_network" "exasol_network" {
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
   # Format: 10.X.0.0/16 where X is derived from cluster ID hex digits
   # Provides 65,024 possible unique /16 networks; a /24 subnet will be carved from it
-  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.0.0/16"
+  # Reserve 10.254.0.0/16 for GRE overlay
+  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 253) + 1}.0.0/16"
 
   labels = {
     owner = var.owner
@@ -179,8 +196,8 @@ resource "hcloud_server" "exasol_node" {
   }
 
   # Cloud-init user-data to create exasol user and setup GRE mesh network
-  # cloud-init template lives in .templates/ because the root files are symlinked
-  user_data = templatefile("${path.module}/.templates/cloud-init-hetzner.tftpl", {
+  # cloud-init template is shipped alongside the module in deployment directories
+  user_data = templatefile(local.cloud_init_template_path, {
     base_cloud_init = local.cloud_init_script
     cluster_id      = random_id.instance.hex                  # Cluster ID (kept for compatibility)
     node_index      = count.index                             # Node index

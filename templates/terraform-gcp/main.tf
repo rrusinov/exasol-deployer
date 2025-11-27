@@ -45,7 +45,8 @@ resource "google_compute_subnetwork" "exasol" {
   # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
   # Provides 254 × 256 = 65,024 possible unique networks
   # Use /16 network and carve a /24 subnet from it for instances
-  ip_cidr_range = cidrsubnet("10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.0.0/16", 8, 1)
+  # Reserve 10.254.0.0/16 for GRE overlay across providers
+  ip_cidr_range = cidrsubnet("10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 253) + 1}.0.0/16", 8, 1)
   region        = var.gcp_region
   network       = google_compute_network.exasol.id
 }

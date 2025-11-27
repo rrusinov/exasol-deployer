@@ -427,6 +427,7 @@ cmd_init() {
 
     # Set deployment directory for progress tracking
     export EXASOL_DEPLOY_DIR="$deploy_dir"
+    log_plugin_cache_dir
 
     if [[ -z "$db_version" ]]; then
         db_version=$(get_default_version)
