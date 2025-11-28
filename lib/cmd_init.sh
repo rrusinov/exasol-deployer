@@ -109,10 +109,11 @@ load_azure_credentials_file() {
         return 1
     fi
 
-    local client_id client_secret tenant_id
+    local client_id client_secret tenant_id subscription_id
     client_id=$(jq -r '.appId // .clientId // empty' "$file_path" 2>/dev/null || true)
     client_secret=$(jq -r '.password // .clientSecret // empty' "$file_path" 2>/dev/null || true)
     tenant_id=$(jq -r '.tenant // .tenantId // empty' "$file_path" 2>/dev/null || true)
+    subscription_id=$(jq -r '.subscriptionId // empty' "$file_path" 2>/dev/null || true)
 
     if [[ -z "$client_id" || -z "$client_secret" || -z "$tenant_id" ]]; then
         log_warn "Azure credentials file $file_path is missing appId/password/tenant fields"
@@ -120,7 +121,7 @@ load_azure_credentials_file() {
         return 1
     fi
 
-    echo "$file_path|$client_id|$client_secret|$tenant_id"
+    echo "$file_path|$client_id|$client_secret|$tenant_id|$subscription_id"
 }
 
 # Show help for init command
@@ -157,7 +158,7 @@ AWS-Specific Flags:
 
 Azure-Specific Flags:
   --azure-region <region>        Azure region (default: "eastus")
-  --azure-subscription <id>      Azure subscription ID
+  --azure-subscription <id>      Azure subscription ID (optional if set in env or credentials file)
   --azure-credentials-file <path>  Path to Azure service principal credentials JSON (default: "~/.azure_credentials")
   --azure-spot-instance          Enable spot instances
 
@@ -222,13 +223,14 @@ cmd_init() {
     local owner="exasol-deployer"
     local allowed_cidr="0.0.0.0/0"
 
+
     # AWS-specific variables
-    local aws_region="us-east-1"
+    local aws_region=""
     local aws_profile="default"
     local aws_spot_instance=false
 
     # Azure-specific variables
-    local azure_region="eastus"
+    local azure_region=""
     local azure_subscription=""
     local azure_credentials_file="$HOME/.azure_credentials"
     local azure_client_id=""
@@ -237,18 +239,18 @@ cmd_init() {
     local azure_spot_instance=false
 
     # GCP-specific variables
-    local gcp_region="us-central1"
+    local gcp_region=""
     local gcp_zone=""
     local gcp_project=""
     local gcp_spot_instance=false
 
     # Hetzner-specific variables
-    local hetzner_location="nbg1"
+    local hetzner_location=""
     local hetzner_network_zone="eu-central"
     local hetzner_token=""
 
     # DigitalOcean-specific variables
-    local digitalocean_region="nyc3"
+    local digitalocean_region=""
     local digitalocean_token=""
 
     # Libvirt-specific variables
@@ -515,13 +517,35 @@ cmd_init() {
     if [[ "$cloud_provider" == "azure" ]]; then
         local azure_credentials_data
         azure_credentials_data=$(load_azure_credentials_file "$azure_credentials_file") || true
+        
+        local file_subscription_id=""
         if [[ -n "$azure_credentials_data" ]]; then
-            IFS="|" read -r azure_credentials_file azure_client_id azure_client_secret azure_tenant_id <<<"$azure_credentials_data"
+            IFS="|" read -r azure_credentials_file azure_client_id azure_client_secret azure_tenant_id file_subscription_id <<<"$azure_credentials_data"
             log_info "Using Azure credentials file: $azure_credentials_file"
         else
             log_warn "Azure credentials file not found or incomplete at $azure_credentials_file. Create it with 'az ad sp create-for-rbac --name \"exasol-deployer\" --role contributor --scopes /subscriptions/<subscription-id> > ~/.azure_credentials'."
         fi
+
+        # Precedence: 1. Flag (already in azure_subscription), 2. Env Var, 3. Config File
+        if [[ -z "$azure_subscription" ]]; then
+            if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
+                azure_subscription="${AZURE_SUBSCRIPTION_ID}"
+                log_info "Using Azure subscription ID from AZURE_SUBSCRIPTION_ID environment variable"
+            elif [[ -n "$file_subscription_id" ]]; then
+                azure_subscription="$file_subscription_id"
+                log_info "Using Azure subscription ID from credentials file"
+            fi
+        fi
+
+        if [[ -z "$azure_subscription" ]]; then
+            die "Azure subscription ID is required. Please provide it via --azure-subscription, AZURE_SUBSCRIPTION_ID env var, or 'subscriptionId' in ~/.azure_credentials"
+        fi
+
+        if [[ -z "$azure_client_id" || -z "$azure_client_secret" || -z "$azure_tenant_id" ]]; then
+            die "Azure credentials are incomplete. Please ensure '$azure_credentials_file' exists and contains 'appId', 'password', and 'tenant'."
+        fi
     fi
+
 
     # Set default instance type if not provided
     if [[ -z "$instance_type" ]]; then
@@ -535,6 +559,32 @@ cmd_init() {
             fi
             log_info "Using default instance type for $cloud_provider ($architecture): $instance_type"
         fi
+    fi
+
+    # Set default region/location if not provided, using instance-types.conf
+    if [[ "$cloud_provider" == "aws" && -z "$aws_region" ]]; then
+        aws_region=$(get_instance_type_region_default "$cloud_provider")
+        log_info "Using default AWS region: $aws_region"
+    fi
+    if [[ "$cloud_provider" == "azure" && -z "$azure_region" ]]; then
+        azure_region=$(get_instance_type_region_default "$cloud_provider")
+        log_info "Using default Azure region: $azure_region"
+    fi
+    if [[ "$cloud_provider" == "gcp" && -z "$gcp_region" ]]; then
+        gcp_region=$(get_instance_type_region_default "$cloud_provider")
+        log_info "Using default GCP region: $gcp_region"
+    fi
+    if [[ "$cloud_provider" == "hetzner" && -z "$hetzner_location" ]]; then
+        hetzner_location=$(get_instance_type_region_default "$cloud_provider" location)
+        log_info "Using default Hetzner location: $hetzner_location"
+    fi
+    if [[ "$cloud_provider" == "hetzner" && -z "$hetzner_network_zone" ]]; then
+        hetzner_network_zone=$(get_instance_type_region_default "$cloud_provider" network_zone)
+        log_info "Using default Hetzner network zone: $hetzner_network_zone"
+    fi
+    if [[ "$cloud_provider" == "digitalocean" && -z "$digitalocean_region" ]]; then
+        digitalocean_region=$(get_instance_type_region_default "$cloud_provider")
+        log_info "Using default DigitalOcean region: $digitalocean_region"
     fi
 
     # Generate passwords if not provided

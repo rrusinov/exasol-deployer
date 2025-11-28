@@ -123,6 +123,16 @@ Output looks like:
 }
 ```
 
+You can optionally add your subscription ID to this file:
+```json
+{
+  "appId": "...",
+  "password": "...",
+  "tenant": "...",
+  "subscriptionId": "YOUR_SUBSCRIPTION_ID"
+}
+```
+
 The deployer automatically reads this file during `exasol init`. To use a custom
 path, pass `--azure-credentials-file /path/to/creds.json`.
 
@@ -158,12 +168,23 @@ az vm list-skus --location eastus --size Standard_D --output table
 ## Step 7: Initialize Exasol Deployment
 
 `exasol init` automatically loads Azure service principal credentials from
-`~/.azure_credentials` (or from the path passed via `--azure-credentials-file`)
-and requires your subscription ID.
+`~/.azure_credentials` (or from the path passed via `--azure-credentials-file`).
+It also looks for your subscription ID in this order:
+1. `--azure-subscription` flag
+2. `AZURE_SUBSCRIPTION_ID` environment variable
+3. `subscriptionId` field in the credentials file
 
 ### Basic Deployment
 
-Single-node deployment with defaults:
+Single-node deployment with defaults (assuming subscription ID is configured):
+
+```bash
+./exasol init \
+  --cloud-provider azure \
+  --deployment-dir ./my-azure-deployment
+```
+
+Or explicitly passing it:
 
 ```bash
 ./exasol init \
@@ -210,18 +231,19 @@ Save up to 90% with spot instances (suitable for dev/test):
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--azure-region` | Azure region for deployment | `eastus` |
-| `--azure-subscription` | Azure subscription ID (required) | - |
-| `--azure-credentials-file` | Path to service principal JSON (`appId`, `password`, `tenant`) | `~/.azure_credentials` |
+| `--azure-subscription` | Azure subscription ID (required if not in env/file) | - |
+| `--azure-credentials-file` | Path to service principal JSON (`appId`, `password`, `tenant`, `subscriptionId`) | `~/.azure_credentials` |
 | `--azure-spot-instance` | Enable spot instances | `false` |
 
 ## VM Sizes (Instance Types)
 
-The deployer automatically selects appropriate VM sizes, but you can override:
+The deployer defaults to `Standard_B2als_v2` (x86_64) or `Standard_D2pls_v5` (ARM64), which are cost-effective options for development. For production, consider larger sizes.
 
 ### Recommended VM Sizes (x86_64)
 
 | VM Size | vCPUs | Memory | Temp Storage | Network | Use Case |
 |---------|-------|--------|--------------|---------|----------|
+| `Standard_B2als_v2` | 2 | 4 GB | Remote | Moderate | Default / Minimal |
 | `Standard_D4s_v5` | 4 | 16 GB | Remote | Moderate | Small dev/test |
 | `Standard_D8s_v5` | 8 | 32 GB | Remote | Moderate | Small production |
 | `Standard_D16s_v5` | 16 | 64 GB | Remote | High | Medium production |
@@ -241,6 +263,7 @@ The deployer automatically selects appropriate VM sizes, but you can override:
 
 | VM Size | vCPUs | Memory | Network | Use Case |
 |---------|-------|--------|---------|----------|
+| `Standard_D2pls_v5` | 2 | 4 GB | Moderate | Default / Minimal |
 | `Standard_D4ps_v5` | 4 | 16 GB | Moderate | Small production |
 | `Standard_D8ps_v5` | 8 | 32 GB | High | Medium production |
 | `Standard_D16ps_v5` | 16 | 64 GB | High | Large production |
@@ -248,6 +271,7 @@ The deployer automatically selects appropriate VM sizes, but you can override:
 
 ### Choosing VM Sizes
 
+- **B-series**: Burstable, cost-effective for development (default)
 - **D-series**: General purpose, good for most workloads
 - **F-series**: Compute-optimized, best for Exasol
 - **s suffix**: Premium storage support (recommended)

@@ -58,9 +58,16 @@ test_valid_cloud_providers() {
 
     for provider in "${providers[@]}"; do
         local test_dir=$(setup_test_dir)
+        local args=(--cloud-provider "$provider" --deployment-dir "$test_dir")
+
+        if [[ "$provider" == "azure" ]]; then
+            local dummy_creds="$test_dir/azure.json"
+            echo '{"appId":"a","password":"p","tenant":"t"}' > "$dummy_creds"
+            args+=(--azure-subscription "dummy-sub" --azure-credentials-file "$dummy_creds")
+        fi
 
         # Initialize with valid provider
-        if cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null; then
+        if cmd_init "${args[@]}" 2>/dev/null; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
             echo -e "${GREEN}✓${NC} Should accept valid provider: $provider"
@@ -187,7 +194,7 @@ test_credentials_file() {
 
     local test_dir=$(setup_test_dir)
 
-    cmd_init --cloud-provider azure --deployment-dir "$test_dir" 2>/dev/null
+    cmd_init --cloud-provider azure --deployment-dir "$test_dir" --azure-subscription "dummy-sub" 2>/dev/null
 
     if [[ -f "$test_dir/.credentials.json" ]]; then
         local cloud_provider
@@ -222,7 +229,8 @@ test_azure_credentials_file_usage() {
 {
   "appId": "app-id-123",
   "password": "secret-abc",
-  "tenant": "tenant-xyz"
+  "tenant": "tenant-xyz",
+  "subscriptionId": "sub-123"
 }
 EOF
 
@@ -288,6 +296,10 @@ test_exasol_entrypoint_init_providers() {
         local init_cmd
         if [[ "$provider" == "libvirt" ]]; then
             init_cmd=(EXASOL_SKIP_PROVIDER_CHECKS=1 "$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
+        elif [[ "$provider" == "azure" ]]; then
+            local dummy_creds="$test_dir/azure.json"
+            echo '{"appId":"a","password":"p","tenant":"t"}' > "$dummy_creds"
+            init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-subscription "dummy-sub" --azure-credentials-file "$dummy_creds")
         else
             init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
         fi
@@ -798,6 +810,83 @@ test_gcp_zone_configuration() {
     cleanup_test_dir "$custom_dir"
 }
 
+# Test: Azure subscription ID precedence
+test_azure_subscription_precedence() {
+    echo ""
+    echo "Test: Azure subscription ID precedence"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+    local creds_file="$test_dir/azure_creds_full.json"
+    
+    # Create creds file with subscriptionId
+    cat > "$creds_file" <<EOF
+{
+  "appId": "app-id",
+  "password": "pass",
+  "tenant": "tenant",
+  "subscriptionId": "sub-from-file"
+}
+EOF
+
+    # 1. Fail if missing
+    local simple_creds="$test_dir/simple.json"
+    echo '{"appId":"a","password":"p","tenant":"t"}' > "$simple_creds"
+    
+    unset AZURE_SUBSCRIPTION_ID
+    if cmd_init --cloud-provider azure --deployment-dir "$test_dir/fail" --azure-credentials-file "$simple_creds" 2>/dev/null; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should fail without any subscription ID"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Fails without subscription ID"
+    fi
+
+    # 2. File Precedence (Flag=Empty, Env=Empty)
+    unset AZURE_SUBSCRIPTION_ID
+    cmd_init --cloud-provider azure --deployment-dir "$test_dir/file" --azure-credentials-file "$creds_file" 2>/dev/null
+    if grep -q 'azure_subscription = "sub-from-file"' "$test_dir/file/variables.auto.tfvars"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Uses subscription from file"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should use subscription from file"
+    fi
+
+    # 3. Env Precedence (Flag=Empty, Env=Set, File=Set)
+    export AZURE_SUBSCRIPTION_ID="sub-from-env"
+    cmd_init --cloud-provider azure --deployment-dir "$test_dir/env" --azure-credentials-file "$creds_file" 2>/dev/null
+    if grep -q 'azure_subscription = "sub-from-env"' "$test_dir/env/variables.auto.tfvars"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Uses subscription from env var"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should use subscription from env var"
+    fi
+
+    # 4. Flag Precedence (Flag=Set, Env=Set, File=Set)
+    cmd_init --cloud-provider azure --deployment-dir "$test_dir/flag" --azure-credentials-file "$creds_file" --azure-subscription "sub-from-flag" 2>/dev/null
+    if grep -q 'azure_subscription = "sub-from-flag"' "$test_dir/flag/variables.auto.tfvars"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Uses subscription from flag"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should use subscription from flag"
+    fi
+
+    # Cleanup
+    unset AZURE_SUBSCRIPTION_ID
+    cleanup_test_dir "$test_dir"
+}
+
 # Run all tests
 test_cloud_provider_validation
 test_valid_cloud_providers
@@ -806,6 +895,7 @@ test_template_directory_selection
 test_inventory_cloud_provider
 test_credentials_file
 test_azure_credentials_file_usage
+test_azure_subscription_precedence
 test_list_providers_shows_capabilities
 test_readme_generation
 test_data_volumes_per_node

@@ -1,3 +1,30 @@
+# Get default region/location for a provider from instance-types.conf
+get_instance_type_region_default() {
+    local provider="$1"
+    local key="${2:-region}"
+    local config_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)/instance-types.conf"
+    local section=""
+    local in_section=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%%#*}"
+        line="${line%%;*}"
+        line="${line//[$'\t\r\n ']}" # trim whitespace
+        if [[ -z "$line" ]]; then continue; fi
+        if [[ "$line" =~ ^\[(.*)\]$ ]]; then
+            section="${BASH_REMATCH[1]}"
+            in_section=0
+            if [[ "$section" == "$provider" ]]; then
+                in_section=1
+            fi
+            continue
+        fi
+        if [[ $in_section -eq 1 && "$line" =~ ^$key= ]]; then
+            echo "${line#*=}"
+            return 0
+        fi
+    done < "$config_file"
+    echo ""
+}
 #!/usr/bin/env bash
 # Common functions and utilities for Exasol deployer
 
