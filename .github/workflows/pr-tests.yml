@@ -30,10 +30,11 @@ jobs:
         with:
           tofu_version: 1.6.0
 
-      - name: Run unit tests
-        run: |
-          chmod +x tests/run_tests.sh
-          ./tests/run_tests.sh
+       - name: Run unit tests
+         run: |
+           chmod +x exasol
+           chmod +x tests/run_tests.sh
+           ./tests/run_tests.sh
 
       - name: Generate test report
         if: always()
