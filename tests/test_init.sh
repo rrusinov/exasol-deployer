@@ -228,22 +228,7 @@ test_exasol_entrypoint_init_providers() {
             init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
         fi
 
-        if [[ "$provider" == "libvirt" ]]; then
-            if "${init_cmd[@]}"; then
-                # success
-                true
-            else
-                # failure, show stderr
-                false
-            fi
-        else
-            if "${init_cmd[@]}" 2>/dev/null; then
-                # success
-                true
-            else
-                false
-            fi
-        fi &&
+        if "${init_cmd[@]}" 2>/dev/null; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
             echo -e "${GREEN}✓${NC} exasol init should succeed for provider: $provider"
