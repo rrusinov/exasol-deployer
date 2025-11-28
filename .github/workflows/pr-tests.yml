@@ -32,7 +32,6 @@ jobs:
 
        - name: Run unit tests
          run: |
-           chmod +x exasol
            chmod +x tests/run_tests.sh
            ./tests/run_tests.sh
 
