@@ -215,13 +215,25 @@ test_exasol_entrypoint_init_providers() {
     echo ""
     echo "Test: exasol entrypoint init works for all providers"
 
-    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean" "libvirt")
+    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean")
+    if [[ "${EXASOL_SKIP_LIBVIRT_TESTS:-}" != "1" ]]; then
+        providers+=("libvirt")
+    else
+        echo -e "${YELLOW}⊘${NC} Skipping libvirt entrypoint init (EXASOL_SKIP_LIBVIRT_TESTS=1)"
+    fi
 
     for provider in "${providers[@]}"; do
         local test_dir
         test_dir=$(setup_test_dir)
 
-        if "$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null; then
+        local init_cmd
+        if [[ "$provider" == "libvirt" ]]; then
+            init_cmd=(EXASOL_SKIP_PROVIDER_CHECKS=1 "$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
+        else
+            init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
+        fi
+
+        if "${init_cmd[@]}" 2>/dev/null; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
             echo -e "${GREEN}✓${NC} exasol init should succeed for provider: $provider"

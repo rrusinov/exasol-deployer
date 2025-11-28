@@ -159,9 +159,7 @@ cmd_stop() {
             die "Infrastructure stop (tofu apply) failed"
         fi
     else
-        log_warn "Provider '$cloud_provider' does not support power control via tofu."
-        log_info ""
-        log_info "Instances have been issued an in-guest shutdown command."
+        log_warn "Provider '$cloud_provider' does not support power control via tofu; relying on in-guest shutdown."
         log_info ""
 
         # Allow time for in-guest shutdown to complete before SSH verification

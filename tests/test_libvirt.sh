@@ -5,9 +5,6 @@
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TEST_DIR/test_helper.sh"
 
-# Skip provider-specific checks in tests (mkisofs may not be installed)
-export EXASOL_SKIP_PROVIDER_CHECKS=1
-
 # Source libraries we're testing
 LIB_DIR="$TEST_DIR/../lib"
 source "$LIB_DIR/common.sh"
@@ -45,7 +42,7 @@ test_libvirt_command_line_options() {
     # Test with all libvirt options
     cmd_init --cloud-provider libvirt --deployment-dir "$test_dir" \
         --libvirt-memory 16 --libvirt-vcpus 8 --libvirt-network br0 --libvirt-pool exasol \
-        --libvirt-uri qemu:///session \
+        --libvirt-uri qemu:///system \
         --cluster-size 2 --data-volume-size 200 2>/dev/null
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
@@ -96,7 +93,7 @@ test_libvirt_command_line_options() {
             all_options_found=false
         fi
 
-        if grep -q "libvirt_uri = \"qemu:///session\"" "$test_dir/variables.auto.tfvars"; then
+        if grep -q "libvirt_uri = \"qemu:///system\"" "$test_dir/variables.auto.tfvars"; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
             echo -e "${GREEN}✓${NC} libvirt_uri correctly set from CLI flag"
@@ -135,7 +132,7 @@ test_libvirt_default_values() {
     cat >"$stub_dir/virsh" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "uri" ]]; then
-    echo "qemu:///session"
+    echo "qemu:///system"
 else
     exit 1
 fi
@@ -223,31 +220,9 @@ EOF
     rm -rf "$stub_dir"
 }
 
-# Test: libvirt firmware detection matches URI type
 test_libvirt_firmware_detection() {
     echo ""
-    echo "Test: Libvirt firmware detection"
-
-    local session_dir
-    session_dir=$(setup_test_dir)
-    cmd_init --cloud-provider libvirt --deployment-dir "$session_dir" --libvirt-uri qemu:///session 2>/dev/null
-
-    if [[ -f "$session_dir/variables.auto.tfvars" ]]; then
-        if grep -q 'libvirt_firmware = ""' "$session_dir/variables.auto.tfvars"; then
-            TESTS_TOTAL=$((TESTS_TOTAL + 1))
-            TESTS_PASSED=$((TESTS_PASSED + 1))
-            echo -e "${GREEN}✓${NC} Session URI leaves firmware empty"
-        else
-            TESTS_TOTAL=$((TESTS_TOTAL + 1))
-            TESTS_FAILED=$((TESTS_FAILED + 1))
-            echo -e "${RED}✗${NC} Session URI firmware not empty"
-        fi
-    else
-        TESTS_TOTAL=$((TESTS_TOTAL + 1))
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} Session variables.auto.tfvars missing"
-    fi
-    cleanup_test_dir "$session_dir"
+    echo "Test: Libvirt firmware defaults"
 
     local system_dir
     system_dir=$(setup_test_dir)
@@ -257,16 +232,16 @@ test_libvirt_firmware_detection() {
         if grep -q 'libvirt_firmware = "efi"' "$system_dir/variables.auto.tfvars"; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
-            echo -e "${GREEN}✓${NC} System URI defaults firmware to efi"
+            echo -e "${GREEN}✓${NC} Firmware defaults to efi for system URI"
         else
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_FAILED=$((TESTS_FAILED + 1))
-            echo -e "${RED}✗${NC} System URI firmware not set to efi"
+            echo -e "${RED}✗${NC} Firmware not set to efi for system URI"
         fi
     else
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} System variables.auto.tfvars missing"
+        echo -e "${RED}✗${NC} variables.auto.tfvars missing"
     fi
 
     cleanup_test_dir "$system_dir"

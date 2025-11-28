@@ -225,7 +225,7 @@ Match `--hetzner-network-zone` to your chosen location (default `eu-central` wor
 
 DigitalOcean currently provides only x86_64 droplets, so arm64 database versions are rejected during initialization for this provider.
 
-#### Local libvirt/KVM Deployment
+#### Local libvirt/KVM Deployment (Linux host, system libvirt only)
 
 ```bash
 # Initialize with default settings (single-node, 4GB RAM, 2 vCPUs)
@@ -233,7 +233,7 @@ DigitalOcean currently provides only x86_64 droplets, so arm64 database versions
   --cloud-provider libvirt \
   --deployment-dir ./my-libvirt-deployment
 
-# Initialize with custom resources for testing
+# Initialize with custom resources for testing (system libvirt URI required)
 ./exasol init \
   --cloud-provider libvirt \
   --deployment-dir ./my-libvirt-deployment \
@@ -245,7 +245,7 @@ DigitalOcean currently provides only x86_64 droplets, so arm64 database versions
   --data-volume-size 200
 ```
 
-Perfect for local development, testing, and CI/CD pipelines without cloud costs.
+Perfect for local development, testing, and CI/CD pipelines without cloud costs. Libvirt support requires a Linux host with a system libvirtd (`qemu:///system` locally or `qemu+ssh://user@host/system` remotely). Session daemons and macOS/HVF are not supported.
 
 The init command will:
 - Create the deployment directory structure

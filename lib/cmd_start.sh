@@ -112,6 +112,12 @@ cmd_start() {
         aws|azure|gcp)
             infra_power_supported="true"
             ;;
+        libvirt)
+            # Attempt automatic power control for libvirt when virsh is available
+            if command -v virsh >/dev/null 2>&1; then
+                infra_power_supported="false"  # handled manually below
+            fi
+            ;;
         *)
             infra_power_supported="false"
             ;;
@@ -204,17 +210,43 @@ cmd_start() {
         log_info "The database services have been started and should be ready for use."
         return 0
     else
-        log_warn "Provider '$cloud_provider' does not support automatic power control."
         log_info ""
 
-        # Provider-specific power-on instructions
+        # Provider-specific power-on instructions or auto-start attempts
         case "$cloud_provider" in
             libvirt)
-                log_info "Please power on the VMs using virsh:"
-                log_info "  virsh list --all  # List all VMs to find the VM names"
-                log_info "  virsh start <vm-name>  # Start each VM"
-                log_info ""
-                log_info "Alternatively, use virt-manager GUI to power on the VMs."
+                local libvirt_uri=""
+                if [[ -f "$deploy_dir/variables.auto.tfvars" ]]; then
+                    libvirt_uri=$(awk -F '=' '/^libvirt_uri/ {gsub(/[ "\t]/,"",$2); print $2}' "$deploy_dir/variables.auto.tfvars" | head -n1)
+                fi
+                [[ -z "$libvirt_uri" ]] && libvirt_uri="qemu:///system"
+
+                local auto_started="false"
+                if command -v virsh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && [[ -f "$deploy_dir/terraform.tfstate" ]]; then
+                    mapfile -t libvirt_domains < <(jq -r '.resources[] | select(.type=="libvirt_domain" and .name=="exasol_node").instances[].attributes.name' "$deploy_dir/terraform.tfstate" 2>/dev/null | grep -v '^null$' || true)
+                    if [[ ${#libvirt_domains[@]} -gt 0 ]]; then
+                        log_info "Attempting to power on libvirt domains via virsh..."
+                        auto_started="true"
+                        for domain in "${libvirt_domains[@]}"; do
+                            if ! virsh -c "$libvirt_uri" start "$domain" >/dev/null 2>&1; then
+                                auto_started="false"
+                                log_warn "Failed to start domain $domain via virsh"
+                                break
+                            fi
+                        done
+                        if [[ "$auto_started" == "true" ]]; then
+                            log_info "Powered on libvirt domains via virsh."
+                        fi
+                    fi
+                fi
+
+                if [[ "$auto_started" != "true" ]]; then
+                    log_warn "Provider 'libvirt' does not support automatic power control in Terraform; please power on the VMs using virsh:"
+                    log_info "  virsh list --all  # List all VMs to find the VM names"
+                    log_info "  virsh start <vm-name>  # Start each VM"
+                    log_info ""
+                    log_info "Alternatively, use virt-manager GUI to power on the VMs."
+                fi
                 ;;
             digitalocean)
                 log_info "Please power on the Droplets using DigitalOcean console or CLI:"
