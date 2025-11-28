@@ -105,6 +105,36 @@ die() {
 }
 
 # ==============================================================================
+# OPENTofu/Terraform plugin cache setup
+# ==============================================================================
+
+setup_plugin_cache() {
+    local cache_dir="${TF_PLUGIN_CACHE_DIR:-${HOME}/.cache/exasol-tofu-plugins}"
+    export TF_PLUGIN_CACHE_DIR="$cache_dir"
+
+    if [[ ! -d "$cache_dir" ]]; then
+        mkdir -p "$cache_dir" 2>/dev/null || true
+    fi
+
+    # Create rc files if missing so Terraform/OpenTofu know about the cache
+    for rc_file in "${HOME}/.tofurc" "${HOME}/.terraformrc"; do
+        if [[ ! -f "$rc_file" ]]; then
+            cat > "$rc_file" <<EOF
+plugin_cache_dir = "${cache_dir}"
+EOF
+            log_debug "Created provider cache config: $rc_file -> $cache_dir"
+        fi
+    done
+}
+
+# Initialize provider cache on load so all commands share it
+setup_plugin_cache
+
+log_plugin_cache_dir() {
+    log_info "Using provider cache directory: ${TF_PLUGIN_CACHE_DIR}"
+}
+
+# ==============================================================================
 # OPERATION GUARD
 # ==============================================================================
 # Sets a trap that marks the operation as failed (state) and removes lock unless

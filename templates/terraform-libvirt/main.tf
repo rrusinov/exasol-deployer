@@ -38,8 +38,11 @@ locals {
   }
 
   # Node IPs for common outputs (libvirt uses private IPs only)
-  node_public_ips  = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "") ]
-  node_private_ips = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "") ]
+  node_public_ips  = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "")]
+  node_private_ips = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "")]
+
+  # GRE mesh overlay not used on libvirt; keep empty to satisfy common inventory template
+  gre_data = {}
 }
 
 provider "libvirt" {
@@ -51,9 +54,9 @@ provider "libvirt" {
 # ==============================================================================
 
 resource "libvirt_cloudinit_disk" "commoninit" {
-  count     = var.node_count
-  name      = "commoninit-n${count.index + 11}-${random_id.instance.hex}.iso"
-  pool      = var.libvirt_disk_pool
+  count = var.node_count
+  name  = "commoninit-n${count.index + 11}-${random_id.instance.hex}.iso"
+  pool  = var.libvirt_disk_pool
   # Use the shared cloud-init script from terraform-common to avoid duplication
   user_data = local.cloud_init_script
 }
@@ -84,7 +87,7 @@ resource "libvirt_volume" "root_volume" {
   name           = "n${count.index + 11}-root-${random_id.instance.hex}.qcow2"
   pool           = var.libvirt_disk_pool
   base_volume_id = libvirt_volume.ubuntu_base.id
-  size           = var.root_volume_size * 1073741824  # Convert GB to bytes
+  size           = var.root_volume_size * 1073741824 # Convert GB to bytes
 }
 
 # ==============================================================================
@@ -95,7 +98,7 @@ resource "libvirt_volume" "data_volume" {
   count = var.node_count * var.data_volumes_per_node
   name  = "n${floor(count.index / var.data_volumes_per_node) + 11}-data-${(count.index % var.data_volumes_per_node) + 1}-${random_id.instance.hex}.qcow2"
   pool  = var.libvirt_disk_pool
-  size  = var.data_volume_size * 1073741824  # Convert GB to bytes
+  size  = var.data_volume_size * 1073741824 # Convert GB to bytes
 }
 
 # ==============================================================================
@@ -105,7 +108,7 @@ resource "libvirt_volume" "data_volume" {
 resource "libvirt_domain" "exasol_node" {
   count   = var.node_count
   name    = "n${count.index + 11}-${random_id.instance.hex}"
-  memory  = var.libvirt_memory_gb * 1024  # Convert GB to MB
+  memory  = var.libvirt_memory_gb * 1024 # Convert GB to MB
   vcpu    = var.libvirt_vcpus
   running = var.infra_desired_state == "stopped" ? false : true
   type    = var.libvirt_domain_type

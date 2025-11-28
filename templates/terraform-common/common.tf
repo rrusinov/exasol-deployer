@@ -90,26 +90,26 @@ locals {
 
 resource "local_file" "ssh_config" {
   content         = <<-EOF
-    # Exasol Cluster SSH Config
-    %{for idx, ip in local.node_public_ips~}
-    Host n${idx + 11}
-        HostName ${ip}
-        User exasol
-        IdentityFile ${abspath(local_file.exasol_private_key_pem.filename)}
-        IdentitiesOnly yes
-        StrictHostKeyChecking no
-        UserKnownHostsFile=/dev/null
+# Exasol Cluster SSH Config
+%{for idx, ip in local.node_public_ips~}
+Host n${idx + 11}
+    HostName ${ip}
+    User exasol
+    IdentityFile ${abspath(local_file.exasol_private_key_pem.filename)}
+    IdentitiesOnly yes
+    StrictHostKeyChecking no
+    UserKnownHostsFile=/dev/null
 
-    Host n${idx + 11}-cos
-        HostName ${ip}
-        User root
-        Port 20002
-        IdentityFile ${abspath(local_file.exasol_private_key_pem.filename)}
-        IdentitiesOnly yes
-        StrictHostKeyChecking no
-        UserKnownHostsFile=/dev/null
+Host n${idx + 11}-cos
+    HostName ${ip}
+    User root
+    Port 20002
+    IdentityFile ${abspath(local_file.exasol_private_key_pem.filename)}
+    IdentitiesOnly yes
+    StrictHostKeyChecking no
+    UserKnownHostsFile=/dev/null
 
-    %{endfor~}
+%{endfor~}
   EOF
   filename        = "${path.module}/ssh_config"
   file_permission = "0644"
@@ -129,6 +129,7 @@ resource "local_file" "ansible_inventory" {
     node_volumes   = local.node_volumes
     cloud_provider = local.provider_code
     ssh_key        = local_file.exasol_private_key_pem.filename
+    gre_data       = try(local.gre_data, {})
   })
   filename        = "${path.module}/inventory.ini"
   file_permission = "0644"

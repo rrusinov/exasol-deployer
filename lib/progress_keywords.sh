@@ -32,43 +32,50 @@ progress_get_step_definitions() {
 
 progress_deploy_steps() {
     cat <<'EOF'
-Infrastructure planning:::Creating cloud infrastructure|Initializing the backend|Initializing provider plugins|OpenTofu used the selected providers|execution plan|tofu (init|plan)
-Network setup:::vpc|subnet|network interface|network_interface|security group|firewall|virtual network|vnet|route table|nat gateway
-Instance creation:::aws_instance|libvirt_domain|droplet|virtual machine|compute instance|exasol_node|instance_state
-Storage provisioning:::volume|disk|block_device|storage account|root_volume|data_volume|ebs
-Ansible connection setup:::Configuring cluster with Ansible|ansible-playbook|inventory\\.ini|ssh_config|PLAY \\[Play 1 - Gather Host Facts\\]
-Exasol installation:::Setup and Configure Exasol Cluster|Install Exasol|Exasol installation|Load credentials and configuration|Derive artifact
-Cluster configuration:::Configure cluster|Create final Exasol config|hosts file entry|Apply configuration|Verify C4 configuration
-Service startup:::Start Exasol database deployment|Starting services|Wait for C4 deployment|c4\\.service|c4_cloud_command
-Health checks:::Wait for database to boot|Health check|Health report|Status reached: database_ready
-Deployment validation:::Deployment complete|Deployment completed|Deployment Complete!|Cluster Deployment Complete|deployment completed!
+Terraform Init:::PROGRESS_MARKER: deploy:01|tofu init|terraform init|Initializing the backend|Initializing provider plugins
+Network Creation:::PROGRESS_MARKER: deploy:02|(vpc|network|vnet).*Creating|subnet.*Creating|security.*group.*Creating|firewall.*Creating
+Compute Provisioning:::PROGRESS_MARKER: deploy:03|(instance|server|domain|droplet).*Creating|exasol_node.*Creating
+Volume Provisioning:::PROGRESS_MARKER: deploy:04|(volume|disk).*Creating|block_device.*Creating
+Ansible Connection:::PROGRESS_MARKER: deploy:05|PLAY \\[Play 1.*Gather Host Facts\\]|Configuring cluster with Ansible
+Node Configuration:::PROGRESS_MARKER: deploy:06|SECTION 1:.*Node & Network Setup|Set hostname to n11|Install required system packages
+SSH Key Distribution:::PROGRESS_MARKER: deploy:07|SECTION 2:.*SSH.*Inter-Node|Generate SSH key for exasol user
+Disk Discovery:::PROGRESS_MARKER: deploy:08|SECTION 3A:.*Discover data disks|exasol-data-symlinks|Discover existing /dev/exasol_data
+Config Generation:::PROGRESS_MARKER: deploy:09|Create final Exasol config|PLAY \\[Play 3.*Final Configuration
+Artifact Transfer:::PROGRESS_MARKER: deploy:10|(Transfer|Download).*(database|c4)|local Exasol database tarball|Download Exasol database
+Checksum Verification:::PROGRESS_MARKER: deploy:11|SECTION 5:.*Verify Checksums|Verify database tarball checksum|Verify c4 binary checksum
+C4 Diagnostic:::PROGRESS_MARKER: deploy:12|Verify C4 configuration diagnostic|c4 host diag
+Exasol Deployment:::PROGRESS_MARKER: deploy:13|Start Exasol database deployment|c4 host play
+Database Startup:::PROGRESS_MARKER: deploy:14|Wait for database to boot.*stage.*d|Wait for C4 deployment
+Deploy Complete:::PROGRESS_MARKER: deploy:15|cluster deployment completed|Exasol cluster deployment completed
 EOF
 }
 
 progress_start_steps() {
     cat <<'EOF'
-Powering on instances:::Powering on instances|Powering on the VMs|power on the VMs|aws_ec2_instance_state.*->.*running|Starting Exasol database cluster
-Waiting for boot:::Waiting for cluster to become healthy|Waiting for status|Health check remaining time|Refreshing Terraform state
-Starting Exasol services:::Starting database services via Ansible|Start Exasol Database|Play 2 - Start Exasol Database|Start Exasol database cluster on|Status reached: database_ready
-Health checks:::Health report|Health check completed|Database Started Successfully|database services have been started
+Infrastructure Power-On:::PROGRESS_MARKER: start:01|Powering on instances|Powering on the VMs|aws_ec2_instance_state.*->.*running|Starting Exasol database cluster
+Ansible Connection:::PROGRESS_MARKER: start:02|PLAY \\[Play 1.*Gather Host Facts\\]|Waiting for cluster to become healthy
+Service Startup:::PROGRESS_MARKER: start:03|Start (c4\\.service|c4_cloud_command)|Starting database services via Ansible|Play 2 - Start Exasol Database
+Database Boot:::PROGRESS_MARKER: start:04|Wait.*stage.*d|All.*nodes reached.*stage.*d|Status reached: database_ready
+Start Complete:::PROGRESS_MARKER: start:05|started successfully.*all nodes|Database Started Successfully|database services have been started
 EOF
 }
 
 progress_stop_steps() {
     cat <<'EOF'
-Stopping Exasol services:::Stopping Exasol database cluster|Stop Exasol Database|Stop c4\\.service|Stop c4_cloud_command\\.service
-Verifying service shutdown:::Verify all services are stopped|stage a/a1|stop summary|Confirm successful stop|cluster stopped successfully
-Powering off instances:::Powering off|state.*->.*stopped|Stopping instances|power control|does not support automatic power control|Power off hosts via in-guest shutdown
-Verification:::PLAY RECAP|stop completed
+Service Shutdown:::PROGRESS_MARKER: stop:01|Stopping Exasol database cluster|Stop Exasol Database|Stop (c4\\.service|c4_cloud_command)
+Stage Verification:::PROGRESS_MARKER: stop:02|Wait.*stage (a|a1)|nodes.*stage.*a/a1|Verify all services are stopped
+Infrastructure Power-Off:::PROGRESS_MARKER: stop:03|Powering off|power control|in-guest shutdown|state.*->.*stopped
+Stop Validation:::PROGRESS_MARKER: stop:04|PLAY RECAP|stop summary
+Stop Complete:::PROGRESS_MARKER: stop:05|stopped successfully|stop completed|cluster stopped successfully
 EOF
 }
 
 progress_destroy_steps() {
     cat <<'EOF'
-Infrastructure planning:::Destroying cloud infrastructure|execution plan|will be destroyed
-Destroying instances:::exasol_node.*destroy|aws_instance.*destroy|instance .*destroy
-Destroying storage:::volume.*destroy|disk.*destroy|block device.*destroy
-Destroying network:::vpc.*destroy|subnet.*destroy|security group.*destroy|network.*destroy|random_id\\.|ssh_config|ansible_inventory
-Cleanup verification:::Destroy complete!|Deployment Destroyed Successfully|resources have been destroyed
+Destroy Planning:::PROGRESS_MARKER: destroy:01|Destroying cloud infrastructure|execution plan|will be destroyed
+Compute Removal:::PROGRESS_MARKER: destroy:02|(instance|server|domain|droplet).*destroy|exasol_node.*destroy
+Volume Removal:::PROGRESS_MARKER: destroy:03|(volume|disk).*destroy|block device.*destroy
+Network Removal:::PROGRESS_MARKER: destroy:04|(vpc|network|subnet|security.*group).*destroy|firewall.*destroy
+Destroy Complete:::PROGRESS_MARKER: destroy:05|Destroy complete!|Deployment Destroyed Successfully|resources have been destroyed
 EOF
 }

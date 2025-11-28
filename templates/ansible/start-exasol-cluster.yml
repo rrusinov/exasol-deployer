@@ -15,6 +15,11 @@
     - name: Ensure all host facts are gathered
       ansible.builtin.setup:
 
+    - name: "PROGRESS: Ansible connection established"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: start:02:Ansible_Connection"
+      run_once: true
+
 # ==============================================================================
 # PLAY 2: START EXASOL DATABASE ON ALL NODES
 # ==============================================================================
@@ -85,6 +90,11 @@
       when: start_c4.changed
       failed_when: false
 
+    - name: "PROGRESS: Service startup complete"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: start:03:Service_Startup"
+      run_once: true
+
     # ==============================================================================
     # WAIT FOR ALL NODES TO REACH STAGE d
     # ==============================================================================
@@ -103,6 +113,11 @@
     - name: Display database boot status
       ansible.builtin.debug:
         msg: "✓ All cluster nodes reached stage 'd' (database ready)"
+      run_once: true
+
+    - name: "PROGRESS: Database boot complete"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: start:04:Database_Boot"
       run_once: true
 
     # ==============================================================================
@@ -130,4 +145,9 @@
     - name: Confirm successful start
       ansible.builtin.debug:
         msg: "✓ Exasol database cluster started successfully on all nodes (stage 'd')"
+      run_once: true
+
+    - name: "PROGRESS: Start complete"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: start:05:Start_Complete"
       run_once: true

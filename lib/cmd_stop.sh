@@ -159,10 +159,15 @@ cmd_stop() {
             die "Infrastructure stop (tofu apply) failed"
         fi
     else
-        log_warn "Provider '$cloud_provider' does not support power control via tofu."
+        log_warn "Provider '$cloud_provider' does not support power control via tofu; relying on in-guest shutdown."
         log_info ""
-        log_info "Instances have been issued an in-guest shutdown command."
-        log_info ""
+
+        # Allow time for in-guest shutdown to complete before SSH verification
+        local shutdown_grace=${EXASOL_SHUTDOWN_GRACE_SECONDS:-20}
+        if [[ "$shutdown_grace" -gt 0 ]]; then
+            log_info "Waiting ${shutdown_grace}s for shutdown to complete before verification..."
+            sleep "$shutdown_grace"
+        fi
     fi
 
     # Verify VMs are actually powered off by checking SSH connectivity

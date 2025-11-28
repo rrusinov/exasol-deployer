@@ -23,7 +23,17 @@ jobs:
       - name: Set up dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq python3
+          sudo apt-get install -y jq python3 libvirt-clients genisoimage
+
+      - name: Detect libvirt availability
+        run: |
+          if command -v virsh >/dev/null 2>&1 && virsh uri >/dev/null 2>&1; then
+            echo "Libvirt available; running full unit test suite."
+            echo "EXASOL_SKIP_LIBVIRT_TESTS=0" >> "$GITHUB_ENV"
+          else
+            echo "Libvirt not available; skipping libvirt-specific unit tests."
+            echo "EXASOL_SKIP_LIBVIRT_TESTS=1" >> "$GITHUB_ENV"
+          fi
 
       - name: Install Terraform/OpenTofu
         uses: opentofu/setup-opentofu@v1
@@ -32,7 +42,6 @@ jobs:
 
       - name: Run unit tests
         run: |
-          chmod +x tests/run_tests.sh
           ./tests/run_tests.sh
 
       - name: Generate test report
@@ -52,7 +61,7 @@ jobs:
       - name: Run ShellCheck
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck python3
+          sudo apt-get install -y shellcheck python3 libvirt-clients genisoimage
           echo "Running shellcheck on shell scripts in ./lib"
           find ./lib -type f -name '*.sh' -print0 | xargs -0 shellcheck || true
 
@@ -67,7 +76,7 @@ jobs:
       - name: Set up dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq
+          sudo apt-get install -y jq libvirt-clients genisoimage
 
       - name: Install Terraform/OpenTofu
         uses: opentofu/setup-opentofu@v1
@@ -118,6 +127,11 @@ jobs:
         uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: 1.6.0
+
+      - name: Set up dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq libvirt-clients genisoimage
 
       - name: Set up test deployment
         run: |

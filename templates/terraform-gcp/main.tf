@@ -40,12 +40,13 @@ resource "google_compute_network" "exasol" {
 }
 
 resource "google_compute_subnetwork" "exasol" {
-  name          = "exasol-subnet"
+  name = "exasol-subnet"
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
   # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
   # Provides 254 × 256 = 65,024 possible unique networks
   # Use /16 network and carve a /24 subnet from it for instances
-  ip_cidr_range = cidrsubnet("10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.0.0/16", 8, 1)
+  # Reserve 10.254.0.0/16 for GRE overlay across providers
+  ip_cidr_range = cidrsubnet("10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 253) + 1}.0.0/16", 8, 1)
   region        = var.gcp_region
   network       = google_compute_network.exasol.id
 }
@@ -126,6 +127,9 @@ locals {
   # Node IPs for common outputs
   node_public_ips  = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].access_config[0].nat_ip]
   node_private_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].network_ip]
+
+  # GRE mesh overlay not used on GCP; keep empty to satisfy common inventory template
+  gre_data = {}
 }
 
 # ==============================================================================
@@ -133,10 +137,10 @@ locals {
 # ==============================================================================
 
 resource "google_compute_instance" "exasol_node" {
-  count        = var.node_count
-  name         = "n${count.index + 11}"
-  machine_type = var.instance_type
-  zone         = local.selected_gcp_zone
+  count          = var.node_count
+  name           = "n${count.index + 11}"
+  machine_type   = var.instance_type
+  zone           = local.selected_gcp_zone
   desired_status = var.infra_desired_state == "stopped" ? "TERMINATED" : "RUNNING"
 
   # Spot (preemptible) instance configuration

@@ -94,16 +94,21 @@ variable "libvirt_uri" {
   default     = ""
 
   validation {
-    condition     = trimspace(var.libvirt_uri) != ""
-    error_message = "libvirt_uri must be provided (set via exasol init --libvirt-uri or edit variables.auto.tfvars)."
+    condition     = trimspace(var.libvirt_uri) != "" && length(regexall("session", var.libvirt_uri)) == 0
+    error_message = "libvirt_uri must be provided and must not be a session URI. Use qemu:///system locally or qemu+ssh://user@host/system remotely."
   }
 }
 
 
 variable "libvirt_domain_type" {
-  description = "Domain type for libvirt (kvm for Linux, hvf for macOS)."
+  description = "Domain type for libvirt (kvm only)."
   type        = string
   default     = "kvm"
+
+  validation {
+    condition     = var.libvirt_domain_type == "kvm"
+    error_message = "Only libvirt domain type 'kvm' is supported."
+  }
 }
 
 variable "libvirt_firmware" {
