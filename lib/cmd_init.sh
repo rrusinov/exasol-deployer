@@ -419,6 +419,19 @@ cmd_init() {
     # Check provider-specific requirements
     check_provider_requirements "$cloud_provider"
 
+    # Resolve DigitalOcean token (CLI > env > file) unless provider checks are skipped
+    if [[ "$cloud_provider" == "digitalocean" && "${EXASOL_SKIP_PROVIDER_CHECKS:-}" != "1" ]]; then
+        if [[ -z "$digitalocean_token" && -n "${DIGITALOCEAN_TOKEN:-}" ]]; then
+            digitalocean_token="$DIGITALOCEAN_TOKEN"
+        fi
+        if [[ -z "$digitalocean_token" && -f "$HOME/.digitalocean_token" ]]; then
+            digitalocean_token="$(tr -d ' \t\r\n' < "$HOME/.digitalocean_token")"
+        fi
+        if [[ -z "$digitalocean_token" ]]; then
+            die "DigitalOcean token is required. Set --digitalocean-token, DIGITALOCEAN_TOKEN, or ~/.digitalocean_token."
+        fi
+    fi
+
     # Set defaults
     if [[ -z "$deploy_dir" ]]; then
         deploy_dir="$(pwd)"
