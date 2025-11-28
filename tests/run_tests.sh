@@ -14,6 +14,15 @@ NC='\033[0m' # No Color
 
 # Provide dummy token so DigitalOcean init paths work in tests
 export DIGITALOCEAN_TOKEN="${DIGITALOCEAN_TOKEN:-test-token}"
+SKIP_LIBVIRT_TESTS="${EXASOL_SKIP_LIBVIRT_TESTS:-}"
+if [[ -z "$SKIP_LIBVIRT_TESTS" ]]; then
+    if command -v virsh >/dev/null 2>&1 && virsh uri >/dev/null 2>&1; then
+        SKIP_LIBVIRT_TESTS=0
+    else
+        SKIP_LIBVIRT_TESTS=1
+        echo "Skipping libvirt-specific tests (libvirt tools/daemon not available)"
+    fi
+fi
 
 echo -e "${BLUE}=========================================${NC}"
 echo -e "${BLUE}Exasol Deployer - Unit Tests${NC}"
@@ -67,7 +76,11 @@ run_test_file "$TEST_DIR/test_template_validation_azure.sh"
 run_test_file "$TEST_DIR/test_template_validation_gcp.sh"
 run_test_file "$TEST_DIR/test_template_validation_hetzner.sh"
 run_test_file "$TEST_DIR/test_template_validation_digitalocean.sh"
-run_test_file "$TEST_DIR/test_template_validation_libvirt.sh"
+if [[ "$SKIP_LIBVIRT_TESTS" == "1" ]]; then
+    echo -e "${BLUE}Skipping: test_template_validation_libvirt.sh${NC}"
+else
+    run_test_file "$TEST_DIR/test_template_validation_libvirt.sh"
+fi
 run_test_file "$TEST_DIR/test_url_availability.sh"
 run_test_file "$TEST_DIR/test_documentation.sh"
 run_test_file "$TEST_DIR/test_help_options.sh"

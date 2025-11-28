@@ -25,6 +25,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq python3 libvirt-clients genisoimage
 
+      - name: Detect libvirt availability
+        run: |
+          if command -v virsh >/dev/null 2>&1 && virsh uri >/dev/null 2>&1; then
+            echo "Libvirt available; running full unit test suite."
+            echo "EXASOL_SKIP_LIBVIRT_TESTS=0" >> "$GITHUB_ENV"
+          else
+            echo "Libvirt not available; skipping libvirt-specific unit tests."
+            echo "EXASOL_SKIP_LIBVIRT_TESTS=1" >> "$GITHUB_ENV"
+          fi
+
       - name: Install Terraform/OpenTofu
         uses: opentofu/setup-opentofu@v1
         with:
