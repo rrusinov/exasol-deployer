@@ -23,6 +23,7 @@ if [[ -z "$SKIP_LIBVIRT_TESTS" ]]; then
         echo "Skipping libvirt-specific tests (libvirt tools/daemon not available)"
     fi
 fi
+export EXASOL_SKIP_LIBVIRT_TESTS="$SKIP_LIBVIRT_TESTS"
 
 echo -e "${BLUE}=========================================${NC}"
 echo -e "${BLUE}Exasol Deployer - Unit Tests${NC}"
