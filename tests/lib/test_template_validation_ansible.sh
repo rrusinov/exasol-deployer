@@ -176,6 +176,18 @@ test_terraform_symlinks() {
         test_dir=$(setup_test_dir)
         if [[ "$provider" == "libvirt" ]]; then
             EXASOL_SKIP_PROVIDER_CHECKS=1 cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+        elif [[ "$provider" == "azure" ]]; then
+            # Create dummy Azure credentials for template validation
+            local creds_file="$test_dir/azure_test_creds.json"
+            cat > "$creds_file" << 'EOF'
+{
+  "appId": "test-app-id",
+  "password": "test-password",
+  "tenant": "test-tenant",
+  "subscriptionId": "test-subscription-id"
+}
+EOF
+            cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-credentials-file "$creds_file" 2>/dev/null
         else
             cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
         fi
