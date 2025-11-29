@@ -156,7 +156,7 @@ EOF
         else
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_FAILED=$((TESTS_FAILED + 1))
-            echo -e "${RED}✗${NC} $provider: common.tf not found"
+            echo -e "${RED}✗${NC} $provider: common.tf not found (init may have failed)"
         fi
 
         cleanup_test_dir "$test_dir"
