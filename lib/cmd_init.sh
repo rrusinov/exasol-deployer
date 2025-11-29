@@ -517,13 +517,15 @@ cmd_init() {
     if [[ "$cloud_provider" == "azure" ]]; then
         local azure_credentials_data
         azure_credentials_data=$(load_azure_credentials_file "$azure_credentials_file") || true
-        
         local file_subscription_id=""
         if [[ -n "$azure_credentials_data" ]]; then
             IFS="|" read -r azure_credentials_file azure_client_id azure_client_secret azure_tenant_id file_subscription_id <<<"$azure_credentials_data"
+            if [[ -z "$azure_client_id" || -z "$azure_client_secret" || -z "$azure_tenant_id" ]]; then
+                die "Azure credentials file '$azure_credentials_file' is missing required fields: appId, password, or tenant."
+            fi
             log_info "Using Azure credentials file: $azure_credentials_file"
         else
-            log_warn "Azure credentials file not found or incomplete at $azure_credentials_file. Create it with 'az ad sp create-for-rbac --name \"exasol-deployer\" --role contributor --scopes /subscriptions/<subscription-id> > ~/.azure_credentials'."
+            die "Azure credentials file not found or incomplete at $azure_credentials_file. Create it with 'az ad sp create-for-rbac --name \"exasol-deployer\" --role contributor --scopes /subscriptions/<subscription-id> > ~/.azure_credentials'."
         fi
 
         # Precedence: 1. Flag (already in azure_subscription), 2. Env Var, 3. Config File

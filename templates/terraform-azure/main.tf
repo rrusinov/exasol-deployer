@@ -232,22 +232,16 @@ resource "azurerm_linux_virtual_machine" "exasol_node" {
 }
 
 # Manage VM power state via azapi actions
-resource "azapi_resource_action" "vm_power_off" {
-  count       = var.infra_desired_state == "stopped" ? var.node_count : 0
+resource "azapi_resource_action" "vm_power_state" {
+  count       = var.node_count
   type        = "Microsoft.Compute/virtualMachines@2022-08-01"
   resource_id = azurerm_linux_virtual_machine.exasol_node[count.index].id
-  action      = "powerOff"
+  action      = var.infra_desired_state == "stopped" ? "powerOff" : "start"
   method      = "POST"
   body        = jsonencode({})
-}
 
-resource "azapi_resource_action" "vm_power_on" {
-  count       = var.infra_desired_state == "running" ? var.node_count : 0
-  type        = "Microsoft.Compute/virtualMachines@2022-08-01"
-  resource_id = azurerm_linux_virtual_machine.exasol_node[count.index].id
-  action      = "start"
-  method      = "POST"
-  body        = jsonencode({})
+  # Ensure this action runs after the VM is created
+  depends_on = [azurerm_linux_virtual_machine.exasol_node]
 }
 
 # ==============================================================================

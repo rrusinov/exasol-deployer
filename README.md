@@ -412,6 +412,7 @@ Initialize a new deployment directory with configuration files.
 **Azure-Specific Flags**
 - `--azure-region string`: Azure region (default: `eastus`).
 - `--azure-subscription string`: Azure subscription ID.
+- `--azure-credentials-file string`: Path to Azure service principal credentials JSON (default: `~/.azure_credentials`).
 - `--azure-spot-instance`: Enable Azure spot instances.
 
 **GCP-Specific Flags**
