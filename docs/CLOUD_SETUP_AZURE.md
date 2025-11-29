@@ -165,6 +165,34 @@ az account list-locations --output table
 az vm list-skus --location eastus --size Standard_D --output table
 ```
 
+## Step 6.5: Azure Free Trial Limitations
+
+### ⚠️ **Public IP Address Quota**
+
+**Azure free trial accounts are limited to 3 Public IP addresses per region.** Each Exasol node requires one Public IP for SSH access, so you cannot deploy more than 3 nodes on a free trial account.
+
+**Symptoms of hitting this limit:**
+```
+Error: PublicIPCountLimitReached: Cannot create more than 3 public IP addresses for this subscription in this region.
+```
+
+**Solutions:**
+1. **Deploy 3 nodes maximum** (recommended for free tier):
+   ```bash
+   ./exasol init --cloud-provider azure --cluster-size 3 [other flags]
+   ```
+
+2. **Upgrade to a paid subscription** for higher limits and more features
+
+3. **Use a different region** (each region has its own quota)
+
+4. **Switch to AWS or GCP** which offer more generous free tiers
+
+### ℹ️ **Other Free Trial Limits**
+- **Virtual Machines**: Limited to certain series and sizes
+- **Storage**: Limited disk space and IOPS
+- **Support**: Limited technical support options
+
 ## Step 7: Initialize Exasol Deployment
 
 `exasol init` automatically loads Azure service principal credentials from
