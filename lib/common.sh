@@ -1,8 +1,18 @@
+#!/usr/bin/env bash
+# Common functions and utilities for Exasol deployer
+
+# Include guard
+if [[ -n "${__EXASOL_COMMON_SH_INCLUDED__:-}" ]]; then
+    return 0
+fi
+readonly __EXASOL_COMMON_SH_INCLUDED__=1
+
 # Get default region/location for a provider from instance-types.conf
 get_instance_type_region_default() {
     local provider="$1"
     local key="${2:-region}"
-    local config_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)/instance-types.conf"
+    local config_file
+    config_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)/instance-types.conf"
     local section=""
     local in_section=0
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -25,18 +35,13 @@ get_instance_type_region_default() {
     done < "$config_file"
     echo ""
 }
-#!/usr/bin/env bash
-# Common functions and utilities for Exasol deployer
-
-# Include guard
-if [[ -n "${__EXASOL_COMMON_SH_INCLUDED__:-}" ]]; then
-    return 0
-fi
-readonly __EXASOL_COMMON_SH_INCLUDED__=1
 
 # Source progress tracking utilities
 _COMMON_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${_COMMON_LIB_DIR}/progress_tracker.sh"
+# shellcheck source=./progress_tracker.sh
+if [[ -f "${_COMMON_LIB_DIR}/progress_tracker.sh" ]]; then
+    source "${_COMMON_LIB_DIR}/progress_tracker.sh"
+fi
 
 # Colors for output
 readonly COLOR_RED='\033[0;31m'
@@ -185,6 +190,7 @@ cleanup_operation_guard() {
 setup_operation_guard() {
     local deploy_dir="$1"
     local fail_status="$2"
+    # shellcheck disable=SC2034
     local success_var_name="$3"  # Kept for compatibility but not used
 
     # Set global variables for the cleanup function

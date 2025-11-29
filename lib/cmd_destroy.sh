@@ -146,41 +146,8 @@ cmd_destroy_execute() {
     cluster_size=$(state_read "$deploy_dir" "cluster_size")
     cluster_size=${cluster_size:-1}
 
-
     # Change to deployment directory
     cd "$deploy_dir" || die "Failed to change to deployment directory"
-
-    # Check for Azure and add delay if needed
-    local cloud_provider
-    cloud_provider=$(state_read "$deploy_dir" "cloud_provider")
-        if [[ "$cloud_provider" == "azure" ]]; then
-            local state_file="$deploy_dir/.exasol.json"
-            if [[ -f "$state_file" ]]; then
-                local created_at now epoch_diff sleep_time
-                created_at=$(jq -r '.created_at // empty' "$state_file")
-                if [[ -n "$created_at" ]]; then
-                    # Try to parse as epoch seconds, else as ISO8601
-                    if [[ "$created_at" =~ ^[0-9]+$ ]]; then
-                        now=$(date +%s)
-                        epoch_diff=$(( now - created_at ))
-                    else
-                        # Parse ISO8601 to epoch
-                        now=$(date +%s)
-                        created_epoch=$(date -d "$created_at" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "$created_at" +%s 2>/dev/null)
-                        if [[ -n "$created_epoch" ]]; then
-                            epoch_diff=$(( now - created_epoch ))
-                        else
-                            epoch_diff=240
-                        fi
-                    fi
-                    if [[ $epoch_diff -lt 240 ]]; then
-                        sleep_time=$(( 240 - epoch_diff ))
-                        log_info "Azure deployment detected. Waiting $sleep_time seconds to avoid NIC reservation issues (Azure may reserve NICs for up to 240 seconds after VM deletion)..."
-                        sleep $sleep_time
-                    fi
-                fi
-            fi
-        fi
 
     # Run Terraform destroy
     log_info "Destroying cloud infrastructure..."

@@ -100,7 +100,7 @@ load_azure_credentials_file() {
     local file_path="${1:-}"
 
     # Expand leading ~ to HOME for consistency
-    if [[ "$file_path" == "~/"* ]]; then
+    if [[ $file_path == ~/* ]]; then
         file_path="${HOME}${file_path#~}"
     fi
 
