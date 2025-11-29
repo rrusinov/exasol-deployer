@@ -61,7 +61,18 @@ test_azure_template_validation() {
 
     local test_dir
     test_dir=$(setup_test_dir)
-    cmd_init --cloud-provider azure --deployment-dir "$test_dir" 2>/dev/null
+
+    # Create dummy Azure credentials for template validation
+    local creds_file="$test_dir/azure_test_creds.json"
+    cat > "$creds_file" << 'EOF'
+{
+  "appId": "test-app-id",
+  "password": "test-password",
+  "tenant": "test-tenant",
+  "subscriptionId": "test-subscription-id"
+}
+EOF
+    cmd_init --cloud-provider azure --deployment-dir "$test_dir" --azure-credentials-file "$creds_file" 2>/dev/null
 
     if [[ ! -d "$test_dir/.templates" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
