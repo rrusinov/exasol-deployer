@@ -189,9 +189,20 @@ Error: PublicIPCountLimitReached: Cannot create more than 3 public IP addresses 
 4. **Switch to AWS or GCP** which offer more generous free tiers
 
 ### ℹ️ **Other Free Trial Limits**
+- **CPU Cores**: Limited to 4 cores per region (may require smaller VM sizes)
 - **Virtual Machines**: Limited to certain series and sizes
 - **Storage**: Limited disk space and IOPS
 - **Support**: Limited technical support options
+
+**Symptoms of CPU core quota limit:**
+```
+OperationNotAllowed: Operation could not be completed as it results in exceeding approved Total Regional Cores quota.
+```
+
+**Solutions for CPU limits:**
+- Use smaller instance types: `Standard_B1s` (1 vCPU), `Standard_B1ms` (1 vCPU)
+- Request core quota increase (same process as Public IPs)
+- Use fewer nodes
 
 ## Step 7: Initialize Exasol Deployment
 
