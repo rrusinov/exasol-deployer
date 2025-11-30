@@ -147,7 +147,7 @@ cmd_start() {
         log_info "Powering on instances via tofu..."
         # Note: We enable refresh to ensure Terraform sees the current state (running=false)
         # This is important for all providers to detect state drift and apply changes correctly
-        if ! tofu apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_on" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=running"; then
+        if ! tofu apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_state" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=running"; then
             state_set_status "$deploy_dir" "$STATE_START_FAILED"
             operation_success  # Release lock
             die "Infrastructure start (tofu apply) failed"

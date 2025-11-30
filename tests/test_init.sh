@@ -25,7 +25,7 @@ test_cloud_provider_validation() {
     local test_dir=$(setup_test_dir)
 
     # Test with missing cloud provider
-    if cmd_init --deployment-dir "$test_dir" 2>/dev/null; then
+    if cmd_init --deployment-dir "$test_dir" ; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_FAILED=$((TESTS_FAILED + 1))
         echo -e "${RED}✗${NC} Should fail without cloud provider"
@@ -36,7 +36,7 @@ test_cloud_provider_validation() {
     fi
 
     # Test with invalid cloud provider
-    if cmd_init --cloud-provider invalid --deployment-dir "$test_dir" 2>/dev/null; then
+    if cmd_init --cloud-provider invalid --deployment-dir "$test_dir" ; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_FAILED=$((TESTS_FAILED + 1))
         echo -e "${RED}✗${NC} Should fail with invalid cloud provider"
@@ -58,9 +58,17 @@ test_valid_cloud_providers() {
 
     for provider in "${providers[@]}"; do
         local test_dir=$(setup_test_dir)
+        local args=(--cloud-provider "$provider" --deployment-dir "$test_dir")
+
+        if [[ "$provider" == "azure" ]]; then
+            local dummy_creds="$test_dir/azure.json"
+            echo '{"appId":"a","password":"p","tenant":"t"}' > "$dummy_creds"
+            args+=(--azure-subscription "dummy-sub" --azure-credentials-file "$dummy_creds")
+        fi
 
         # Initialize with valid provider
-        if cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null; then
+        local output
+        if output=$(cmd_init "${args[@]}" 2>&1); then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
             echo -e "${GREEN}✓${NC} Should accept valid provider: $provider"
@@ -81,6 +89,9 @@ test_valid_cloud_providers() {
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_FAILED=$((TESTS_FAILED + 1))
             echo -e "${RED}✗${NC} Should accept valid provider: $provider"
+            echo "--- cmd_init output for provider $provider ---"
+            echo "$output"
+            echo "--------------------------------------------"
         fi
 
         cleanup_test_dir "$test_dir"
@@ -98,8 +109,7 @@ test_aws_initialization() {
     cmd_init --cloud-provider aws \
         --deployment-dir "$test_dir" \
         --aws-region us-west-2 \
-        --aws-spot-instance \
-        2>/dev/null
+        --aws-spot-instance
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -143,7 +153,7 @@ test_template_directory_selection() {
     local test_dir=$(setup_test_dir)
 
     # Initialize with AWS (uses default templates/terraform/)
-    cmd_init --cloud-provider aws --deployment-dir "$test_dir" 2>/dev/null
+    cmd_init --cloud-provider aws --deployment-dir "$test_dir"
 
     if [[ -f "$test_dir/.templates/main.tf" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -164,7 +174,7 @@ test_inventory_cloud_provider() {
 
     local test_dir=$(setup_test_dir)
 
-    cmd_init --cloud-provider aws --deployment-dir "$test_dir" 2>/dev/null
+    cmd_init --cloud-provider aws --deployment-dir "$test_dir"
 
     local inventory_template="$test_dir/.templates/inventory.tftpl"
     if [[ -f "$inventory_template" ]] && grep -q "cloud_provider=" "$inventory_template"; then
@@ -186,8 +196,19 @@ test_credentials_file() {
     echo "Test: Credentials file includes cloud provider"
 
     local test_dir=$(setup_test_dir)
+    local creds_file="$test_dir/azure_credentials.json"
 
-    cmd_init --cloud-provider azure --deployment-dir "$test_dir" 2>/dev/null
+    # Create dummy Azure credentials file for the test
+    cat > "$creds_file" <<'EOF'
+{
+  "appId": "dummy-app-id",
+  "password": "dummy-password",
+  "tenant": "dummy-tenant",
+  "subscriptionId": "dummy-subscription"
+}
+EOF
+
+    cmd_init --cloud-provider azure --deployment-dir "$test_dir" --azure-credentials-file "$creds_file"
 
     if [[ -f "$test_dir/.credentials.json" ]]; then
         local cloud_provider
@@ -211,6 +232,65 @@ test_credentials_file() {
     cleanup_test_dir "$test_dir"
 }
 
+test_azure_credentials_file_usage() {
+    echo ""
+    echo "Test: Azure credentials file is written to tfvars"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+    local creds_file="$test_dir/azure_credentials.json"
+    cat > "$creds_file" <<'EOF'
+{
+  "appId": "app-id-123",
+  "password": "secret-abc",
+  "tenant": "tenant-xyz",
+  "subscriptionId": "sub-123"
+}
+EOF
+
+    cmd_init --cloud-provider azure \
+        --deployment-dir "$test_dir" \
+        --azure-credentials-file "$creds_file"
+
+    if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
+        if grep -q 'azure_client_id = "app-id-123"' "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} variables.auto.tfvars contains azure_client_id"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} variables.auto.tfvars should contain azure_client_id"
+        fi
+
+        if grep -q 'azure_client_secret = "secret-abc"' "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} variables.auto.tfvars contains azure_client_secret"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} variables.auto.tfvars should contain azure_client_secret"
+        fi
+
+        if grep -q 'azure_tenant_id = "tenant-xyz"' "$test_dir/variables.auto.tfvars"; then
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            echo -e "${GREEN}✓${NC} variables.auto.tfvars contains azure_tenant_id"
+        else
+            TESTS_TOTAL=$((TESTS_TOTAL + 1))
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            echo -e "${RED}✗${NC} variables.auto.tfvars should contain azure_tenant_id"
+        fi
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should create variables.auto.tfvars for Azure"
+    fi
+
+    cleanup_test_dir "$test_dir"
+}
+
 test_exasol_entrypoint_init_providers() {
     echo ""
     echo "Test: exasol entrypoint init works for all providers"
@@ -228,12 +308,16 @@ test_exasol_entrypoint_init_providers() {
 
         local init_cmd
         if [[ "$provider" == "libvirt" ]]; then
-            init_cmd=(EXASOL_SKIP_PROVIDER_CHECKS=1 "$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
+            init_cmd=(env EXASOL_SKIP_PROVIDER_CHECKS=1 "$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
+        elif [[ "$provider" == "azure" ]]; then
+            local dummy_creds="$test_dir/azure.json"
+            echo '{"appId":"a","password":"p","tenant":"t"}' > "$dummy_creds"
+            init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-subscription "dummy-sub" --azure-credentials-file "$dummy_creds")
         else
             init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
         fi
 
-        if "${init_cmd[@]}" 2>/dev/null; then
+        if "${init_cmd[@]}" ; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
             echo -e "${GREEN}✓${NC} exasol init should succeed for provider: $provider"
@@ -279,7 +363,7 @@ test_readme_generation() {
 
     local test_dir=$(setup_test_dir)
 
-    cmd_init --cloud-provider gcp --deployment-dir "$test_dir" 2>/dev/null
+    cmd_init --cloud-provider gcp --deployment-dir "$test_dir"
 
     if [[ -f "$test_dir/README.md" ]]; then
         if grep -q "Google Cloud Platform" "$test_dir/README.md"; then
@@ -318,8 +402,7 @@ test_data_volumes_per_node() {
         --cluster-size 1 \
         --data-volume-size 100 \
         --db-version exasol-2025.1.4 \
-        --owner testuser \
-        2>/dev/null
+        --owner testuser
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
         if grep -q "data_volumes_per_node = 3" "$test_dir/variables.auto.tfvars"; then
@@ -350,8 +433,7 @@ test_root_volume_size() {
     # Initialize with custom root volume size
     cmd_init --cloud-provider aws \
         --deployment-dir "$test_dir" \
-        --root-volume-size 100 \
-        2>/dev/null
+        --root-volume-size 100
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
         if grep -q "root_volume_size = 100" "$test_dir/variables.auto.tfvars"; then
@@ -382,8 +464,7 @@ test_hetzner_initialization() {
     # Initialize with Hetzner
     cmd_init --cloud-provider hetzner \
         --deployment-dir "$test_dir" \
-        --hetzner-location fsn1 \
-        2>/dev/null
+        --hetzner-location fsn1
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -427,7 +508,7 @@ test_hetzner_network_zone_configuration() {
     local default_dir
     default_dir=$(setup_test_dir)
 
-    cmd_init --cloud-provider hetzner --deployment-dir "$default_dir" 2>/dev/null
+    cmd_init --cloud-provider hetzner --deployment-dir "$default_dir"
 
     if grep -q 'hetzner_network_zone = "eu-central"' "$default_dir/variables.auto.tfvars"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -447,8 +528,7 @@ test_hetzner_network_zone_configuration() {
     cmd_init --cloud-provider hetzner \
         --deployment-dir "$custom_dir" \
         --hetzner-network-zone us-east \
-        --hetzner-location ash \
-        2>/dev/null
+        --hetzner-location ash
 
     if grep -q 'hetzner_network_zone = "us-east"' "$custom_dir/variables.auto.tfvars"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -473,8 +553,7 @@ test_digitalocean_initialization() {
     # Initialize with DigitalOcean
     cmd_init --cloud-provider digitalocean \
         --deployment-dir "$test_dir" \
-        --digitalocean-region nyc3 \
-        2>/dev/null
+        --digitalocean-region nyc3
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -703,7 +782,7 @@ test_gcp_zone_configuration() {
     local default_dir
     default_dir=$(setup_test_dir)
 
-    cmd_init --cloud-provider gcp --deployment-dir "$default_dir" 2>/dev/null
+    cmd_init --cloud-provider gcp --deployment-dir "$default_dir"
 
     if grep -q 'gcp_zone = "us-central1-a"' "$default_dir/variables.auto.tfvars"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -723,8 +802,7 @@ test_gcp_zone_configuration() {
     cmd_init --cloud-provider gcp \
         --deployment-dir "$custom_dir" \
         --gcp-region europe-west3 \
-        --gcp-zone europe-west3-b \
-        2>/dev/null
+        --gcp-zone europe-west3-b
 
     if grep -q 'gcp_zone = "europe-west3-b"' "$custom_dir/variables.auto.tfvars"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -739,6 +817,87 @@ test_gcp_zone_configuration() {
     cleanup_test_dir "$custom_dir"
 }
 
+# Test: Azure subscription ID precedence
+test_azure_subscription_precedence() {
+    echo ""
+    echo "Test: Azure subscription ID precedence"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+    local creds_file="$test_dir/azure_creds_full.json"
+    
+    # Create creds file with subscriptionId
+    cat > "$creds_file" <<EOF
+{
+  "appId": "app-id",
+  "password": "pass",
+  "tenant": "tenant",
+  "subscriptionId": "sub-from-file"
+}
+EOF
+
+    # 1. Fail if missing
+    local simple_creds="$test_dir/simple.json"
+    echo '{"appId":"a","password":"p","tenant":"t"}' > "$simple_creds"
+    
+    unset AZURE_SUBSCRIPTION_ID
+    local output
+    if output=$(cmd_init --cloud-provider azure --deployment-dir "$test_dir/fail" --azure-credentials-file "$simple_creds" 2>&1); then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should fail without any subscription ID"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Fails without subscription ID"
+        echo "--- cmd_init output (expected failure) ---"
+        echo "$output"
+        echo "-----------------------------------------"
+    fi
+
+    # 2. File Precedence (Flag=Empty, Env=Empty)
+    unset AZURE_SUBSCRIPTION_ID
+    cmd_init --cloud-provider azure --deployment-dir "$test_dir/file" --azure-credentials-file "$creds_file"
+    if grep -q 'azure_subscription = "sub-from-file"' "$test_dir/file/variables.auto.tfvars"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Uses subscription from file"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should use subscription from file"
+    fi
+
+    # 3. Env Precedence (Flag=Empty, Env=Set, File=Set)
+    export AZURE_SUBSCRIPTION_ID="sub-from-env"
+    cmd_init --cloud-provider azure --deployment-dir "$test_dir/env" --azure-credentials-file "$creds_file"
+    if grep -q 'azure_subscription = "sub-from-env"' "$test_dir/env/variables.auto.tfvars"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Uses subscription from env var"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should use subscription from env var"
+    fi
+
+    # 4. Flag Precedence (Flag=Set, Env=Set, File=Set)
+    cmd_init --cloud-provider azure --deployment-dir "$test_dir/flag" --azure-credentials-file "$creds_file" --azure-subscription "sub-from-flag"
+    if grep -q 'azure_subscription = "sub-from-flag"' "$test_dir/flag/variables.auto.tfvars"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Uses subscription from flag"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Should use subscription from flag"
+    fi
+
+    # Cleanup
+    unset AZURE_SUBSCRIPTION_ID
+    cleanup_test_dir "$test_dir"
+}
+
 # Run all tests
 test_cloud_provider_validation
 test_valid_cloud_providers
@@ -746,6 +905,8 @@ test_aws_initialization
 test_template_directory_selection
 test_inventory_cloud_provider
 test_credentials_file
+test_azure_credentials_file_usage
+test_azure_subscription_precedence
 test_list_providers_shows_capabilities
 test_readme_generation
 test_data_volumes_per_node

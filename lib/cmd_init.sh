@@ -95,6 +95,35 @@ resolve_provider_token() {
     echo ""
 }
 
+# Load Azure credentials from a JSON file (output of az ad sp create-for-rbac)
+load_azure_credentials_file() {
+    local file_path="${1:-}"
+
+    # Expand leading ~ to HOME for consistency
+    if [[ $file_path == ~/* ]]; then
+        file_path="${HOME}${file_path#~}"
+    fi
+
+    if [[ -z "$file_path" || ! -f "$file_path" ]]; then
+        echo ""
+        return 1
+    fi
+
+    local client_id client_secret tenant_id subscription_id
+    client_id=$(jq -r '.appId // .clientId // empty' "$file_path" 2>/dev/null || true)
+    client_secret=$(jq -r '.password // .clientSecret // empty' "$file_path" 2>/dev/null || true)
+    tenant_id=$(jq -r '.tenant // .tenantId // empty' "$file_path" 2>/dev/null || true)
+    subscription_id=$(jq -r '.subscriptionId // empty' "$file_path" 2>/dev/null || true)
+
+    if [[ -z "$client_id" || -z "$client_secret" || -z "$tenant_id" ]]; then
+        log_warn "Azure credentials file $file_path is missing appId/password/tenant fields"
+        echo ""
+        return 1
+    fi
+
+    echo "$file_path|$client_id|$client_secret|$tenant_id|$subscription_id"
+}
+
 # Show help for init command
 show_init_help() {
     cat <<'EOF'
@@ -129,7 +158,8 @@ AWS-Specific Flags:
 
 Azure-Specific Flags:
   --azure-region <region>        Azure region (default: "eastus")
-  --azure-subscription <id>      Azure subscription ID
+  --azure-subscription <id>      Azure subscription ID (optional if set in env or credentials file)
+  --azure-credentials-file <path>  Path to Azure service principal credentials JSON (default: "~/.azure_credentials")
   --azure-spot-instance          Enable spot instances
 
 GCP-Specific Flags:
@@ -193,29 +223,34 @@ cmd_init() {
     local owner="exasol-deployer"
     local allowed_cidr="0.0.0.0/0"
 
+
     # AWS-specific variables
-    local aws_region="us-east-1"
+    local aws_region=""
     local aws_profile="default"
     local aws_spot_instance=false
 
     # Azure-specific variables
-    local azure_region="eastus"
+    local azure_region=""
     local azure_subscription=""
+    local azure_credentials_file="$HOME/.azure_credentials"
+    local azure_client_id=""
+    local azure_client_secret=""
+    local azure_tenant_id=""
     local azure_spot_instance=false
 
     # GCP-specific variables
-    local gcp_region="us-central1"
+    local gcp_region=""
     local gcp_zone=""
     local gcp_project=""
     local gcp_spot_instance=false
 
     # Hetzner-specific variables
-    local hetzner_location="nbg1"
+    local hetzner_location=""
     local hetzner_network_zone="eu-central"
     local hetzner_token=""
 
     # DigitalOcean-specific variables
-    local digitalocean_region="nyc3"
+    local digitalocean_region=""
     local digitalocean_token=""
 
     # Libvirt-specific variables
@@ -300,6 +335,10 @@ cmd_init() {
                 ;;
             --azure-subscription)
                 azure_subscription="$2"
+                shift 2
+                ;;
+            --azure-credentials-file)
+                azure_credentials_file="$2"
                 shift 2
                 ;;
             --azure-spot-instance)
@@ -474,6 +513,42 @@ cmd_init() {
         digitalocean_token=$(resolve_provider_token "$digitalocean_token" "DIGITALOCEAN_TOKEN" "$HOME/.digitalocean_token" "DigitalOcean")
     fi
 
+    # Resolve Azure credentials from file for service principal authentication
+    if [[ "$cloud_provider" == "azure" ]]; then
+        local azure_credentials_data
+        azure_credentials_data=$(load_azure_credentials_file "$azure_credentials_file") || true
+        local file_subscription_id=""
+        if [[ -n "$azure_credentials_data" ]]; then
+            IFS="|" read -r azure_credentials_file azure_client_id azure_client_secret azure_tenant_id file_subscription_id <<<"$azure_credentials_data"
+            if [[ -z "$azure_client_id" || -z "$azure_client_secret" || -z "$azure_tenant_id" ]]; then
+                die "Azure credentials file '$azure_credentials_file' is missing required fields: appId, password, or tenant."
+            fi
+            log_info "Using Azure credentials file: $azure_credentials_file"
+        else
+            die "Azure credentials file not found or incomplete at $azure_credentials_file. Create it with 'az ad sp create-for-rbac --name \"exasol-deployer\" --role contributor --scopes /subscriptions/<subscription-id> > ~/.azure_credentials'."
+        fi
+
+        # Precedence: 1. Flag (already in azure_subscription), 2. Env Var, 3. Config File
+        if [[ -z "$azure_subscription" ]]; then
+            if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
+                azure_subscription="${AZURE_SUBSCRIPTION_ID}"
+                log_info "Using Azure subscription ID from AZURE_SUBSCRIPTION_ID environment variable"
+            elif [[ -n "$file_subscription_id" ]]; then
+                azure_subscription="$file_subscription_id"
+                log_info "Using Azure subscription ID from credentials file"
+            fi
+        fi
+
+        if [[ -z "$azure_subscription" ]]; then
+            die "Azure subscription ID is required. Please provide it via --azure-subscription, AZURE_SUBSCRIPTION_ID env var, or 'subscriptionId' in ~/.azure_credentials"
+        fi
+
+        if [[ -z "$azure_client_id" || -z "$azure_client_secret" || -z "$azure_tenant_id" ]]; then
+            die "Azure credentials are incomplete. Please ensure '$azure_credentials_file' exists and contains 'appId', 'password', and 'tenant'."
+        fi
+    fi
+
+
     # Set default instance type if not provided
     if [[ -z "$instance_type" ]]; then
         if [[ "$cloud_provider" == "libvirt" ]]; then
@@ -486,6 +561,32 @@ cmd_init() {
             fi
             log_info "Using default instance type for $cloud_provider ($architecture): $instance_type"
         fi
+    fi
+
+    # Set default region/location if not provided, using instance-types.conf
+    if [[ "$cloud_provider" == "aws" && -z "$aws_region" ]]; then
+        aws_region=$(get_instance_type_region_default "$cloud_provider")
+        log_info "Using default AWS region: $aws_region"
+    fi
+    if [[ "$cloud_provider" == "azure" && -z "$azure_region" ]]; then
+        azure_region=$(get_instance_type_region_default "$cloud_provider")
+        log_info "Using default Azure region: $azure_region"
+    fi
+    if [[ "$cloud_provider" == "gcp" && -z "$gcp_region" ]]; then
+        gcp_region=$(get_instance_type_region_default "$cloud_provider")
+        log_info "Using default GCP region: $gcp_region"
+    fi
+    if [[ "$cloud_provider" == "hetzner" && -z "$hetzner_location" ]]; then
+        hetzner_location=$(get_instance_type_region_default "$cloud_provider" location)
+        log_info "Using default Hetzner location: $hetzner_location"
+    fi
+    if [[ "$cloud_provider" == "hetzner" && -z "$hetzner_network_zone" ]]; then
+        hetzner_network_zone=$(get_instance_type_region_default "$cloud_provider" network_zone)
+        log_info "Using default Hetzner network zone: $hetzner_network_zone"
+    fi
+    if [[ "$cloud_provider" == "digitalocean" && -z "$digitalocean_region" ]]; then
+        digitalocean_region=$(get_instance_type_region_default "$cloud_provider")
+        log_info "Using default DigitalOcean region: $digitalocean_region"
     fi
 
     # Generate passwords if not provided
@@ -516,6 +617,9 @@ cmd_init() {
         azure)
             log_info "  Azure Region: $azure_region"
             log_info "  Azure Spot Instance: $azure_spot_instance"
+            if [[ -n "$azure_client_id" ]]; then
+                log_info "  Azure Credentials File: $azure_credentials_file"
+            fi
             ;;
         gcp)
             log_info "  GCP Region: $gcp_region"
@@ -618,7 +722,7 @@ cmd_init() {
     log_info "Creating variables file..."
     write_provider_variables "$deploy_dir" "$cloud_provider" \
         "$aws_region" "$aws_profile" "$aws_spot_instance" \
-        "$azure_region" "$azure_subscription" "$azure_spot_instance" \
+        "$azure_region" "$azure_subscription" "$azure_client_id" "$azure_client_secret" "$azure_tenant_id" "$azure_spot_instance" \
         "$gcp_region" "$gcp_zone" "$gcp_project" "$gcp_spot_instance" \
         "$hetzner_location" "$hetzner_network_zone" "$hetzner_token" \
         "$digitalocean_region" "$digitalocean_token" \
@@ -818,29 +922,32 @@ write_provider_variables() {
     local aws_spot_instance="$5"
     local azure_region="$6"
     local azure_subscription="$7"
-    local azure_spot_instance="$8"
-    local gcp_region="$9"
-    local gcp_zone="${10}"
-    local gcp_project="${11}"
-    local gcp_spot_instance="${12}"
-    local hetzner_location="${13}"
-    local hetzner_network_zone="${14}"
-    local hetzner_token="${15}"
-    local digitalocean_region="${16}"
-    local digitalocean_token="${17}"
-    local libvirt_memory_gb="${18}"
-    local libvirt_vcpus="${19}"
-    local libvirt_network_bridge="${20}"
-    local libvirt_disk_pool="${21}"
-    local libvirt_uri="${22}"
-    local instance_type="${23}"
-    local architecture="${24}"
-    local cluster_size="${25}"
-    local data_volume_size="${26}"
-    local data_volumes_per_node="${27}"
-    local root_volume_size="${28}"
-    local allowed_cidr="${29}"
-    local owner="${30}"
+    local azure_client_id="$8"
+    local azure_client_secret="$9"
+    local azure_tenant_id="${10}"
+    local azure_spot_instance="${11}"
+    local gcp_region="${12}"
+    local gcp_zone="${13}"
+    local gcp_project="${14}"
+    local gcp_spot_instance="${15}"
+    local hetzner_location="${16}"
+    local hetzner_network_zone="${17}"
+    local hetzner_token="${18}"
+    local digitalocean_region="${19}"
+    local digitalocean_token="${20}"
+    local libvirt_memory_gb="${21}"
+    local libvirt_vcpus="${22}"
+    local libvirt_network_bridge="${23}"
+    local libvirt_disk_pool="${24}"
+    local libvirt_uri="${25}"
+    local instance_type="${26}"
+    local architecture="${27}"
+    local cluster_size="${28}"
+    local data_volume_size="${29}"
+    local data_volumes_per_node="${30}"
+    local root_volume_size="${31}"
+    local allowed_cidr="${32}"
+    local owner="${33}"
 
     case "$cloud_provider" in
         aws)
@@ -863,18 +970,30 @@ write_provider_variables() {
                 "enable_spot_instances=$aws_spot_instance"
             ;;
         azure)
-            write_variables_file "$deploy_dir" \
-                "azure_region=$azure_region" \
-                "azure_subscription=$azure_subscription" \
-                "instance_type=$instance_type" \
-                "instance_architecture=$architecture" \
-                "node_count=$cluster_size" \
-                "data_volume_size=$data_volume_size" \
-                "data_volumes_per_node=$data_volumes_per_node" \
-                "root_volume_size=$root_volume_size" \
-                "allowed_cidr=$allowed_cidr" \
-                "owner=$owner" \
+            local azure_vars=(
+                "azure_region=$azure_region"
+                "azure_subscription=$azure_subscription"
+                "instance_type=$instance_type"
+                "instance_architecture=$architecture"
+                "node_count=$cluster_size"
+                "data_volume_size=$data_volume_size"
+                "data_volumes_per_node=$data_volumes_per_node"
+                "root_volume_size=$root_volume_size"
+                "allowed_cidr=$allowed_cidr"
+                "owner=$owner"
                 "enable_spot_instances=$azure_spot_instance"
+            )
+            if [[ -n "$azure_client_id" ]]; then
+                azure_vars+=("azure_client_id=$azure_client_id")
+            fi
+            if [[ -n "$azure_client_secret" ]]; then
+                azure_vars+=("azure_client_secret=$azure_client_secret")
+            fi
+            if [[ -n "$azure_tenant_id" ]]; then
+                azure_vars+=("azure_tenant_id=$azure_tenant_id")
+            fi
+
+            write_variables_file "$deploy_dir" "${azure_vars[@]}"
             ;;
         gcp)
             write_variables_file "$deploy_dir" \

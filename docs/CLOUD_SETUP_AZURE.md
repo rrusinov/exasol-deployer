@@ -99,40 +99,42 @@ If you have multiple subscriptions:
 az account set --subscription "YOUR_SUBSCRIPTION_ID"
 ```
 
-## Step 5: Create Service Principal (Optional but Recommended)
+## Step 5: Create Service Principal Credential File
 
-For automated deployments, create a service principal:
+Create a service principal and store the JSON output in `~/.azure_credentials`
+(this is the default location the deployer reads):
 
 ```bash
-# Create service principal with contributor role
 az ad sp create-for-rbac \
   --name "exasol-deployer" \
   --role contributor \
-  --scopes /subscriptions/YOUR_SUBSCRIPTION_ID
-
-# Output will show:
-# {
-#   "appId": "...",
-#   "displayName": "exasol-deployer",
-#   "password": "...",
-#   "tenant": "..."
-# }
+  --scopes /subscriptions/YOUR_SUBSCRIPTION_ID \
+  > ~/.azure_credentials
+chmod 600 ~/.azure_credentials
 ```
 
-**Save these credentials securely!**
-
-### Use Service Principal
-
-Set environment variables:
-
-```bash
-export ARM_CLIENT_ID="appId from above"
-export ARM_CLIENT_SECRET="password from above"
-export ARM_SUBSCRIPTION_ID="YOUR_SUBSCRIPTION_ID"
-export ARM_TENANT_ID="tenant from above"
+Output looks like:
+```json
+{
+  "appId": "...",
+  "displayName": "exasol-deployer",
+  "password": "...",
+  "tenant": "..."
+}
 ```
 
-OpenTofu will automatically use these credentials.
+You can optionally add your subscription ID to this file:
+```json
+{
+  "appId": "...",
+  "password": "...",
+  "tenant": "...",
+  "subscriptionId": "YOUR_SUBSCRIPTION_ID"
+}
+```
+
+The deployer automatically reads this file during `exasol init`. To use a custom
+path, pass `--azure-credentials-file /path/to/creds.json`.
 
 ## Step 6: Choose Azure Region
 
@@ -163,11 +165,65 @@ az account list-locations --output table
 az vm list-skus --location eastus --size Standard_D --output table
 ```
 
+## Step 6.5: Azure Free Trial Limitations
+
+### ⚠️ **Public IP Address Quota**
+
+**Azure free trial accounts are limited to 3 Public IP addresses per region.** Each Exasol node requires one Public IP for SSH access, so you cannot deploy more than 3 nodes on a free trial account.
+
+**Symptoms of hitting this limit:**
+```
+Error: PublicIPCountLimitReached: Cannot create more than 3 public IP addresses for this subscription in this region.
+```
+
+**Solutions:**
+1. **Deploy 3 nodes maximum** (recommended for free tier):
+   ```bash
+   ./exasol init --cloud-provider azure --cluster-size 3 [other flags]
+   ```
+
+2. **Upgrade to a paid subscription** for higher limits and more features
+
+3. **Use a different region** (each region has its own quota)
+
+4. **Switch to AWS or GCP** which offer more generous free tiers
+
+### ℹ️ **Other Free Trial Limits**
+- **CPU Cores**: Limited to 4 cores per region (may require smaller VM sizes)
+- **Virtual Machines**: Limited to certain series and sizes
+- **Storage**: Limited disk space and IOPS
+- **Support**: Limited technical support options
+
+**Symptoms of CPU core quota limit:**
+```
+OperationNotAllowed: Operation could not be completed as it results in exceeding approved Total Regional Cores quota.
+```
+
+**Solutions for CPU limits:**
+- Use smaller instance types: `Standard_B1s` (1 vCPU), `Standard_B1ms` (1 vCPU)
+- Request core quota increase (same process as Public IPs)
+- Use fewer nodes
+
 ## Step 7: Initialize Exasol Deployment
+
+`exasol init` automatically loads Azure service principal credentials from
+`~/.azure_credentials` (or from the path passed via `--azure-credentials-file`).
+It also looks for your subscription ID in this order:
+1. `--azure-subscription` flag
+2. `AZURE_SUBSCRIPTION_ID` environment variable
+3. `subscriptionId` field in the credentials file
 
 ### Basic Deployment
 
-Single-node deployment with defaults:
+Single-node deployment with defaults (assuming subscription ID is configured):
+
+```bash
+./exasol init \
+  --cloud-provider azure \
+  --deployment-dir ./my-azure-deployment
+```
+
+Or explicitly passing it:
 
 ```bash
 ./exasol init \
@@ -214,17 +270,19 @@ Save up to 90% with spot instances (suitable for dev/test):
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--azure-region` | Azure region for deployment | `eastus` |
-| `--azure-subscription` | Azure subscription ID (required) | - |
+| `--azure-subscription` | Azure subscription ID (required if not in env/file) | - |
+| `--azure-credentials-file` | Path to service principal JSON (`appId`, `password`, `tenant`, `subscriptionId`) | `~/.azure_credentials` |
 | `--azure-spot-instance` | Enable spot instances | `false` |
 
 ## VM Sizes (Instance Types)
 
-The deployer automatically selects appropriate VM sizes, but you can override:
+The deployer defaults to `Standard_B2als_v2` (x86_64) or `Standard_D2pls_v5` (ARM64), which are cost-effective options for development. For production, consider larger sizes.
 
 ### Recommended VM Sizes (x86_64)
 
 | VM Size | vCPUs | Memory | Temp Storage | Network | Use Case |
 |---------|-------|--------|--------------|---------|----------|
+| `Standard_B2als_v2` | 2 | 4 GB | Remote | Moderate | Default / Minimal |
 | `Standard_D4s_v5` | 4 | 16 GB | Remote | Moderate | Small dev/test |
 | `Standard_D8s_v5` | 8 | 32 GB | Remote | Moderate | Small production |
 | `Standard_D16s_v5` | 16 | 64 GB | Remote | High | Medium production |
@@ -244,6 +302,7 @@ The deployer automatically selects appropriate VM sizes, but you can override:
 
 | VM Size | vCPUs | Memory | Network | Use Case |
 |---------|-------|--------|---------|----------|
+| `Standard_D2pls_v5` | 2 | 4 GB | Moderate | Default / Minimal |
 | `Standard_D4ps_v5` | 4 | 16 GB | Moderate | Small production |
 | `Standard_D8ps_v5` | 8 | 32 GB | High | Medium production |
 | `Standard_D16ps_v5` | 16 | 64 GB | High | Large production |
@@ -251,6 +310,7 @@ The deployer automatically selects appropriate VM sizes, but you can override:
 
 ### Choosing VM Sizes
 
+- **B-series**: Burstable, cost-effective for development (default)
 - **D-series**: General purpose, good for most workloads
 - **F-series**: Compute-optimized, best for Exasol
 - **s suffix**: Premium storage support (recommended)
