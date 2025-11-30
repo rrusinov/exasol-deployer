@@ -9,15 +9,16 @@
   tasks:
     - name: Wait for SSH to become available (cloud-init may still be running)
       ansible.builtin.wait_for_connection:
-        timeout: 180
-        delay: 10
+        timeout: 300
+        delay: 15
+        sleep: 5
 
     - name: Ensure all host facts are gathered
       ansible.builtin.setup:
 
     - name: "PROGRESS: Ansible connection established"
       ansible.builtin.debug:
-        msg: "PROGRESS_MARKER: deploy:05:Ansible_Connection"
+        msg: "PROGRESS_MARKER: deploy:06:Ansible_Connection"
       run_once: true
 
 # ==============================================================================
@@ -111,7 +112,7 @@
 
         - name: "PROGRESS: Node configuration complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:06:Node_Configuration"
+            msg: "PROGRESS_MARKER: deploy:07:Node_Configuration"
           run_once: true
 
     # ==============================================================================
@@ -180,7 +181,7 @@
 
         - name: "PROGRESS: SSH key distribution complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:07:SSH_Key_Distribution"
+            msg: "PROGRESS_MARKER: deploy:08:SSH_Key_Distribution"
           run_once: true
 
     # ==============================================================================
@@ -215,7 +216,7 @@
 
         - name: "PROGRESS: GRE mesh network setup complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:07b:GRE_Mesh_Network_Setup"
+            msg: "PROGRESS_MARKER: deploy:08b:GRE_Mesh_Network_Setup"
           run_once: true
 
     # ==============================================================================
@@ -277,7 +278,7 @@
 
         - name: "PROGRESS: Disk discovery complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:08:Disk_Discovery"
+            msg: "PROGRESS_MARKER: deploy:09:Disk_Discovery"
           run_once: true
 
   handlers:
@@ -330,7 +331,7 @@
 
     - name: "PROGRESS: Config generation complete"
       ansible.builtin.debug:
-        msg: "PROGRESS_MARKER: deploy:09:Config_Generation"
+        msg: "PROGRESS_MARKER: deploy:10:Config_Generation"
 
     - name: Create installation directory on primary node
       ansible.builtin.file:
@@ -389,7 +390,7 @@
 
     - name: "PROGRESS: Artifact transfer complete"
       ansible.builtin.debug:
-        msg: "PROGRESS_MARKER: deploy:10:Artifact_Transfer"
+            msg: "PROGRESS_MARKER: deploy:11:Artifact_Transfer"
 
     # ==============================================================================
     # SECTION 5: VERIFY CHECKSUMS AND DEPLOY EXASOL
@@ -423,7 +424,7 @@
 
         - name: "PROGRESS: Checksum verification complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:11:Checksum_Verification"
+            msg: "PROGRESS_MARKER: deploy:12:Checksum_Verification"
 
         - name: Rename c4 binary to 'c4' for convenience
           ansible.builtin.command:
@@ -446,7 +447,7 @@
 
         - name: "PROGRESS: C4 diagnostic complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:12:C4_Diagnostic"
+            msg: "PROGRESS_MARKER: deploy:13:C4_Diagnostic"
 
         - name: Start Exasol database deployment
           ansible.builtin.command:
@@ -472,7 +473,7 @@
 
         - name: "PROGRESS: Exasol deployment complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:13:Exasol_Deployment"
+            msg: "PROGRESS_MARKER: deploy:14:Exasol_Deployment"
 
         - name: Wait for database to boot (stage 'd')
           ansible.builtin.command:
@@ -489,7 +490,7 @@
 
         - name: "PROGRESS: Database startup complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:14:Database_Startup"
+            msg: "PROGRESS_MARKER: deploy:15:Database_Startup"
 
         - name: Display deployment completion message
           ansible.builtin.debug:
@@ -501,4 +502,4 @@
 
         - name: "PROGRESS: Deploy complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:15:Deploy_Complete"
+            msg: "PROGRESS_MARKER: deploy:16:Deploy_Complete"

@@ -95,6 +95,33 @@ resolve_provider_token() {
     echo ""
 }
 
+# Load GCP credentials from a service account key JSON file
+load_gcp_credentials_file() {
+    local file_path="${1:-}"
+
+    # Expand leading ~ to HOME for consistency
+    if [[ $file_path == ~/* ]]; then
+        file_path="${HOME}${file_path#~}"
+    fi
+
+    if [[ -z "$file_path" || ! -f "$file_path" ]]; then
+        echo ""
+        return 1
+    fi
+
+    local project_id client_email
+    project_id=$(jq -r '.project_id // empty' "$file_path" 2>/dev/null || true)
+    client_email=$(jq -r '.client_email // empty' "$file_path" 2>/dev/null || true)
+
+    if [[ -z "$project_id" || -z "$client_email" ]]; then
+        log_warn "GCP credentials file $file_path is missing project_id or client_email fields"
+        echo ""
+        return 1
+    fi
+
+    echo "$file_path|$project_id|$client_email"
+}
+
 # Load Azure credentials from a JSON file (output of az ad sp create-for-rbac)
 load_azure_credentials_file() {
     local file_path="${1:-}"
@@ -165,7 +192,8 @@ Azure-Specific Flags:
 GCP-Specific Flags:
   --gcp-region <region>          GCP region (default: "us-central1")
   --gcp-zone <zone>              GCP zone (default: "<region>-a")
-  --gcp-project <project>        GCP project ID
+  --gcp-project <project>        GCP project ID (optional: auto-detected from ~/.gcp_credentials.json or GOOGLE_CLOUD_PROJECT env var)
+  --gcp-credentials-file <path>  Path to GCP service account key JSON (default: "~/.gcp_credentials.json")
   --gcp-spot-instance            Enable spot (preemptible) instances
 
 Hetzner-Specific Flags:
@@ -200,7 +228,10 @@ Examples:
   # Initialize Azure deployment
   exasol init --cloud-provider azure --azure-region westus2 --azure-subscription <sub-id>
 
-  # Initialize GCP deployment with spot instances
+  # Initialize GCP deployment (project auto-detected from ~/.gcp_credentials.json)
+  exasol init --cloud-provider gcp --gcp-spot-instance
+
+  # Initialize GCP deployment with explicit project (overrides auto-detection)
   exasol init --cloud-provider gcp --gcp-project my-project --gcp-spot-instance
 
   # Initialize libvirt deployment for local testing
@@ -242,6 +273,7 @@ cmd_init() {
     local gcp_region=""
     local gcp_zone=""
     local gcp_project=""
+    local gcp_credentials_file="$HOME/.gcp_credentials.json"
     local gcp_spot_instance=false
 
     # Hetzner-specific variables
@@ -356,6 +388,10 @@ cmd_init() {
                 ;;
             --gcp-project)
                 gcp_project="$2"
+                shift 2
+                ;;
+            --gcp-credentials-file)
+                gcp_credentials_file="$2"
                 shift 2
                 ;;
             --gcp-spot-instance)
@@ -548,6 +584,37 @@ cmd_init() {
         fi
     fi
 
+    # Resolve GCP credentials from file for service account authentication
+    if [[ "$cloud_provider" == "gcp" ]]; then
+        local gcp_credentials_data
+        gcp_credentials_data=$(load_gcp_credentials_file "$gcp_credentials_file") || true
+        local gcp_file_project_id=""
+        local gcp_client_email=""
+        if [[ -n "$gcp_credentials_data" ]]; then
+            IFS="|" read -r gcp_credentials_file gcp_file_project_id gcp_client_email <<<"$gcp_credentials_data"
+            if [[ -z "$gcp_file_project_id" || -z "$gcp_client_email" ]]; then
+                die "GCP credentials file '$gcp_credentials_file' is missing required fields: project_id or client_email."
+            fi
+            log_info "Using GCP credentials file: $gcp_credentials_file"
+        else
+            log_info "GCP credentials file not found at $gcp_credentials_file. You can create one with 'gcloud iam service-accounts keys create ~/.gcp_credentials.json --iam-account=<service-account-email>'."
+        fi
+
+        # Precedence: 1. Flag (already in gcp_project), 2. Env Var, 3. Config File
+        if [[ -z "$gcp_project" ]]; then
+            if [[ -n "${GOOGLE_CLOUD_PROJECT:-}" ]]; then
+                gcp_project="${GOOGLE_CLOUD_PROJECT}"
+                log_info "Using GCP project ID from GOOGLE_CLOUD_PROJECT environment variable"
+            elif [[ -n "$gcp_file_project_id" ]]; then
+                gcp_project="$gcp_file_project_id"
+                log_info "Using GCP project ID from credentials file"
+            fi
+        fi
+
+        if [[ -z "$gcp_project" ]]; then
+            die "GCP project ID is required. Please provide it via --gcp-project, GOOGLE_CLOUD_PROJECT env var, or ensure your ~/.gcp_credentials.json file contains a valid project_id field."
+        fi
+    fi
 
     # Set default instance type if not provided
     if [[ -z "$instance_type" ]]; then
@@ -723,7 +790,7 @@ cmd_init() {
     write_provider_variables "$deploy_dir" "$cloud_provider" \
         "$aws_region" "$aws_profile" "$aws_spot_instance" \
         "$azure_region" "$azure_subscription" "$azure_client_id" "$azure_client_secret" "$azure_tenant_id" "$azure_spot_instance" \
-        "$gcp_region" "$gcp_zone" "$gcp_project" "$gcp_spot_instance" \
+        "$gcp_region" "$gcp_zone" "$gcp_project" "$gcp_credentials_file" "$gcp_spot_instance" \
         "$hetzner_location" "$hetzner_network_zone" "$hetzner_token" \
         "$digitalocean_region" "$digitalocean_token" \
         "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool" "$libvirt_uri" \
@@ -929,25 +996,26 @@ write_provider_variables() {
     local gcp_region="${12}"
     local gcp_zone="${13}"
     local gcp_project="${14}"
-    local gcp_spot_instance="${15}"
-    local hetzner_location="${16}"
-    local hetzner_network_zone="${17}"
-    local hetzner_token="${18}"
-    local digitalocean_region="${19}"
-    local digitalocean_token="${20}"
-    local libvirt_memory_gb="${21}"
-    local libvirt_vcpus="${22}"
-    local libvirt_network_bridge="${23}"
-    local libvirt_disk_pool="${24}"
-    local libvirt_uri="${25}"
-    local instance_type="${26}"
-    local architecture="${27}"
-    local cluster_size="${28}"
-    local data_volume_size="${29}"
-    local data_volumes_per_node="${30}"
-    local root_volume_size="${31}"
-    local allowed_cidr="${32}"
-    local owner="${33}"
+    local gcp_credentials_file="${15}"
+    local gcp_spot_instance="${16}"
+    local hetzner_location="${17}"
+    local hetzner_network_zone="${18}"
+    local hetzner_token="${19}"
+    local digitalocean_region="${20}"
+    local digitalocean_token="${21}"
+    local libvirt_memory_gb="${22}"
+    local libvirt_vcpus="${23}"
+    local libvirt_network_bridge="${24}"
+    local libvirt_disk_pool="${25}"
+    local libvirt_uri="${26}"
+    local instance_type="${27}"
+    local architecture="${28}"
+    local cluster_size="${29}"
+    local data_volume_size="${30}"
+    local data_volumes_per_node="${31}"
+    local root_volume_size="${32}"
+    local allowed_cidr="${33}"
+    local owner="${34}"
 
     case "$cloud_provider" in
         aws)
@@ -1000,6 +1068,7 @@ write_provider_variables() {
                 "gcp_region=$gcp_region" \
                 "gcp_zone=$gcp_zone" \
                 "gcp_project=$gcp_project" \
+                "gcp_credentials_file=$gcp_credentials_file" \
                 "instance_type=$instance_type" \
                 "instance_architecture=$architecture" \
                 "node_count=$cluster_size" \

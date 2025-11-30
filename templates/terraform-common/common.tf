@@ -99,6 +99,10 @@ Host n${idx + 11}
     IdentitiesOnly yes
     StrictHostKeyChecking no
     UserKnownHostsFile=/dev/null
+    ConnectTimeout 30
+    ConnectionAttempts 5
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
 
 Host n${idx + 11}-cos
     HostName ${ip}
@@ -108,6 +112,10 @@ Host n${idx + 11}-cos
     IdentitiesOnly yes
     StrictHostKeyChecking no
     UserKnownHostsFile=/dev/null
+    ConnectTimeout 30
+    ConnectionAttempts 5
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
 
 %{endfor~}
   EOF

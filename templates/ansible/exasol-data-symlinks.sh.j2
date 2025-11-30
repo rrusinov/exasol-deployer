@@ -141,9 +141,72 @@ for vol_id in "${VOLUME_IDS[@]}"; do
             target_device=$(find_device_via_patterns "$vol_id" "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${vol_id_short}*") || true
             ;;
         gcp)
-            disk_name="${vol_id##*/}"
-            [[ -z "$disk_name" ]] && disk_name="$vol_id"
-            target_device=$(find_device_via_patterns "$vol_id" "/dev/disk/by-id/google-${disk_name}" "/dev/disk/by-id/google-persistent-disk-${disk_name}") || true
+            log "Looking for GCP data disk for volume $vol_id (data volume #$((disk_idx - 1)))"
+
+            # Try to get disk information from GCP metadata service
+            gcp_metadata_disk_info=""
+            if command -v curl >/dev/null 2>&1; then
+                # Query GCP metadata service for disk information
+                metadata_url="http://metadata.google.internal/computeMetadata/v1/instance/disks/?recursive=true"
+                gcp_metadata_disk_info=$(curl -s -H "Metadata-Flavor: Google" --max-time 5 "$metadata_url" 2>/dev/null || true)
+                if [[ -n "$gcp_metadata_disk_info" && "$gcp_metadata_disk_info" != *"404"* ]]; then
+                    log "Retrieved disk information from GCP metadata service: $gcp_metadata_disk_info"
+                else
+                    gcp_metadata_disk_info=""
+                fi
+            fi
+
+            # Smart disk discovery: find unmounted data disks, skipping the OS disk
+            target_device=""
+            data_disk_candidates=()
+
+            # Collect all potential data disks (exclude OS disk index 0)
+            for gcp_disk_link in /dev/disk/by-id/google-persistent-disk-[1-9]*; do
+                if [[ -e "$gcp_disk_link" && ! "$gcp_disk_link" == *-part* ]]; then
+                    candidate_device=$(readlink -f "$gcp_disk_link")
+                    if [[ -b "$candidate_device" ]]; then
+                        # Check if this device is mounted at system paths
+                        if ! lsblk -nlo MOUNTPOINT "$candidate_device" | grep -q -E '^/(|boot|var|usr|opt|home|tmp|etc)(/|$)'; then
+                            data_disk_candidates+=("$candidate_device")
+                            log "Found potential data disk candidate: $candidate_device ($gcp_disk_link)"
+                        else
+                            log "Skipping mounted system disk: $candidate_device ($gcp_disk_link)"
+                        fi
+                    fi
+                fi
+            done
+
+            # Also check SCSI patterns
+            for scsi_link in /dev/disk/by-id/scsi-0Google_PersistentDisk_persistent-disk-[1-9]*; do
+                if [[ -e "$scsi_link" && ! "$scsi_link" == *-part* ]]; then
+                    candidate_device=$(readlink -f "$scsi_link")
+                    if [[ -b "$candidate_device" ]]; then
+                        if ! lsblk -nlo MOUNTPOINT "$candidate_device" | grep -q -E '^/(|boot|var|usr|opt|home|tmp|etc)(/|$)'; then
+                            # Avoid duplicates
+                            if [[ ! " ${data_disk_candidates[*]} " =~ " $candidate_device " ]]; then
+                                data_disk_candidates+=("$candidate_device")
+                                log "Found potential data disk candidate (SCSI): $candidate_device ($scsi_link)"
+                            fi
+                        fi
+                    fi
+                fi
+            done
+
+            # Select the appropriate disk based on our position in the volume list
+            volume_index=$((disk_idx - 1))  # 0-based index
+            if (( volume_index < ${#data_disk_candidates[@]} )); then
+                target_device="${data_disk_candidates[$volume_index]}"
+                log "Selected data disk $volume_index: $target_device for volume $vol_id"
+            else
+                log "Not enough data disk candidates found (need index $volume_index, have ${#data_disk_candidates[@]} candidates)"
+                log "Available candidates: ${data_disk_candidates[*]}"
+            fi
+
+            if [[ -z "$target_device" ]]; then
+                log "No suitable GCP data disk found for volume $vol_id"
+                log_available_devices "All GCP persistent disks:" "/dev/disk/by-id/google-persistent-disk-*"
+                log_available_devices "All GCP SCSI disks:" "/dev/disk/by-id/scsi-0Google_PersistentDisk_*"
+            fi
             ;;
         hetzner)
             target_device=$(find_device_via_patterns "$vol_id" "/dev/disk/by-id/scsi-0HC_Volume_${vol_id}" "/dev/disk/by-id/scsi-0HC_Volume_${vol_id}-*" "/dev/disk/by-id/scsi-0HC_Volume_${vol_id}_*") || true
@@ -214,6 +277,12 @@ for vol_id in "${VOLUME_IDS[@]}"; do
                 ;;
             gcp)
                 log_available_devices "Available GCP disks:" "/dev/disk/by-id/google-*"
+                log_available_devices "Available GCP SCSI disks:" "/dev/disk/by-id/scsi-0Google_PersistentDisk_*"
+                if [[ -n "$gcp_metadata_disk_info" ]]; then
+                    log "GCP metadata disk information: $gcp_metadata_disk_info"
+                else
+                    log "GCP metadata service not available or no disk information retrieved"
+                fi
                 ;;
             hetzner)
                 log_available_devices "Available Hetzner disks:" "/dev/disk/by-id/scsi-0HC_Volume_*"

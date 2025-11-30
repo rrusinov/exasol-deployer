@@ -105,7 +105,16 @@ gcloud projects list
 
 # Set default project
 gcloud config set project YOUR_PROJECT_ID
+
+# Check if billing is enabled
+gcloud billing projects describe YOUR_PROJECT_ID
+
+# If billing is not enabled, link billing account
+gcloud beta billing projects link YOUR_PROJECT_ID \
+  --billing-account=BILLING_ACCOUNT_ID
 ```
+
+**Note**: The `--gcp-project` parameter is **optional**. The `exasol init` command will automatically detect your GCP project ID from the credentials file (`~/.gcp_credentials.json`) if you don't specify it explicitly. You can also set the `GOOGLE_CLOUD_PROJECT` environment variable.
 
 ### Get Project ID
 
@@ -119,7 +128,11 @@ gcloud projects describe YOUR_PROJECT_ID
 
 **Save this project ID** - you'll need it for deployment.
 
+**Note**: GCP uses both project IDs (human-readable names like "my-project-123") and project numbers (numeric identifiers like "123456789012"). The project number appears in error messages and some API calls. You can find both by running `gcloud projects describe YOUR_PROJECT_ID`.
+
 ## Step 5: Enable Required APIs
+
+**Important**: Before enabling APIs, ensure billing is enabled for your project. Some Google APIs charge for usage and require billing to be enabled first. If you haven't already enabled billing in Step 4, do so now before proceeding with API enablement.
 
 Enable the Compute Engine API:
 
@@ -146,8 +159,9 @@ gcloud services enable serviceusage.googleapis.com
 For automated deployments, create a service account:
 
 ```bash
-# Create service account
+# Create service account (replace YOUR_PROJECT_ID with your actual project ID)
 gcloud iam service-accounts create exasol-deployer \
+  --project=YOUR_PROJECT_ID \
   --display-name="Exasol Deployer Service Account"
 
 # Grant Compute Admin role
@@ -161,7 +175,8 @@ gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
   --role="roles/iam.serviceAccountUser"
 
 # Create and download key
-gcloud iam service-accounts keys create ~/exasol-deployer-key.json \
+gcloud iam service-accounts keys create ~/.gcp_credentials.json \
+  --project=YOUR_PROJECT_ID \
   --iam-account=exasol-deployer@YOUR_PROJECT_ID.iam.gserviceaccount.com
 ```
 
@@ -169,7 +184,7 @@ gcloud iam service-accounts keys create ~/exasol-deployer-key.json \
 
 ```bash
 # Set environment variable
-export GOOGLE_APPLICATION_CREDENTIALS=~/exasol-deployer-key.json
+export GOOGLE_APPLICATION_CREDENTIALS=~/.gcp_credentials.json
 
 # Verify
 gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS

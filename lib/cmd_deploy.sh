@@ -135,6 +135,27 @@ cmd_deploy() {
         return 0
     fi
 
+    # Wait a bit for VMs to fully boot up and SSH to become available
+    log_info "Waiting for VMs to boot and SSH to become available..."
+    sleep 30
+
+    # Test SSH connectivity before running Ansible
+    log_info "Testing SSH connectivity to nodes..."
+    local ssh_test_success=true
+    for i in $(seq 1 5); do
+        if ssh -F ssh_config -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null n11 "echo 'SSH connection test successful'" 2>/dev/null; then
+            log_info "SSH connectivity test passed"
+            break
+        else
+            log_info "SSH connectivity test failed (attempt $i/5), retrying in 10 seconds..."
+            sleep 10
+            if [[ $i -eq 5 ]]; then
+                log_warn "SSH connectivity test failed after 5 attempts, proceeding with Ansible (it has built-in retry logic)"
+                ssh_test_success=false
+            fi
+        fi
+    done
+
     log_info "Configuring cluster with Ansible..."
     if ! ansible-playbook -i inventory.ini .templates/setup-exasol-cluster.yml; then
         state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
