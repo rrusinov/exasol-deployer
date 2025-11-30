@@ -126,11 +126,21 @@ locals {
   }
 
   # Node IPs for common outputs
+  # IMPORTANT: Use GRE IPs as "private IPs" so Exasol uses them for clustering
   node_public_ips  = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].access_config[0].nat_ip]
-  node_private_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].network_ip]
+  node_private_ips = local.gre_overlay_ips # GRE overlay IPs for Exasol clustering
 
-  # GRE mesh overlay not used on GCP; keep empty to satisfy common inventory template
-  gre_data = {}
+  # GRE private IPs for GCP instances (used by common GRE logic)
+  gre_private_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].network_ip]
+
+  # GRE mesh data for Ansible inventory (GCP requires GRE for proper networking - always enabled)
+  gre_data = local.gre_data_always_on
+
+  # Generic cloud-init template (shared across providers)
+  # Template is copied to .templates/ in deployment directory during init
+  cloud_init_template_path = "${path.module}/.templates/cloud-init-generic.tftpl"
+
+
 }
 
 # ==============================================================================
@@ -168,8 +178,11 @@ resource "google_compute_instance" "exasol_node" {
   }
 
   metadata = {
-    ssh-keys       = local.ssh_keys_metadata
-    startup-script = local.cloud_init_script
+    ssh-keys = local.ssh_keys_metadata
+    startup-script = templatefile(local.cloud_init_template_path, {
+      base_cloud_init = local.cloud_init_script
+      gre_ip          = local.gre_overlay_ips[count.index] # GRE overlay IP (empty string disables GRE)
+    })
   }
 
   tags = ["exasol-cluster"]

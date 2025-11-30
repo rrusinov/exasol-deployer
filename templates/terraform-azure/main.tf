@@ -221,7 +221,10 @@ resource "azurerm_linux_virtual_machine" "exasol_node" {
   }
 
   # Cloud-init custom_data (base64 encoded automatically by Azure provider)
-  custom_data = base64encode(local.cloud_init_script)
+  custom_data = base64encode(templatefile(local.cloud_init_template_path, {
+    base_cloud_init = local.cloud_init_script
+    gre_ip          = "" # Empty string disables GRE for Azure
+  }))
 
   tags = {
     Name    = "n${count.index + 11}"
@@ -294,12 +297,19 @@ locals {
     ]
   }
 
+  # GRE private IPs for Azure instances (used by common GRE logic)
+  gre_private_ips = azurerm_network_interface.exasol_node[*].private_ip_address
+
   # Node IPs for common outputs
   node_public_ips  = azurerm_public_ip.exasol_node[*].ip_address
-  node_private_ips = azurerm_network_interface.exasol_node[*].private_ip_address
+  node_private_ips = var.enable_gre_mesh ? local.gre_overlay_ips : local.gre_private_ips
 
-  # GRE mesh overlay not used on Azure; keep empty to satisfy common inventory template
-  gre_data = {}
+  # GRE mesh overlay (uses common logic)
+  gre_data = local.gre_data_common
+
+  # Generic cloud-init template (shared across providers)
+  # Template is copied to .templates/ in deployment directory during init
+  cloud_init_template_path = "${path.module}/.templates/cloud-init-generic.tftpl"
 }
 
 # ==============================================================================

@@ -140,21 +140,28 @@ cmd_deploy() {
     sleep 30
 
     # Test SSH connectivity before running Ansible
-    log_info "Testing SSH connectivity to nodes..."
+    log_info "Testing SSH connectivity to all nodes..."
     local ssh_test_success=true
-    for i in $(seq 1 5); do
-        if ssh -F ssh_config -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null n11 "echo 'SSH connection test successful'" 2>/dev/null; then
-            log_info "SSH connectivity test passed"
-            break
-        else
-            log_info "SSH connectivity test failed (attempt $i/5), retrying in 10 seconds..."
-            sleep 10
-            if [[ $i -eq 5 ]]; then
-                log_warn "SSH connectivity test failed after 5 attempts, proceeding with Ansible (it has built-in retry logic)"
-                ssh_test_success=false
+    for node_idx in $(seq 0 $((cluster_size - 1))); do
+        local node_name="n$((11 + node_idx))"
+        log_info "Testing SSH to $node_name..."
+        for i in $(seq 1 10); do
+            if ssh -F ssh_config -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$node_name" "echo 'SSH connection test successful'" 2>/dev/null; then
+                log_info "SSH connectivity to $node_name passed"
+                break
+            else
+                log_info "SSH connectivity to $node_name failed (attempt $i/10), retrying in 10 seconds..."
+                sleep 10
+                if [[ $i -eq 10 ]]; then
+                    log_warn "SSH connectivity to $node_name failed after 10 attempts"
+                    ssh_test_success=false
+                fi
             fi
-        fi
+        done
     done
+    if [[ "$ssh_test_success" == false ]]; then
+        log_warn "Some SSH connectivity tests failed, proceeding with Ansible (it has built-in retry logic)"
+    fi
 
     log_info "Configuring cluster with Ansible..."
     if ! ansible-playbook -i inventory.ini .templates/setup-exasol-cluster.yml; then

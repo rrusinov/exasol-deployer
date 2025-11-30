@@ -146,10 +146,44 @@ resource "local_file" "ansible_inventory" {
 }
 
 # ==============================================================================
-# Common Variables (shared structure)
+# GRE Mesh Network Logic (shared across providers)
 # ==============================================================================
+
+locals {
+  # GRE overlay network IPs (10.254.0.0/16) - used for Exasol clustering
+  gre_overlay_ips = [for idx in range(var.node_count) : "10.254.0.${idx + 11}"]
+
+  # Common GRE data structure - providers can override gre_private_ips
+  # This respects the enable_gre_mesh variable (for AWS, Azure, DigitalOcean, Libvirt)
+  gre_data_common = var.enable_gre_mesh ? {
+    for idx in range(var.node_count) : idx => {
+      gre_ip           = local.gre_overlay_ips[idx]
+      local_private_ip = try(local.gre_private_ips[idx], "")
+      gre_peers = [
+        for peer_idx in range(var.node_count) : {
+          ip = try(local.gre_private_ips[peer_idx], "")
+        } if peer_idx != idx
+      ]
+    }
+  } : {}
+
+  # Always-on GRE data structure for providers that require GRE unconditionally
+  # Used by GCP and Hetzner (they require GRE for proper networking)
+  gre_data_always_on = {
+    for idx in range(var.node_count) : idx => {
+      gre_ip           = local.gre_overlay_ips[idx]
+      local_private_ip = local.gre_private_ips[idx]
+      gre_peers = [
+        for peer_idx in range(var.node_count) : {
+          ip = local.gre_private_ips[peer_idx]
+        } if peer_idx != idx
+      ]
+    }
+  }
+}
 
 # These are used by the common outputs but defined in provider-specific variables.tf
 # variable "node_count" { ... }
 # variable "data_volumes_per_node" { ... }
 # variable "owner" { ... }
+# variable "enable_gre_mesh" { ... }

@@ -55,6 +55,12 @@ variable "enable_spot_instances" {
   default     = false
 }
 
+variable "enable_gre_mesh" {
+  description = "Enable GRE mesh network overlay for multicast support."
+  type        = bool
+  default     = false
+}
+
 variable "instance_type" {
   description = "The instance/VM type for the cluster nodes (provider-specific)."
   type        = string

@@ -40,6 +40,8 @@ SSH Connectivity:::PROGRESS_MARKER: deploy:05|Waiting for VMs to boot and SSH to
 Ansible Connection:::PROGRESS_MARKER: deploy:06|PLAY \\[Play 1.*Gather Host Facts\\]|Configuring cluster with Ansible
 Node Configuration:::PROGRESS_MARKER: deploy:07|SECTION 1:.*Node & Network Setup|Set hostname to n11|Install required system packages
 SSH Key Distribution:::PROGRESS_MARKER: deploy:08|SECTION 2:.*SSH.*Inter-Node|Generate SSH key for exasol user
+GRE Mesh Services Started:::PROGRESS_MARKER: deploy:08c|GRE_Mesh_Services_Started
+GRE Mesh Connectivity Validated:::PROGRESS_MARKER: deploy:08d|GRE_Mesh_Connectivity_Validated
 Disk Discovery:::PROGRESS_MARKER: deploy:09|SECTION 3A:.*Discover data disks|exasol-data-symlinks|Discover existing /dev/exasol_data
 Config Generation:::PROGRESS_MARKER: deploy:10|Create final Exasol config|PLAY \\[Play 3.*Final Configuration
 Artifact Transfer:::PROGRESS_MARKER: deploy:11|(Transfer|Download).*(database|c4)|local Exasol database tarball|Download Exasol database
@@ -64,11 +66,12 @@ EOF
 
 progress_stop_steps() {
     cat <<'EOF'
-Service Shutdown:::PROGRESS_MARKER: stop:01|Stopping Exasol database cluster|Stop Exasol Database|Stop (c4\\.service|c4_cloud_command)
-Stage Verification:::PROGRESS_MARKER: stop:02|Wait.*stage (a|a1)|nodes.*stage.*a/a1|Verify all services are stopped
-Infrastructure Power-Off:::PROGRESS_MARKER: stop:03|Powering off|power control|in-guest shutdown|state.*->.*stopped
-Stop Validation:::PROGRESS_MARKER: stop:04|PLAY RECAP|stop summary
-Stop Complete:::PROGRESS_MARKER: stop:05|stopped successfully|stop completed|cluster stopped successfully
+Database Shutdown:::PROGRESS_MARKER: stop:01|Database shutdown complete|Found running databases|Stop each running database|Verify databases are stopped
+Service Shutdown:::PROGRESS_MARKER: stop:02|Stopping Exasol database cluster|Stop Exasol Database|Stop (c4\\.service|c4_cloud_command)
+Stage Verification:::PROGRESS_MARKER: stop:03|Wait.*stage (a|a1)|nodes.*stage.*a/a1|Verify all services are stopped
+Infrastructure Power-Off:::PROGRESS_MARKER: stop:04|Powering off|power control|in-guest shutdown|state.*->.*stopped
+Stop Validation:::PROGRESS_MARKER: stop:05|PLAY RECAP|stop summary
+Stop Complete:::PROGRESS_MARKER: stop:06|stopped successfully|stop completed|cluster stopped successfully
 EOF
 }
 

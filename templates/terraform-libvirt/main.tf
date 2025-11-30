@@ -37,12 +37,19 @@ locals {
     ]
   }
 
+  # GRE private IPs for Libvirt domains (used by common GRE logic)
+  gre_private_ips = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "")]
+
   # Node IPs for common outputs (libvirt uses private IPs only)
   node_public_ips  = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "")]
-  node_private_ips = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "")]
+  node_private_ips = var.enable_gre_mesh ? local.gre_overlay_ips : local.gre_private_ips
 
-  # GRE mesh overlay not used on libvirt; keep empty to satisfy common inventory template
-  gre_data = {}
+  # GRE mesh overlay (uses common logic)
+  gre_data = local.gre_data_common
+
+  # Generic cloud-init template (shared across providers)
+  # Template is copied to .templates/ in deployment directory during init
+  cloud_init_template_path = "${path.module}/.templates/cloud-init-generic.tftpl"
 }
 
 provider "libvirt" {
@@ -58,7 +65,10 @@ resource "libvirt_cloudinit_disk" "commoninit" {
   name  = "commoninit-n${count.index + 11}-${random_id.instance.hex}.iso"
   pool  = var.libvirt_disk_pool
   # Use the shared cloud-init script from terraform-common to avoid duplication
-  user_data = local.cloud_init_script
+  user_data = templatefile(local.cloud_init_template_path, {
+    base_cloud_init = local.cloud_init_script
+    gre_ip          = "" # Empty string disables GRE for libvirt
+  })
 }
 
 # ==============================================================================

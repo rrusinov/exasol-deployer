@@ -49,12 +49,19 @@ locals {
     ]
   }
 
+  # GRE private IPs for DigitalOcean droplets (used by common GRE logic)
+  gre_private_ips = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address_private]
+
   # Node IPs for common outputs
   node_public_ips  = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address]
-  node_private_ips = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address_private]
+  node_private_ips = var.enable_gre_mesh ? local.gre_overlay_ips : local.gre_private_ips
 
-  # GRE mesh overlay not used on DigitalOcean; keep empty to satisfy common inventory template
-  gre_data = {}
+  # GRE mesh overlay (uses common logic)
+  gre_data = local.gre_data_common
+
+  # Generic cloud-init template (shared across providers)
+  # Template is copied to .templates/ in deployment directory during init
+  cloud_init_template_path = "${path.module}/.templates/cloud-init-generic.tftpl"
 }
 
 # ==============================================================================
@@ -161,7 +168,10 @@ resource "digitalocean_droplet" "exasol_node" {
   ]
 
   # Cloud-init user-data to create exasol user before Ansible runs
-  user_data = local.cloud_init_script
+  user_data = templatefile(local.cloud_init_template_path, {
+    base_cloud_init = local.cloud_init_script
+    gre_ip          = "" # Empty string disables GRE for DigitalOcean
+  })
 
   # Note: resize_disk parameter is not used because DigitalOcean droplet disk size
   # is determined by the instance type slug and cannot be customized independently

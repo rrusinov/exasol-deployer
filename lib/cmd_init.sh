@@ -176,6 +176,7 @@ Common Flags:
   --adminui-password <password>  Admin UI password (random if not specified)
   --owner <tag>                  Owner tag for resources (default: "exasol-deployer")
   --allowed-cidr <cidr>          CIDR allowed to access cluster (default: "0.0.0.0/0")
+  --enable-gre-mesh              Enable GRE mesh network overlay for multicast support (enabled by default for Hetzner, GCP)
   -h, --help                     Show help
 
 AWS-Specific Flags:
@@ -253,6 +254,7 @@ cmd_init() {
     local adminui_password=""
     local owner="exasol-deployer"
     local allowed_cidr="0.0.0.0/0"
+    local enable_gre_mesh=false
 
 
     # AWS-specific variables
@@ -440,6 +442,10 @@ cmd_init() {
             --libvirt-uri)
                 libvirt_uri="$2"
                 shift 2
+                ;;
+            --enable-gre-mesh)
+                enable_gre_mesh=true
+                shift
                 ;;
             --list-versions)
                 log_info "Available database versions:"
@@ -733,7 +739,8 @@ cmd_init() {
         cp "$script_root/templates/terraform-common/common-firewall.tf" "$templates_dir/" 2>/dev/null || true
         cp "$script_root/templates/terraform-common/common-outputs.tf" "$templates_dir/" 2>/dev/null || true
         cp "$script_root/templates/terraform-common/inventory.tftpl" "$templates_dir/" 2>/dev/null || true
-        log_debug "Copied common Terraform resources (common.tf, common-firewall.tf, common-outputs.tf, inventory.tftpl)"
+        cp "$script_root/templates/terraform-common/cloud-init-generic.tftpl" "$templates_dir/" 2>/dev/null || true
+        log_debug "Copied common Terraform resources (common.tf, common-firewall.tf, common-outputs.tf, inventory.tftpl, cloud-init-generic.tftpl)"
     fi
 
     # Then, copy cloud-provider-specific terraform templates
@@ -796,7 +803,7 @@ cmd_init() {
         "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool" "$libvirt_uri" \
         "$instance_type" "$architecture" "$cluster_size" \
         "$data_volume_size" "$data_volumes_per_node" "$root_volume_size" \
-        "$allowed_cidr" "$owner"
+        "$allowed_cidr" "$owner" "$enable_gre_mesh"
 
     # Create Terraform files in deployment directory (after variables are written so macOS HVF can be detected)
     create_terraform_files "$deploy_dir" "$architecture" "$cloud_provider"
@@ -1016,6 +1023,7 @@ write_provider_variables() {
     local root_volume_size="${32}"
     local allowed_cidr="${33}"
     local owner="${34}"
+    local enable_gre_mesh="${35}"
 
     case "$cloud_provider" in
         aws)
@@ -1035,7 +1043,8 @@ write_provider_variables() {
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
-                "enable_spot_instances=$aws_spot_instance"
+                "enable_spot_instances=$aws_spot_instance" \
+                "enable_gre_mesh=$enable_gre_mesh"
             ;;
         azure)
             local azure_vars=(
@@ -1050,6 +1059,7 @@ write_provider_variables() {
                 "allowed_cidr=$allowed_cidr"
                 "owner=$owner"
                 "enable_spot_instances=$azure_spot_instance"
+                "enable_gre_mesh=$enable_gre_mesh"
             )
             if [[ -n "$azure_client_id" ]]; then
                 azure_vars+=("azure_client_id=$azure_client_id")
@@ -1077,7 +1087,8 @@ write_provider_variables() {
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
-                "enable_spot_instances=$gcp_spot_instance"
+                "enable_spot_instances=$gcp_spot_instance" \
+                "enable_gre_mesh=$enable_gre_mesh"
             ;;
         hetzner)
             write_variables_file "$deploy_dir" \
@@ -1091,7 +1102,8 @@ write_provider_variables() {
                 "data_volumes_per_node=$data_volumes_per_node" \
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
-                "owner=$owner"
+                "owner=$owner" \
+                "enable_gre_mesh=$enable_gre_mesh"
             ;;
         digitalocean)
             write_variables_file "$deploy_dir" \
@@ -1104,7 +1116,8 @@ write_provider_variables() {
                 "data_volumes_per_node=$data_volumes_per_node" \
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
-                "owner=$owner"
+                "owner=$owner" \
+                "enable_gre_mesh=$enable_gre_mesh"
             ;;
         libvirt)
             local libvirt_domain_type="kvm"
@@ -1124,7 +1137,8 @@ write_provider_variables() {
                 "data_volumes_per_node=$data_volumes_per_node" \
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
-                "owner=$owner"
+                "owner=$owner" \
+                "enable_gre_mesh=$enable_gre_mesh"
 
             # Check and create default libvirt storage pool if it doesn't exist
             if ! virsh -c "$libvirt_uri" version >/dev/null 2>&1; then

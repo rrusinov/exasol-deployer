@@ -85,6 +85,12 @@ variable "enable_spot_instances" {
   # This variable is kept for consistency with other cloud providers
 }
 
+variable "enable_gre_mesh" {
+  description = "Enable GRE mesh network overlay for multicast support. Set with --enable-gre-mesh during initialization."
+  type        = bool
+  default     = false
+}
+
 variable "infra_desired_state" {
   description = "Desired infrastructure power state ('running' or 'stopped')."
   type        = string

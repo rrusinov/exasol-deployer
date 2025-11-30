@@ -116,3 +116,9 @@ variable "libvirt_firmware" {
   type        = string
   default     = ""
 }
+
+variable "enable_gre_mesh" {
+  description = "Enable GRE mesh network overlay for multicast support. Set with --enable-gre-mesh during initialization."
+  type        = bool
+  default     = false
+}
