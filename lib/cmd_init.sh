@@ -176,7 +176,7 @@ Common Flags:
   --adminui-password <password>  Admin UI password (random if not specified)
   --owner <tag>                  Owner tag for resources (default: "exasol-deployer")
   --allowed-cidr <cidr>          CIDR allowed to access cluster (default: "0.0.0.0/0")
-  --enable-gre-mesh              Enable GRE mesh network overlay for multicast support (enabled by default for Hetzner, GCP)
+  --enable-multicast-overlay     Enable Tinc VPN overlay network for multicast support (enabled by default for Hetzner, GCP)
   -h, --help                     Show help
 
 AWS-Specific Flags:
@@ -254,7 +254,7 @@ cmd_init() {
     local adminui_password=""
     local owner="exasol-deployer"
     local allowed_cidr="0.0.0.0/0"
-    local enable_gre_mesh=false
+    local enable_multicast_overlay=false
 
 
     # AWS-specific variables
@@ -443,8 +443,8 @@ cmd_init() {
                 libvirt_uri="$2"
                 shift 2
                 ;;
-            --enable-gre-mesh)
-                enable_gre_mesh=true
+            --enable-multicast-overlay)
+                enable_multicast_overlay=true
                 shift
                 ;;
             --list-versions)
@@ -803,7 +803,7 @@ cmd_init() {
         "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool" "$libvirt_uri" \
         "$instance_type" "$architecture" "$cluster_size" \
         "$data_volume_size" "$data_volumes_per_node" "$root_volume_size" \
-        "$allowed_cidr" "$owner" "$enable_gre_mesh"
+        "$allowed_cidr" "$owner" "$enable_multicast_overlay"
 
     # Create Terraform files in deployment directory (after variables are written so macOS HVF can be detected)
     create_terraform_files "$deploy_dir" "$architecture" "$cloud_provider"
@@ -1023,7 +1023,7 @@ write_provider_variables() {
     local root_volume_size="${32}"
     local allowed_cidr="${33}"
     local owner="${34}"
-    local enable_gre_mesh="${35}"
+    local enable_multicast_overlay="${35}"
 
     case "$cloud_provider" in
         aws)
@@ -1044,7 +1044,7 @@ write_provider_variables() {
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
                 "enable_spot_instances=$aws_spot_instance" \
-                "enable_gre_mesh=$enable_gre_mesh"
+                "enable_multicast_overlay=$enable_multicast_overlay"
             ;;
         azure)
             local azure_vars=(
@@ -1059,7 +1059,7 @@ write_provider_variables() {
                 "allowed_cidr=$allowed_cidr"
                 "owner=$owner"
                 "enable_spot_instances=$azure_spot_instance"
-                "enable_gre_mesh=$enable_gre_mesh"
+                "enable_multicast_overlay=$enable_multicast_overlay"
             )
             if [[ -n "$azure_client_id" ]]; then
                 azure_vars+=("azure_client_id=$azure_client_id")
@@ -1088,7 +1088,7 @@ write_provider_variables() {
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
                 "enable_spot_instances=$gcp_spot_instance" \
-                "enable_gre_mesh=$enable_gre_mesh"
+                "enable_multicast_overlay=$enable_multicast_overlay"
             ;;
         hetzner)
             write_variables_file "$deploy_dir" \
@@ -1103,7 +1103,7 @@ write_provider_variables() {
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
-                "enable_gre_mesh=$enable_gre_mesh"
+                "enable_multicast_overlay=$enable_multicast_overlay"
             ;;
         digitalocean)
             write_variables_file "$deploy_dir" \
@@ -1117,7 +1117,7 @@ write_provider_variables() {
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
-                "enable_gre_mesh=$enable_gre_mesh"
+                "enable_multicast_overlay=$enable_multicast_overlay"
             ;;
         libvirt)
             local libvirt_domain_type="kvm"
@@ -1138,7 +1138,7 @@ write_provider_variables() {
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
-                "enable_gre_mesh=$enable_gre_mesh"
+                "enable_multicast_overlay=$enable_multicast_overlay"
 
             # Check and create default libvirt storage pool if it doesn't exist
             if ! virsh -c "$libvirt_uri" version >/dev/null 2>&1; then
@@ -1212,16 +1212,16 @@ create_readme() {
     local region_info=""
     local additional_config=""
     case "$cloud_provider" in
-        aws) 
+        aws)
             region_info="AWS Region: $aws_region"
             ;;
-        azure) 
+        azure)
             region_info="Azure Region: $azure_region"
             ;;
-        gcp) 
+        gcp)
             region_info="GCP Region: $gcp_region"
             ;;
-        libvirt) 
+        libvirt)
             region_info="Local KVM Deployment"
             additional_config="- **Memory**: ${libvirt_memory_gb}GB per VM\n- **vCPUs**: $libvirt_vcpus per VM\n- **Network**: $libvirt_network_bridge\n- **Storage Pool**: $libvirt_disk_pool"
             ;;

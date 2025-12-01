@@ -137,7 +137,7 @@ resource "local_file" "ansible_inventory" {
     node_volumes   = local.node_volumes
     cloud_provider = local.provider_code
     ssh_key        = local_file.exasol_private_key_pem.filename
-    gre_data       = try(local.gre_data, {})
+    tinc_data      = try(local.tinc_data, {})
   })
   filename        = "${path.module}/inventory.ini"
   file_permission = "0644"
@@ -146,37 +146,44 @@ resource "local_file" "ansible_inventory" {
 }
 
 # ==============================================================================
-# GRE Mesh Network Logic (shared across providers)
+# Tinc VPN Mesh Network Logic (shared across providers)
 # ==============================================================================
 
 locals {
-  # GRE overlay network IPs (10.254.0.0/16) - used for Exasol clustering
-  gre_overlay_ips = [for idx in range(var.node_count) : "10.254.0.${idx + 11}"]
+  # Overlay network IPs (10.254.0.0/16) - used for Exasol clustering
+  overlay_network_ips = [for idx in range(var.node_count) : "10.254.0.${idx + 11}"]
 
-  # Common GRE data structure - providers can override gre_private_ips
-  # This respects the enable_gre_mesh variable (for AWS, Azure, DigitalOcean, Libvirt)
-  gre_data_common = var.enable_gre_mesh ? {
+  # Determine seed nodes (first 2 nodes in the cluster for redundancy)
+  seed_node_indices = slice([for idx in range(var.node_count) : idx], 0, min(2, var.node_count))
+
+  # Common Tinc data structure - providers can override physical_ips
+  # This respects the enable_multicast_overlay variable (for AWS, Azure, DigitalOcean, Libvirt)
+  tinc_data_common = var.enable_multicast_overlay ? {
     for idx in range(var.node_count) : idx => {
-      gre_ip           = local.gre_overlay_ips[idx]
-      local_private_ip = try(local.gre_private_ips[idx], "")
-      gre_peers = [
-        for peer_idx in range(var.node_count) : {
-          ip = try(local.gre_private_ips[peer_idx], "")
-        } if peer_idx != idx
+      overlay_ip  = local.overlay_network_ips[idx]
+      physical_ip = try(local.physical_ips[idx], "")
+      is_seed     = contains(local.seed_node_indices, idx)
+      seed_nodes = [
+        for seed_idx in local.seed_node_indices : {
+          name = "n${seed_idx + 11}"
+          ip   = try(local.physical_ips[seed_idx], "")
+        }
       ]
     }
   } : {}
 
-  # Always-on GRE data structure for providers that require GRE unconditionally
-  # Used by GCP and Hetzner (they require GRE for proper networking)
-  gre_data_always_on = {
+  # Always-on Tinc data structure for providers that require overlay unconditionally
+  # Used by GCP and Hetzner (they require overlay networking for proper multicast)
+  tinc_data_always_on = {
     for idx in range(var.node_count) : idx => {
-      gre_ip           = local.gre_overlay_ips[idx]
-      local_private_ip = local.gre_private_ips[idx]
-      gre_peers = [
-        for peer_idx in range(var.node_count) : {
-          ip = local.gre_private_ips[peer_idx]
-        } if peer_idx != idx
+      overlay_ip  = local.overlay_network_ips[idx]
+      physical_ip = local.physical_ips[idx]
+      is_seed     = contains(local.seed_node_indices, idx)
+      seed_nodes = [
+        for seed_idx in local.seed_node_indices : {
+          name = "n${seed_idx + 11}"
+          ip   = local.physical_ips[seed_idx]
+        }
       ]
     }
   }
@@ -186,4 +193,4 @@ locals {
 # variable "node_count" { ... }
 # variable "data_volumes_per_node" { ... }
 # variable "owner" { ... }
-# variable "enable_gre_mesh" { ... }
+# variable "enable_multicast_overlay" { ... }

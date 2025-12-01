@@ -55,8 +55,8 @@ variable "enable_spot_instances" {
   default     = false
 }
 
-variable "enable_gre_mesh" {
-  description = "Enable GRE mesh network overlay for multicast support."
+variable "enable_multicast_overlay" {
+  description = "Enable Tinc VPN overlay network for multicast support."
   type        = bool
   default     = false
 }

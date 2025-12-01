@@ -60,15 +60,15 @@ locals {
     ]
   }
 
-  # GRE private IPs for AWS instances (used by common GRE logic)
-  gre_private_ips = [for instance in aws_instance.exasol_node : instance.private_ip]
+  # Physical IPs for Tinc VPN (used by common Tinc logic)
+  physical_ips = [for instance in aws_instance.exasol_node : instance.private_ip]
 
   # Node IPs for common outputs
   node_public_ips  = [for instance in aws_instance.exasol_node : instance.public_ip]
-  node_private_ips = var.enable_gre_mesh ? local.gre_overlay_ips : local.gre_private_ips
+  node_private_ips = var.enable_multicast_overlay ? local.overlay_network_ips : local.physical_ips
 
-  # GRE mesh overlay (uses common logic)
-  gre_data = local.gre_data_common
+  # Tinc mesh overlay (uses common logic)
+  tinc_data = local.tinc_data_common
 
   # Generic cloud-init template (shared across providers)
   # Template is copied to .templates/ in deployment directory during init
@@ -217,7 +217,6 @@ resource "aws_instance" "exasol_node" {
   # Cloud-init user-data to create exasol user before Ansible runs
   user_data = templatefile(local.cloud_init_template_path, {
     base_cloud_init = local.cloud_init_script
-    gre_ip          = "" # Empty string disables GRE for AWS
   })
 
   user_data_replace_on_change = true

@@ -59,11 +59,11 @@ locals {
     ]
   }
 
-  # GRE private IPs for Hetzner servers (used by common GRE logic)
-  gre_private_ips = local.hetzner_private_ips
+  # Physical IPs for Tinc VPN (used by common Tinc logic)
+  physical_ips = local.hetzner_private_ips
 
-  # GRE mesh data for Ansible inventory (Hetzner requires GRE for proper networking - always enabled)
-  gre_data = local.gre_data_always_on
+  # Tinc mesh data for Ansible inventory (Hetzner requires overlay for proper networking - always enabled)
+  tinc_data = local.tinc_data_always_on
 
   # Private network details for per-node configuration
   private_network_cidr = hcloud_network_subnet.exasol_subnet.ip_range
@@ -71,9 +71,9 @@ locals {
   hetzner_private_ips  = [for idx in range(var.node_count) : cidrhost(local.private_network_cidr, idx + 10)]
 
   # Node IPs for common outputs
-  # IMPORTANT: Use GRE IPs as "private IPs" so Exasol uses them for clustering
+  # IMPORTANT: Use overlay IPs as "private IPs" so Exasol uses them for clustering
   node_public_ips  = [for server in hcloud_server.exasol_node : server.ipv4_address]
-  node_private_ips = local.gre_overlay_ips # GRE overlay IPs
+  node_private_ips = local.overlay_network_ips # Overlay IPs
 
   # Generic cloud-init template (shared across providers)
   # Template is copied to .templates/ in deployment directory during init
@@ -186,11 +186,10 @@ resource "hcloud_server" "exasol_node" {
     node    = "n${count.index + 11}"
   }
 
-  # Cloud-init user-data to create exasol user and setup GRE mesh network
+  # Cloud-init user-data to create exasol user
   # cloud-init template is shipped alongside the module in deployment directories
   user_data = templatefile(local.cloud_init_template_path, {
     base_cloud_init = local.cloud_init_script
-    gre_ip          = local.gre_overlay_ips[count.index] # GRE overlay IP (empty string disables GRE)
   })
 
   public_net {
