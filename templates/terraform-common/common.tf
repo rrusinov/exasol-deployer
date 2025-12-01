@@ -80,6 +80,12 @@ locals {
         chmod 0440 "/etc/sudoers.d/10-$cloud_user-user"
       fi
     done
+
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq
+      apt-get install -y iproute2
+    fi
   EOF
 }
 
@@ -137,7 +143,7 @@ resource "local_file" "ansible_inventory" {
     node_volumes   = local.node_volumes
     cloud_provider = local.provider_code
     ssh_key        = local_file.exasol_private_key_pem.filename
-    tinc_data      = try(local.tinc_data, {})
+    overlay_data   = try(local.overlay_data, {})
   })
   filename        = "${path.module}/inventory.ini"
   file_permission = "0644"
@@ -146,19 +152,20 @@ resource "local_file" "ansible_inventory" {
 }
 
 # ==============================================================================
-# Tinc VPN Mesh Network Logic (shared across providers)
+# VXLAN Multicast Overlay Logic (shared across providers)
 # ==============================================================================
 
 locals {
-  # Overlay network IPs (10.254.0.0/16) - used for Exasol clustering
-  overlay_network_ips = [for idx in range(var.node_count) : "10.254.0.${idx + 11}"]
+  # Reserve 172.16.0.0/16 for multicast overlay across providers
+  # Overlay network IPs (172.16.0.0/16) - used for Exasol clustering
+  overlay_network_ips = [for idx in range(var.node_count) : "172.16.0.${idx + 11}"]
 
   # Determine seed nodes (first 2 nodes in the cluster for redundancy)
   seed_node_indices = slice([for idx in range(var.node_count) : idx], 0, min(2, var.node_count))
 
-  # Common Tinc data structure - providers can override physical_ips
+  # Common overlay data structure - providers can override physical_ips
   # This respects the enable_multicast_overlay variable (for AWS, Azure, DigitalOcean, Libvirt)
-  tinc_data_common = var.enable_multicast_overlay ? {
+  overlay_data_common = var.enable_multicast_overlay ? {
     for idx in range(var.node_count) : idx => {
       overlay_ip  = local.overlay_network_ips[idx]
       physical_ip = try(local.physical_ips[idx], "")
@@ -172,9 +179,9 @@ locals {
     }
   } : {}
 
-  # Always-on Tinc data structure for providers that require overlay unconditionally
+  # Always-on overlay data structure for providers that require overlay unconditionally
   # Used by GCP and Hetzner (they require overlay networking for proper multicast)
-  tinc_data_always_on = {
+  overlay_data_always_on = {
     for idx in range(var.node_count) : idx => {
       overlay_ip  = local.overlay_network_ips[idx]
       physical_ip = local.physical_ips[idx]

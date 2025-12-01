@@ -176,7 +176,7 @@ Common Flags:
   --adminui-password <password>  Admin UI password (random if not specified)
   --owner <tag>                  Owner tag for resources (default: "exasol-deployer")
   --allowed-cidr <cidr>          CIDR allowed to access cluster (default: "0.0.0.0/0")
-  --enable-multicast-overlay     Enable Tinc VPN overlay network for multicast support (enabled by default for Hetzner, GCP)
+  --enable-multicast-overlay     Enable VXLAN overlay network for multicast support (enabled by default for Hetzner, GCP)
   -h, --help                     Show help
 
 AWS-Specific Flags:
@@ -851,6 +851,22 @@ EOF
 
     log_info ""
     log_info "✅ Deployment directory initialized successfully!"
+    log_info ""
+
+    # Show power control capabilities for the selected provider
+    case "$cloud_provider" in
+        aws|azure|gcp)
+            log_info "Power Control: Automatic (start/stop via cloud API)"
+            ;;
+        hetzner|digitalocean)
+            log_info "Power Control: Manual start required (in-guest shutdown supported)"
+            log_info "  Note: Use 'exasol start' for power-on instructions after stopping"
+            ;;
+        libvirt)
+            log_info "Power Control: Manual (use virsh commands for local VMs)"
+            ;;
+    esac
+
     log_info ""
     log_info "Next steps:"
     log_info "  1. Review configuration in: $deploy_dir/variables.auto.tfvars"

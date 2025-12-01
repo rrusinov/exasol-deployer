@@ -728,11 +728,11 @@ test_hetzner_private_ip_template() {
     if grep -q "node_private_ips = local.gre_overlay_ips" "$template_file"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
-        echo -e "${GREEN}✓${NC} Hetzner node_private_ips use GRE overlay"
+        echo -e "${GREEN}✓${NC} Hetzner node_private_ips use multicast overlay"
     else
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} Hetzner node_private_ips should use GRE overlay IPs"
+        echo -e "${RED}✗${NC} Hetzner node_private_ips should use multicast overlay IPs"
     fi
 }
 

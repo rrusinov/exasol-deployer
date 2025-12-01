@@ -61,11 +61,10 @@ resource "azurerm_resource_group" "exasol" {
 resource "azurerm_virtual_network" "exasol" {
   name = "exasol-vnet"
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
-  # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
-  # Provides 254 × 256 = 65,024 possible unique networks
+  # Format: 10.X.0.0/16 where X is derived from cluster ID hex digits
+  # Provides 254 possible unique networks
   # Use /16 network and carve subnets from it
-  # Reserve 10.254.0.0/16 for GRE overlay across providers
-  address_space       = ["10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 253) + 1}.0.0/16"]
+  address_space       = ["10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254  ) + 1}.0.0/16"]
   location            = azurerm_resource_group.exasol.location
   resource_group_name = azurerm_resource_group.exasol.name
 
@@ -296,15 +295,15 @@ locals {
     ]
   }
 
-  # Physical IPs for Tinc VPN (used by common Tinc logic)
+  # Physical IPs for multicast overlay (used by common overlay logic)
   physical_ips = azurerm_network_interface.exasol_node[*].private_ip_address
 
   # Node IPs for common outputs
   node_public_ips  = azurerm_public_ip.exasol_node[*].ip_address
   node_private_ips = var.enable_multicast_overlay ? local.overlay_network_ips : local.physical_ips
 
-  # Tinc mesh overlay (uses common logic)
-  tinc_data = local.tinc_data_common
+  # VXLAN multicast overlay (uses common logic)
+  overlay_data = local.overlay_data_common
 
   # Generic cloud-init template (shared across providers)
   # Template is copied to .templates/ in deployment directory during init

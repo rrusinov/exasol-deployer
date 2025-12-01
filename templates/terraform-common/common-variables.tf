@@ -56,7 +56,7 @@ variable "enable_spot_instances" {
 }
 
 variable "enable_multicast_overlay" {
-  description = "Enable Tinc VPN overlay network for multicast support."
+  description = "Enable VXLAN overlay network for multicast support."
   type        = bool
   default     = false
 }

@@ -59,11 +59,11 @@ locals {
     ]
   }
 
-  # Physical IPs for Tinc VPN (used by common Tinc logic)
+  # Physical IPs for multicast overlay (used by common overlay logic)
   physical_ips = local.hetzner_private_ips
 
-  # Tinc mesh data for Ansible inventory (Hetzner requires overlay for proper networking - always enabled)
-  tinc_data = local.tinc_data_always_on
+  # Overlay mesh data for Ansible inventory (Hetzner requires overlay for proper networking - always enabled)
+  overlay_data = local.overlay_data_always_on
 
   # Private network details for per-node configuration
   private_network_cidr = hcloud_network_subnet.exasol_subnet.ip_range
@@ -92,9 +92,8 @@ resource "hcloud_network" "exasol_network" {
   name = "exasol-network-${random_id.instance.hex}"
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
   # Format: 10.X.0.0/16 where X is derived from cluster ID hex digits
-  # Provides 65,024 possible unique /16 networks; a /24 subnet will be carved from it
-  # Reserve 10.254.0.0/16 for GRE overlay
-  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 253) + 1}.0.0/16"
+  # Provides 254 possible unique networks
+  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.0.0/16"
 
   labels = {
     owner = var.owner

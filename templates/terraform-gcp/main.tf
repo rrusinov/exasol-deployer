@@ -43,11 +43,10 @@ resource "google_compute_network" "exasol" {
 resource "google_compute_subnetwork" "exasol" {
   name = "exasol-subnet"
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
-  # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
-  # Provides 254 × 256 = 65,024 possible unique networks
+  # Format: 10.X.0.0/16 where X is derived from cluster ID hex digits
+  # Provides 254 possible unique networks
   # Use /16 network and carve a /24 subnet from it for instances
-  # Reserve 10.254.0.0/16 for GRE overlay across providers
-  ip_cidr_range = cidrsubnet("10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 253) + 1}.0.0/16", 8, 1)
+  ip_cidr_range = cidrsubnet("10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.0.0/16", 8, 1)
   region        = var.gcp_region
   network       = google_compute_network.exasol.id
 }
@@ -130,11 +129,11 @@ locals {
   node_public_ips  = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].access_config[0].nat_ip]
   node_private_ips = local.overlay_network_ips # Overlay IPs for Exasol clustering
 
-  # Physical IPs for Tinc VPN (used by common Tinc logic)
+  # Physical IPs for multicast overlay (used by common overlay logic)
   physical_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].network_ip]
 
-  # Tinc mesh data for Ansible inventory (GCP requires overlay for proper networking - always enabled)
-  tinc_data = local.tinc_data_always_on
+  # Overlay mesh data for Ansible inventory (GCP requires overlay for proper networking - always enabled)
+  overlay_data = local.overlay_data_always_on
 
   # Generic cloud-init template (shared across providers)
   # Template is copied to .templates/ in deployment directory during init

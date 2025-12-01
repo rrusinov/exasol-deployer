@@ -60,15 +60,15 @@ locals {
     ]
   }
 
-  # Physical IPs for Tinc VPN (used by common Tinc logic)
+  # Physical IPs for multicast overlay (used by common overlay logic)
   physical_ips = [for instance in aws_instance.exasol_node : instance.private_ip]
 
   # Node IPs for common outputs
   node_public_ips  = [for instance in aws_instance.exasol_node : instance.public_ip]
   node_private_ips = var.enable_multicast_overlay ? local.overlay_network_ips : local.physical_ips
 
-  # Tinc mesh overlay (uses common logic)
-  tinc_data = local.tinc_data_common
+  # VXLAN multicast overlay (uses common logic)
+  overlay_data = local.overlay_data_common
 
   # Generic cloud-init template (shared across providers)
   # Template is copied to .templates/ in deployment directory during init
@@ -101,10 +101,10 @@ data "aws_ami" "ubuntu" {
 # Create a new VPC
 resource "aws_vpc" "exasol_vpc" {
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
-  # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
-  # Provides 253 × 256 = 64,768 possible unique networks (10.254.0.0/16 reserved for GRE overlay)
+  # Format: 10.X.0.0/16 where X is derived from cluster ID hex digits
+  # Provides 254 possible unique networks
   # Use a /16 network and carve subnets from it to avoid collisions across clusters
-  cidr_block           = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 253) + 1}.0.0/16"
+  cidr_block           = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254  ) + 1}.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
 

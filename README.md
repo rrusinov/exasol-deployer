@@ -642,6 +642,63 @@ Database and AdminUI credentials are stored in `.credentials.json` (protected fi
 3. Run `./exasol status --deployment-dir /Users/ruslan.rusinov/work/exasol-deployer/.` to check status
 4. Run `./exasol destroy --deployment-dir /Users/ruslan.rusinov/work/exasol-deployer/.` to tear down
 
+## Troubleshooting
+
+### Manual Power Control (Hetzner, DigitalOcean, libvirt)
+
+Some cloud providers don't support automatic power on/off via API. When you run `exasol start` on these providers, you'll see instructions for manual power-on:
+
+#### Hetzner
+```bash
+# Web Console
+# Go to: https://console.hetzner.cloud/
+# Navigate to your server and click "Power On"
+
+# CLI (requires hcloud CLI)
+hcloud server list  # Find your server name
+hcloud server poweron <server-name>
+```
+
+#### DigitalOcean
+```bash
+# Web Console
+# Go to: https://cloud.digitalocean.com/droplets
+# Find your droplet and click "Power On"
+
+# CLI (requires doctl CLI)
+doctl compute droplet list  # Find your droplet ID
+doctl compute droplet-action power-on <droplet-id>
+```
+
+#### libvirt (Local VMs)
+```bash
+# List all VMs
+virsh list --all
+
+# Start a specific VM
+virsh start <vm-name>
+
+# Alternative: Use virt-manager GUI
+virt-manager
+```
+
+**Note:** After manually powering on, the `start` command will automatically detect when the servers are online and continue with database startup.
+
+### Common Issues
+
+#### "Provider X does not support automatic power control"
+This is expected behavior for Hetzner, DigitalOcean, and libvirt. Follow the manual power-on instructions displayed.
+
+#### Start command times out waiting for health
+- Check that servers are powered on and reachable via SSH
+- Verify network connectivity between nodes
+- Check system logs: `journalctl -u exasol-overlay` and `journalctl -u c4_cloud_command`
+
+#### Overlay network issues
+- Ensure VXLAN port 4789 is allowed in firewall rules
+- Check overlay service status: `systemctl status exasol-overlay`
+- Verify bridge interface exists: `ip addr show vxlan-br0`
+
 ## Important Files
 
 - `.exasol.json` - Deployment state (do not modify)

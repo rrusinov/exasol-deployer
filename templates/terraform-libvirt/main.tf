@@ -37,15 +37,15 @@ locals {
     ]
   }
 
-  # Physical IPs for Tinc VPN (used by common Tinc logic)
+  # Physical IPs for multicast overlay (used by common overlay logic)
   physical_ips = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "")]
 
   # Node IPs for common outputs (libvirt uses private IPs only)
   node_public_ips  = [for domain in libvirt_domain.exasol_node : try(domain.network_interface[0].addresses[0], "")]
   node_private_ips = var.enable_multicast_overlay ? local.overlay_network_ips : local.physical_ips
 
-  # Tinc mesh overlay (uses common logic)
-  tinc_data = local.tinc_data_common
+  # VXLAN multicast overlay (uses common logic)
+  overlay_data = local.overlay_data_common
 
   # Generic cloud-init template (shared across providers)
   # Template is copied to .templates/ in deployment directory during init

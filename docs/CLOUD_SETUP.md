@@ -118,14 +118,15 @@ All cloud providers support these common options:
 
 ## Feature Comparison
 
-| Feature | AWS | Azure | GCP | Hetzner | DigitalOcean |
-|---------|-----|-------|-----|---------|--------------|
-| Spot/Preemptible Instances | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Multiple Instance Types | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Custom VPC/Network | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Multiple Regions | ✅ | ✅ | ✅ | ✅ | ✅ |
-| ARM64 Support | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Multiple Data Volumes | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Feature | AWS | Azure | GCP | Hetzner | DigitalOcean | libvirt |
+|---------|-----|-------|-----|---------|--------------|---------|
+| Spot/Preemptible Instances | ✅ | ✅ | ✅ | ❌ | ❌ | N/A |
+| Automatic Power Control | ✅ | ✅ | ✅ | ❌ Manual | ❌ Manual | ❌ Manual |
+| Multiple Instance Types | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Custom VPC/Network | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Multiple Regions | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| ARM64 Support | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Multiple Data Volumes | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ## Security Best Practices
 

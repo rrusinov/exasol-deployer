@@ -49,15 +49,15 @@ locals {
     ]
   }
 
-  # Physical IPs for Tinc VPN (used by common Tinc logic)
+  # Physical IPs for multicast overlay (used by common overlay logic)
   physical_ips = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address_private]
 
   # Node IPs for common outputs
   node_public_ips  = [for droplet in digitalocean_droplet.exasol_node : droplet.ipv4_address]
   node_private_ips = var.enable_multicast_overlay ? local.overlay_network_ips : local.physical_ips
 
-  # Tinc mesh overlay (uses common logic)
-  tinc_data = local.tinc_data_common
+  # VXLAN multicast overlay (uses common logic)
+  overlay_data = local.overlay_data_common
 
   # Generic cloud-init template (shared across providers)
   # Template is copied to .templates/ in deployment directory during init
@@ -73,11 +73,10 @@ resource "digitalocean_vpc" "exasol_vpc" {
   region = var.digitalocean_region
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
   # This avoids conflicts with existing VPCs from failed/previous deployments
-  # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
-  # Provides 254 × 256 = 65,024 possible unique networks
+  # Format: 10.X.0.0/16 where X is derived from cluster ID hex digits
+  # Provides 254 possible unique networks
   # Use a /16 network and carve /24 subnets from it to reduce collision risk
-  # Reserve 10.254.0.0/16 for GRE overlay across providers
-  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 253) + 1}.0.0/16"
+  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254  ) + 1}.0.0/16"
 }
 
 # ==============================================================================
