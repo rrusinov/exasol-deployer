@@ -201,6 +201,10 @@ test_terraform_symlinks() {
 }
 EOF
             cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-credentials-file "$creds_file" 2>/dev/null
+        elif [[ "$provider" == "gcp" ]]; then
+            cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --gcp-project dummy-project 2>/dev/null
+        elif [[ "$provider" == "hetzner" ]]; then
+            cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --hetzner-token dummy-token 2>/dev/null
         else
             cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
         fi
