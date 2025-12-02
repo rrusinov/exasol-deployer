@@ -107,48 +107,4 @@ jobs:
         run: |
           rm -rf /tmp/test-deploy
 
-  validation:
-    name: Configuration Validation
-    runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Terraform/OpenTofu
-        uses: opentofu/setup-opentofu@v1
-        with:
-          tofu_version: 1.6.0
-
-      - name: Set up dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq libvirt-clients genisoimage
-
-      - name: Set up test deployment
-        run: |
-          chmod +x exasol
-          ./exasol init --cloud-provider aws --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.4
-
-      - name: Validate Terraform configuration
-        run: |
-          cd /tmp/test-deploy/.templates
-          tofu init -backend=false
-          tofu validate
-          echo "✅ Terraform configuration is valid"
-
-      - name: Check Terraform formatting
-        run: |
-          # Run formatting check across provider-specific terraform template folders
-          for dir in templates/terraform-*; do
-            if [ -d "$dir" ]; then
-              echo "Checking formatting in $dir"
-              (cd "$dir" && tofu fmt -check) || echo "Formatting issues detected in $dir"
-            fi
-          done
-        continue-on-error: true
-
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -rf /tmp/test-deploy

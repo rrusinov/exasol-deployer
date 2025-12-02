@@ -779,7 +779,7 @@ test_gcp_zone_configuration() {
     local default_dir
     default_dir=$(setup_test_dir)
 
-    cmd_init --cloud-provider gcp --deployment-dir "$default_dir"
+    cmd_init --cloud-provider gcp --deployment-dir "$default_dir" --gcp-project "test-project-123"
 
     if grep -q 'gcp_zone = "us-central1-a"' "$default_dir/variables.auto.tfvars"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -799,7 +799,8 @@ test_gcp_zone_configuration() {
     cmd_init --cloud-provider gcp \
         --deployment-dir "$custom_dir" \
         --gcp-region europe-west3 \
-        --gcp-zone europe-west3-b
+        --gcp-zone europe-west3-b \
+        --gcp-project "test-project-123"
 
     if grep -q 'gcp_zone = "europe-west3-b"' "$custom_dir/variables.auto.tfvars"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
