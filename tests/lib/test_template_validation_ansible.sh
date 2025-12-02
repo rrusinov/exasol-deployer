@@ -119,7 +119,7 @@ test_common_template_inclusion() {
         test_dir=$(setup_test_dir)
 
         if [[ "$provider" == "libvirt" ]]; then
-            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --libvirt-uri qemu:///system 2>/dev/null; then
+            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --libvirt-uri qemu:///system; then
                 echo "Warning: cmd_init failed for $provider (libvirt), continuing test..."
             fi
         elif [[ "$provider" == "azure" ]]; then
@@ -133,11 +133,11 @@ test_common_template_inclusion() {
   "subscriptionId": "test-subscription-id"
 }
 EOF
-            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-credentials-file "$creds_file" 2>/dev/null; then
+            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-credentials-file "$creds_file"; then
                 echo "Warning: cmd_init failed for $provider (azure), continuing test..."
             fi
         else
-            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null; then
+            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir"; then
                 echo "Warning: cmd_init failed for $provider, continuing test..."
             fi
         fi
