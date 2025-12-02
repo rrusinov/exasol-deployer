@@ -27,6 +27,12 @@ variable "allowed_cidr" {
   type        = string
 }
 
+variable "host_password" {
+  description = "Host OS password for the exasol user (e.g., SSH/console logins)."
+  type        = string
+  sensitive   = true
+}
+
 variable "root_volume_size" {
   description = "The size of the root volume in GB."
   type        = number

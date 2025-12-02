@@ -476,6 +476,11 @@ ssh -i ./my-azure-deployment/exasol-key.pem exasol@<public-ip>
 
 **Note:** The generated SSH config uses the `exasol` user and is the recommended way to access your cluster. Cloud-init automatically copies your SSH keys to the exasol user during deployment.
 
+Host OS password for the `exasol` user (useful for console access or password-based SSH if enabled):
+```bash
+cat .credentials.json | jq -r '.host_password'
+```
+
 ### Database Connection
 
 Find connection details:

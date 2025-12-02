@@ -44,6 +44,13 @@ variable "allowed_cidr" {
   # IMPORTANT: For security, set this to your own IP address (e.g., "1.2.3.4/32")
 }
 
+variable "host_password" {
+  description = "Host OS password for the exasol user (SSH/console access). Set with --host-password or generated automatically."
+  type        = string
+  sensitive   = true
+  # Value will be set in variables.auto.tfvars during initialization
+}
+
 variable "root_volume_size" {
   description = "The size of the root volume in GB."
   type        = number

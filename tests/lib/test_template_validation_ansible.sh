@@ -84,6 +84,7 @@ test_ansible_template_validation() {
            ! grep -q "{{[^}]*$" "$test_dir/.templates/config.j2"; then
             templates_valid=$((templates_valid + 1))
         fi
+        assert_contains "$(cat "$test_dir/.templates/config.j2")" "CCC_HOST_IMAGE_PASSWORD={{ exa_host_password }}" "Ansible config template uses host password variable"
     fi
 
     if [[ -f "$test_dir/.templates/exasol-data-symlinks.sh.j2" ]]; then
@@ -154,10 +155,32 @@ EOF
         ls -la "$test_dir/.templates/" 2>/dev/null || echo "Directory not found"
         if [[ -f "$test_dir/.templates/common.tf" ]]; then
             echo "File exists, checking contents"
-            grep -q "resource \"tls_private_key\" \"exasol_key\"" "$test_dir/.templates/common.tf" && echo "Found tls_private_key" || echo "Missing tls_private_key"
-            grep -q "resource \"random_id\" \"instance\"" "$test_dir/.templates/common.tf" && echo "Found random_id" || echo "Missing random_id"
-            if grep -q "resource \"tls_private_key\" \"exasol_key\"" "$test_dir/.templates/common.tf" && \
-               grep -q "resource \"random_id\" \"instance\"" "$test_dir/.templates/common.tf"; then
+            local has_tls=false
+            local has_random=false
+            local has_host_password=false
+
+            if grep -q "resource \"tls_private_key\" \"exasol_key\"" "$test_dir/.templates/common.tf"; then
+                has_tls=true
+                echo "Found tls_private_key"
+            else
+                echo "Missing tls_private_key"
+            fi
+
+            if grep -q "resource \"random_id\" \"instance\"" "$test_dir/.templates/common.tf"; then
+                has_random=true
+                echo "Found random_id"
+            else
+                echo "Missing random_id"
+            fi
+
+            if grep -q "var.host_password" "$test_dir/.templates/common.tf"; then
+                has_host_password=true
+                echo "Found host_password injection"
+            else
+                echo "Missing host_password injection"
+            fi
+
+            if [[ "$has_tls" == true && "$has_random" == true && "$has_host_password" == true ]]; then
                 TESTS_TOTAL=$((TESTS_TOTAL + 1))
                 TESTS_PASSED=$((TESTS_PASSED + 1))
                 echo -e "${GREEN}✓${NC} $provider: common.tf included and valid"

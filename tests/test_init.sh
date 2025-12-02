@@ -236,6 +236,37 @@ EOF
     cleanup_test_dir "$test_dir"
 }
 
+test_host_password_generation_and_override() {
+    echo ""
+    echo "Test: Host password generation and override"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+
+    cmd_init --cloud-provider aws --deployment-dir "$test_dir" --aws-region us-east-1
+
+    local generated_password
+    generated_password=$(jq -r '.host_password' "$test_dir/.credentials.json")
+
+    assert_equals "16" "${#generated_password}" "Generated host_password should use default length"
+    assert_contains "$(cat "$test_dir/variables.auto.tfvars")" "host_password = \"$generated_password\"" "TF vars should include generated host_password"
+
+    cleanup_test_dir "$test_dir"
+
+    test_dir=$(setup_test_dir)
+    local custom_password="MyHostPass1234"
+
+    cmd_init --cloud-provider aws --deployment-dir "$test_dir" --aws-region us-east-1 --host-password "$custom_password"
+
+    local stored_password
+    stored_password=$(jq -r '.host_password' "$test_dir/.credentials.json")
+
+    assert_equals "$custom_password" "$stored_password" "Custom host_password should be preserved"
+    assert_contains "$(cat "$test_dir/variables.auto.tfvars")" "host_password = \"$custom_password\"" "TF vars should include custom host_password"
+
+    cleanup_test_dir "$test_dir"
+}
+
 test_azure_credentials_file_usage() {
     echo ""
     echo "Test: Azure credentials file is written to tfvars"
@@ -911,6 +942,7 @@ test_aws_initialization
 test_template_directory_selection
 test_inventory_cloud_provider
 test_credentials_file
+test_host_password_generation_and_override
 test_azure_credentials_file_usage
 test_azure_subscription_precedence
 test_list_providers_shows_capabilities
