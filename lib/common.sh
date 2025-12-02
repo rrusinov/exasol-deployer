@@ -261,6 +261,11 @@ check_required_commands() {
     local missing_commands=()
     local version_issues=()
 
+    # Check bash version (>= 4.0)
+    if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+        version_issues+=("bash (version ${BASH_VERSION} too old, need >= 4.0)")
+    fi
+
     # Check essential tools
     if ! command_exists tofu; then
         missing_commands+=("tofu (OpenTofu)")
@@ -275,7 +280,7 @@ check_required_commands() {
     fi
 
     # Check standard Unix tools
-    local required_tools=("grep" "sed" "awk" "curl" "ssh" "cat" "dirname" "basename" "mktemp" "date" "find" "tr" "cut" "wc")
+    local required_tools=("grep" "sed" "awk" "sort" "uniq" "curl" "ssh" "cat" "dirname" "basename" "mktemp" "date" "find" "tr" "cut" "wc")
     for tool in "${required_tools[@]}"; do
         if ! command_exists "$tool"; then
             missing_commands+=("$tool")
