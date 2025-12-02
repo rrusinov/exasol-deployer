@@ -21,8 +21,9 @@ terraform {
 }
 
 provider "google" {
-  project = var.gcp_project
-  region  = var.gcp_region
+  project     = var.gcp_project
+  region      = var.gcp_region
+  credentials = file(var.gcp_credentials_file)
 }
 
 # ==============================================================================
@@ -42,11 +43,10 @@ resource "google_compute_network" "exasol" {
 resource "google_compute_subnetwork" "exasol" {
   name = "exasol-subnet"
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
-  # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
-  # Provides 254 × 256 = 65,024 possible unique networks
+  # Format: 10.X.0.0/16 where X is derived from cluster ID hex digits
+  # Provides 254 possible unique networks
   # Use /16 network and carve a /24 subnet from it for instances
-  # Reserve 10.254.0.0/16 for GRE overlay across providers
-  ip_cidr_range = cidrsubnet("10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 253) + 1}.0.0/16", 8, 1)
+  ip_cidr_range = cidrsubnet("10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.0.0/16", 8, 1)
   region        = var.gcp_region
   network       = google_compute_network.exasol.id
 }
@@ -125,11 +125,21 @@ locals {
   }
 
   # Node IPs for common outputs
+  # IMPORTANT: Use overlay IPs as "private IPs" so Exasol uses them for clustering
   node_public_ips  = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].access_config[0].nat_ip]
-  node_private_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].network_ip]
+  node_private_ips = local.overlay_network_ips # Overlay IPs for Exasol clustering
 
-  # GRE mesh overlay not used on GCP; keep empty to satisfy common inventory template
-  gre_data = {}
+  # Physical IPs for multicast overlay (used by common overlay logic)
+  physical_ips = [for instance in google_compute_instance.exasol_node : instance.network_interface[0].network_ip]
+
+  # Overlay mesh data for Ansible inventory (GCP requires overlay for proper networking - always enabled)
+  overlay_data = local.overlay_data_always_on
+
+  # Generic cloud-init template (shared across providers)
+  # Template is copied to .templates/ in deployment directory during init
+  cloud_init_template_path = "${path.module}/.templates/cloud-init-generic.tftpl"
+
+
 }
 
 # ==============================================================================
@@ -158,6 +168,15 @@ resource "google_compute_instance" "exasol_node" {
     }
   }
 
+  # Attach data disks inline to ensure they persist across stop/start cycles
+  dynamic "attached_disk" {
+    for_each = range(var.data_volumes_per_node)
+    content {
+      source      = google_compute_disk.data_volume[count.index * var.data_volumes_per_node + attached_disk.value].id
+      device_name = google_compute_disk.data_volume[count.index * var.data_volumes_per_node + attached_disk.value].name
+    }
+  }
+
   network_interface {
     subnetwork = google_compute_subnetwork.exasol.id
 
@@ -167,8 +186,10 @@ resource "google_compute_instance" "exasol_node" {
   }
 
   metadata = {
-    ssh-keys       = local.ssh_keys_metadata
-    startup-script = local.cloud_init_script
+    ssh-keys = local.ssh_keys_metadata
+    startup-script = templatefile(local.cloud_init_template_path, {
+      base_cloud_init = local.cloud_init_script
+    })
   }
 
   tags = ["exasol-cluster"]
@@ -179,6 +200,9 @@ resource "google_compute_instance" "exasol_node" {
     cluster = "exasol-cluster"
     owner   = var.owner
   }
+
+  # Ensure disks are created before attaching them
+  depends_on = [google_compute_disk.data_volume]
 }
 
 # ==============================================================================
@@ -198,12 +222,6 @@ resource "google_compute_disk" "data_volume" {
     node_index   = tostring(floor(count.index / var.data_volumes_per_node) + 11)
     owner        = var.owner
   }
-}
-
-resource "google_compute_attached_disk" "data_attachment" {
-  count    = var.node_count * var.data_volumes_per_node
-  disk     = google_compute_disk.data_volume[count.index].id
-  instance = google_compute_instance.exasol_node[floor(count.index / var.data_volumes_per_node)].id
 }
 
 # ==============================================================================

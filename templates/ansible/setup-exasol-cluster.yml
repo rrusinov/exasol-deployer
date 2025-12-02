@@ -9,26 +9,26 @@
   tasks:
     - name: Wait for SSH to become available (cloud-init may still be running)
       ansible.builtin.wait_for_connection:
-        timeout: 180
-        delay: 10
+        timeout: 300
+        delay: 15
+        sleep: 5
 
     - name: Ensure all host facts are gathered
       ansible.builtin.setup:
 
     - name: "PROGRESS: Ansible connection established"
       ansible.builtin.debug:
-        msg: "PROGRESS_MARKER: deploy:05:Ansible_Connection"
+        msg: "PROGRESS_MARKER: deploy:06:Ansible_Connection"
       run_once: true
 
 # ==============================================================================
 # PLAY 2: SETUP AND CONFIGURE EXASOL CLUSTER
-# This play runs serially (one node at a time) to perform the configuration.
-# ==============================================================================
+# This play runs in parallel to perform the configuration.
 - name: Play 2 - Setup and Configure Exasol Cluster
   hosts: exasol_nodes
   become: yes
-  gather_facts: no # Facts were already gathered in the first play
-  serial: 1
+  gather_facts: no
+  serial: 0
 
   vars:
     # --- User and Path Configuration ---
@@ -111,7 +111,7 @@
 
         - name: "PROGRESS: Node configuration complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:06:Node_Configuration"
+            msg: "PROGRESS_MARKER: deploy:07:Node_Configuration"
           run_once: true
 
     # ==============================================================================
@@ -160,7 +160,7 @@
             dest: "/home/{{ exa_user }}/.ssh/id_rsa"
             owner: "{{ exa_user }}"
             group: "{{ exa_user }}"
-            mode: '0600'
+            mode: "0600"
 
         - name: Add COS SSH config entry to exasol user's SSH config on all nodes
           ansible.builtin.blockinfile:
@@ -168,7 +168,7 @@
             create: yes
             owner: "{{ exa_user }}"
             group: "{{ exa_user }}"
-            mode: '0600'
+            mode: "0600"
             marker: "# {mark} ANSIBLE MANAGED BLOCK - COS Access"
             block: |
               Host cos
@@ -180,42 +180,70 @@
 
         - name: "PROGRESS: SSH key distribution complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:07:SSH_Key_Distribution"
+            msg: "PROGRESS_MARKER: deploy:08:SSH_Key_Distribution"
           run_once: true
 
     # ==============================================================================
-    # SECTION 2B: SETUP GRE MESH NETWORK (WHEN CONFIGURED)
+    # SECTION 2B: SETUP VXLAN MULTICAST OVERLAY (WHEN CONFIGURED)
     # ==============================================================================
-    - name: "SECTION 2B: Setup GRE mesh overlay network"
-      when: gre_ip is defined and gre_ip | length > 0
+    - name: "SECTION 2B: Setup VXLAN multicast overlay network"
+      when: overlay_ip is defined and overlay_ip | length > 0
       block:
-        - name: Install GRE mesh setup script for boot persistence
+        - name: Install overlay setup script for boot persistence
           ansible.builtin.template:
-            src: exasol-gre-mesh.sh.j2
-            dest: /usr/local/bin/exasol-gre-mesh.sh
+            src: exasol-overlay-setup.sh.j2
+            dest: /usr/local/bin/exasol-overlay-setup.sh
             owner: root
             group: root
-            mode: '0755'
+            mode: "0755"
 
-        - name: Install systemd service for GRE mesh on boot
+        - name: Install systemd service for overlay network on boot
           ansible.builtin.copy:
-            src: exasol-gre-mesh.service
-            dest: /etc/systemd/system/exasol-gre-mesh.service
+            src: exasol-overlay.service
+            dest: /etc/systemd/system/exasol-overlay.service
             owner: root
             group: root
-            mode: '0644'
+            mode: "0644"
           notify: Reload systemd
 
-        - name: Enable and start exasol-gre-mesh service
+        - name: Run overlay setup script
+          ansible.builtin.command: /usr/local/bin/exasol-overlay-setup.sh
+          register: overlay_setup_result
+          changed_when: true
+
+        - name: Display overlay setup output
+          ansible.builtin.debug:
+            var: overlay_setup_result.stdout_lines
+
+        - name: Enable and start overlay network service
           ansible.builtin.systemd:
-            name: exasol-gre-mesh.service
+            name: exasol-overlay.service
             enabled: yes
             daemon_reload: yes
             state: started
 
-        - name: "PROGRESS: GRE mesh network setup complete"
+        - name: Wait for VXLAN overlay device
+          ansible.builtin.command: ip addr show vxlan-br0
+          register: overlay_status
+          changed_when: false
+          retries: 36 # 36 * 5 seconds = 3 minutes max
+          delay: 5
+          until: overlay_status.rc == 0
+          failed_when: overlay_status.rc != 0
+
+        - name: Assert overlay IP is present
+          ansible.builtin.shell: ip -o addr show vxlan-br0 | grep -q "{{ overlay_ip }}"
+          register: overlay_ip_check
+          changed_when: false
+          failed_when: overlay_ip_check.rc != 0
+
+        - name: Display overlay network status
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:07b:GRE_Mesh_Network_Setup"
+            var: overlay_status.stdout_lines
+
+        - name: "PROGRESS: Overlay network setup complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:08b:Overlay_Network_Setup"
           run_once: true
 
     # ==============================================================================
@@ -238,7 +266,7 @@
             dest: /usr/local/bin/exasol-data-symlinks.sh
             owner: root
             group: root
-            mode: '0755'
+            mode: "0755"
 
         - name: Install systemd service for symlink creation on boot
           ansible.builtin.copy:
@@ -246,7 +274,7 @@
             dest: /etc/systemd/system/exasol-data-symlinks.service
             owner: root
             group: root
-            mode: '0644'
+            mode: "0644"
           notify: Reload systemd
 
         - name: Enable and start exasol-data-symlinks service
@@ -277,7 +305,7 @@
 
         - name: "PROGRESS: Disk discovery complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:08:Disk_Discovery"
+            msg: "PROGRESS_MARKER: deploy:09:Disk_Discovery"
           run_once: true
 
   handlers:
@@ -314,15 +342,22 @@
       ansible.builtin.set_fact:
         data_disk_paths: "{{ exasol_symlinks.stdout_lines }}"
 
+    - name: Compute internal IPs for Exasol config
+      ansible.builtin.set_fact:
+        computed_internal_ips: "{{ (computed_internal_ips | default([])) + [ hostvars[item].overlay_ip | default(hostvars[item].private_ip) ] }}"
+      loop: "{{ groups['exasol_nodes'] }}"
+      loop_control:
+        loop_var: item
+
     - name: Create final Exasol config file from template
       ansible.builtin.template:
         src: "{{ playbook_dir }}/config.j2"
         dest: "/home/{{ exa_user }}/config"
         owner: "{{ exa_user }}"
         group: "{{ exa_user }}"
-        mode: '0644'
+        mode: "0644"
       vars:
-        internal_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, 'private_ip') | join(' ') }}"
+        internal_ips: "{{ computed_internal_ips | join(' ') }}"
         external_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, 'ansible_host') | join(' ') }}"
         data_disk_paths_var: "{{ data_disk_paths | join(',') }}"
         exa_image_password: "{{ random_image_pass }}"
@@ -330,7 +365,7 @@
 
     - name: "PROGRESS: Config generation complete"
       ansible.builtin.debug:
-        msg: "PROGRESS_MARKER: deploy:09:Config_Generation"
+        msg: "PROGRESS_MARKER: deploy:10:Config_Generation"
 
     - name: Create installation directory on primary node
       ansible.builtin.file:
@@ -338,7 +373,7 @@
         state: directory
         owner: "{{ exa_user }}"
         group: "{{ exa_user }}"
-        mode: '0755'
+        mode: "0755"
 
     - name: Move generated config file into place
       ansible.builtin.command:
@@ -352,7 +387,7 @@
         dest: "/home/{{ exa_user }}/exasol-release/{{ db_artifact_filename }}"
         owner: "{{ exa_user }}"
         group: "{{ exa_user }}"
-        mode: '0644'
+        mode: "0644"
 
     - name: Download Exasol database tarball
       when: not (db_is_local | bool)
@@ -361,7 +396,7 @@
         dest: "/home/{{ exa_user }}/exasol-release/{{ db_artifact_filename }}"
         owner: "{{ exa_user }}"
         group: "{{ exa_user }}"
-        mode: '0644'
+        mode: "0644"
       register: db_download
       retries: 3
       delay: 5
@@ -373,7 +408,7 @@
         dest: "/home/{{ exa_user }}/exasol-release/{{ c4_artifact_filename }}"
         owner: "{{ exa_user }}"
         group: "{{ exa_user }}"
-        mode: '0755'
+        mode: "0755"
 
     - name: Download c4 binary
       when: not (c4_is_local | bool)
@@ -382,14 +417,14 @@
         dest: "/home/{{ exa_user }}/exasol-release/{{ c4_artifact_filename }}"
         owner: "{{ exa_user }}"
         group: "{{ exa_user }}"
-        mode: '0755'
+        mode: "0755"
       register: c4_download
       retries: 3
       delay: 5
 
     - name: "PROGRESS: Artifact transfer complete"
       ansible.builtin.debug:
-        msg: "PROGRESS_MARKER: deploy:10:Artifact_Transfer"
+        msg: "PROGRESS_MARKER: deploy:11:Artifact_Transfer"
 
     # ==============================================================================
     # SECTION 5: VERIFY CHECKSUMS AND DEPLOY EXASOL
@@ -423,7 +458,7 @@
 
         - name: "PROGRESS: Checksum verification complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:11:Checksum_Verification"
+            msg: "PROGRESS_MARKER: deploy:12:Checksum_Verification"
 
         - name: Rename c4 binary to 'c4' for convenience
           ansible.builtin.command:
@@ -446,7 +481,7 @@
 
         - name: "PROGRESS: C4 diagnostic complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:12:C4_Diagnostic"
+            msg: "PROGRESS_MARKER: deploy:13:C4_Diagnostic"
 
         - name: Start Exasol database deployment
           ansible.builtin.command:
@@ -454,15 +489,15 @@
             chdir: "/home/{{ exa_user }}/exasol-release"
           become_user: "{{ exa_user }}"
           register: c4_play
-          async: 600  # Allow up to 10 minutes for deployment
-          poll: 0     # Don't wait, check status later
+          async: 600 # Allow up to 10 minutes for deployment
+          poll: 0 # Don't wait, check status later
 
         - name: Wait for C4 deployment to complete
           ansible.builtin.async_status:
             jid: "{{ c4_play.ansible_job_id }}"
           register: c4_play_result
           until: c4_play_result.finished
-          retries: 60  # 60 * 10 seconds = 10 minutes max
+          retries: 60 # 60 * 10 seconds = 10 minutes max
           delay: 10
           become_user: "{{ exa_user }}"
 
@@ -472,7 +507,7 @@
 
         - name: "PROGRESS: Exasol deployment complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:13:Exasol_Deployment"
+            msg: "PROGRESS_MARKER: deploy:14:Exasol_Deployment"
 
         - name: Wait for database to boot (stage 'd')
           ansible.builtin.command:
@@ -480,7 +515,7 @@
             chdir: "/home/{{ exa_user }}/exasol-release"
           become_user: "{{ exa_user }}"
           register: c4_wait
-          timeout: 600  # 10 minutes timeout
+          timeout: 600 # 10 minutes timeout
           changed_when: false
 
         - name: Display database boot status
@@ -489,7 +524,7 @@
 
         - name: "PROGRESS: Database startup complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:14:Database_Startup"
+            msg: "PROGRESS_MARKER: deploy:15:Database_Startup"
 
         - name: Display deployment completion message
           ansible.builtin.debug:
@@ -501,4 +536,4 @@
 
         - name: "PROGRESS: Deploy complete"
           ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:15:Deploy_Complete"
+            msg: "PROGRESS_MARKER: deploy:16:Deploy_Complete"

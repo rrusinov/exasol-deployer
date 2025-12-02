@@ -109,11 +109,11 @@ test_stop_aws_runs_tofu_and_no_fallback() {
     local ansible_calls
     ansible_calls=$(get_ansible_calls)
     if [[ "$ansible_calls" == *"power_off_fallback=true"* ]]; then
-        TESTS_TOTAL=$((TESTS_TOTAL + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} AWS stop should not use power_off_fallback"
-    else
         TESTS_TOTAL=$((TESTS_TOTAL + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
-        echo -e "${GREEN}✓${NC} AWS stop avoided power_off_fallback"
+        echo -e "${GREEN}✓${NC} AWS stop now uses power_off_fallback for graceful shutdown"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} AWS stop should use power_off_fallback for graceful shutdown"
     fi
 
     cleanup_test_dir "$dir"
@@ -136,7 +136,7 @@ test_stop_hetzner_fallback_no_tofu() {
 
     local ansible_calls
     ansible_calls=$(get_ansible_calls)
-    assert_contains "$ansible_calls" "power_off_fallback=true" "Hetzner stop should enable power_off_fallback"
+    assert_contains "$ansible_calls" "power_off_fallback=true" "All providers now use power_off_fallback for graceful shutdown"
 
     cleanup_test_dir "$dir"
     cleanup_mock_bins

@@ -33,10 +33,10 @@ EOF
     first_line=$(echo "$output" | head -n1)
     last_line=$(echo "$output" | tail -n1)
 
-    assert_contains "$first_line" "[01/15]" "First deploy step should start at 1"
+    assert_contains "$first_line" "[01/18]" "First deploy step should start at 1"
     assert_contains "$first_line" "Terraform Init" "Step 1 label should be Terraform Init"
 
-    assert_contains "$last_line" "[15/15]" "Last deploy step should reach 15"
+    assert_contains "$last_line" "[18/18]" "Last deploy step should reach 18"
     assert_contains "$last_line" "Deploy Complete" "Final label should be Deploy Complete"
 }
 
@@ -74,9 +74,9 @@ EOF
     second_line=$(echo "$output" | sed -n '2p')
     third_line=$(echo "$output" | sed -n '3p')
 
-    assert_contains "$second_line" "[02/15]" "Second line should show step 2 for network"
+    assert_contains "$second_line" "[02/18]" "Second line should show step 2 for network"
     assert_contains "$second_line" "Network Creation" "Second line should show Network Creation"
-    assert_contains "$third_line" "[04/15]" "Third line should advance to step 4 for volume"
+    assert_contains "$third_line" "[04/18]" "Third line should advance to step 4 for volume"
     assert_contains "$third_line" "Volume Provisioning" "Third line should show Volume Provisioning"
 }
 
@@ -97,7 +97,7 @@ EOF
     output=$(printf "%s" "$input" | progress_display_steps "start")
     last_line=$(echo "$output" | tail -n1)
 
-    assert_contains "$last_line" "[5/5]" "Start should reach final step"
+    assert_contains "$last_line" "[6/6]" "Start should reach final step"
     assert_contains "$last_line" "Start Complete" "Start final label should be Start Complete"
 }
 
@@ -105,9 +105,10 @@ test_progress_stop_steps_sequence() {
     echo ""
     echo "Test: stop progress advances across all steps"
 
-    local input output third_line last_line
+    local input output fourth_line last_line
     input=$(
         cat <<'EOF'
+Database shutdown complete
 Stopping Exasol database cluster...
 Verify all services are stopped
 Power off hosts via in-guest shutdown (fallback for unsupported providers)
@@ -117,12 +118,12 @@ EOF
     )
 
     output=$(printf "%s" "$input" | progress_display_steps "stop")
-    third_line=$(echo "$output" | sed -n '3p')
+    fourth_line=$(echo "$output" | sed -n '4p')
     last_line=$(echo "$output" | tail -n1)
 
-    assert_contains "$third_line" "[3/5]" "Stop should reach power-off step"
-    assert_contains "$third_line" "Infrastructure Power-Off" "Step 3 label should be Infrastructure Power-Off"
-    assert_contains "$last_line" "[5/5]" "Stop should reach final verification step"
+    assert_contains "$fourth_line" "[4/6]" "Stop should reach power-off step"
+    assert_contains "$fourth_line" "Infrastructure Power-Off" "Step 4 label should be Infrastructure Power-Off"
+    assert_contains "$last_line" "[6/6]" "Stop should reach final verification step"
     assert_contains "$last_line" "Stop Complete" "Stop final label should be Stop Complete"
 }
 

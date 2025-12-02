@@ -76,6 +76,12 @@ variable "enable_spot_instances" {
   default     = false
 }
 
+variable "enable_multicast_overlay" {
+  description = "Enable VXLAN overlay network for multicast support. Set with --enable-multicast-overlay during initialization."
+  type        = bool
+  default     = false
+}
+
 variable "infra_desired_state" {
   description = "Desired infrastructure power state ('running' or 'stopped')."
   type        = string

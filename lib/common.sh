@@ -330,10 +330,7 @@ check_provider_requirements() {
     local missing_commands=()
     local warnings=()
 
-    # Skip provider checks in test mode
-    if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
-        return 0
-    fi
+
 
     case "$provider" in
         libvirt)

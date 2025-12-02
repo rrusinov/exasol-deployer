@@ -12,12 +12,18 @@
   hosts: exasol_nodes
   become: yes
   tasks:
+    - name: Wait for SSH to become available (VM may still be booting)
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        delay: 15
+        sleep: 5
+
     - name: Ensure all host facts are gathered
       ansible.builtin.setup:
 
     - name: "PROGRESS: Ansible connection established"
       ansible.builtin.debug:
-        msg: "PROGRESS_MARKER: start:02:Ansible_Connection"
+        msg: "PROGRESS_MARKER: start:03:Ansible_Connection"
       run_once: true
 
 # ==============================================================================
@@ -64,6 +70,23 @@
     # ==============================================================================
     # START DATABASE SERVICES VIA SYSTEMD ON ALL NODES
     # ==============================================================================
+    - name: Start overlay network service (VXLAN)
+      ansible.builtin.systemd:
+        name: exasol-overlay.service
+        state: started
+      register: start_overlay
+      failed_when: false
+
+    - name: Wait for overlay interface to be ready
+      ansible.builtin.command: ip -o addr show vxlan-br0
+      register: overlay_status
+      retries: 10
+      delay: 3
+      until: overlay_status.rc == 0
+      changed_when: false
+      failed_when: overlay_status.rc != 0
+      when: start_overlay is defined
+
     - name: Start exasol-data-symlinks.service (if exists)
       ansible.builtin.systemd:
         name: exasol-data-symlinks.service
@@ -92,7 +115,7 @@
 
     - name: "PROGRESS: Service startup complete"
       ansible.builtin.debug:
-        msg: "PROGRESS_MARKER: start:03:Service_Startup"
+        msg: "PROGRESS_MARKER: start:04:Service_Startup"
       run_once: true
 
     # ==============================================================================
@@ -117,7 +140,7 @@
 
     - name: "PROGRESS: Database boot complete"
       ansible.builtin.debug:
-        msg: "PROGRESS_MARKER: start:04:Database_Boot"
+        msg: "PROGRESS_MARKER: start:05:Database_Boot"
       run_once: true
 
     # ==============================================================================
@@ -138,6 +161,7 @@
     - name: Display start summary
       ansible.builtin.debug:
         msg:
+          - "✓ {{ inventory_hostname }}: exasol-overlay.service started: {{ start_overlay.changed | default(false) }}"
           - "✓ {{ inventory_hostname }}: exasol-data-symlinks.service started: {{ start_data_symlinks.changed | default(false) }}"
           - "✓ {{ inventory_hostname }}: c4_cloud_command.service started: {{ start_cloud_command.changed | default(false) }}"
           - "✓ {{ inventory_hostname }}: c4.service started: {{ start_c4.changed }}"
@@ -149,5 +173,5 @@
 
     - name: "PROGRESS: Start complete"
       ansible.builtin.debug:
-        msg: "PROGRESS_MARKER: start:05:Start_Complete"
+        msg: "PROGRESS_MARKER: start:06:Start_Complete"
       run_once: true

@@ -15,7 +15,7 @@ test_ansible_playbook_validation() {
     local test_dir
     test_dir=$(setup_test_dir)
 
-    EXASOL_SKIP_PROVIDER_CHECKS=1 cmd_init --cloud-provider aws --deployment-dir "$test_dir" 2>/dev/null
+    cmd_init --cloud-provider aws --deployment-dir "$test_dir" --aws-region us-east-1 2>/dev/null
 
     if [[ ! -f "$test_dir/.templates/setup-exasol-cluster.yml" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -119,7 +119,7 @@ test_common_template_inclusion() {
         test_dir=$(setup_test_dir)
 
         if [[ "$provider" == "libvirt" ]]; then
-            if ! EXASOL_SKIP_PROVIDER_CHECKS=1 cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null; then
+            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --libvirt-uri qemu:///system; then
                 echo "Warning: cmd_init failed for $provider (libvirt), continuing test..."
             fi
         elif [[ "$provider" == "azure" ]]; then
@@ -133,16 +133,29 @@ test_common_template_inclusion() {
   "subscriptionId": "test-subscription-id"
 }
 EOF
-            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-credentials-file "$creds_file" 2>/dev/null; then
+            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-credentials-file "$creds_file"; then
                 echo "Warning: cmd_init failed for $provider (azure), continuing test..."
             fi
+        elif [[ "$provider" == "gcp" ]]; then
+            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --gcp-project dummy-project; then
+                echo "Warning: cmd_init failed for $provider (gcp), continuing test..."
+            fi
+        elif [[ "$provider" == "hetzner" ]]; then
+            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --hetzner-token dummy-token; then
+                echo "Warning: cmd_init failed for $provider (hetzner), continuing test..."
+            fi
         else
-            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null; then
+            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir"; then
                 echo "Warning: cmd_init failed for $provider, continuing test..."
             fi
         fi
 
+        echo "Checking for common.tf in $test_dir/.templates/common.tf"
+        ls -la "$test_dir/.templates/" 2>/dev/null || echo "Directory not found"
         if [[ -f "$test_dir/.templates/common.tf" ]]; then
+            echo "File exists, checking contents"
+            grep -q "resource \"tls_private_key\" \"exasol_key\"" "$test_dir/.templates/common.tf" && echo "Found tls_private_key" || echo "Missing tls_private_key"
+            grep -q "resource \"random_id\" \"instance\"" "$test_dir/.templates/common.tf" && echo "Found random_id" || echo "Missing random_id"
             if grep -q "resource \"tls_private_key\" \"exasol_key\"" "$test_dir/.templates/common.tf" && \
                grep -q "resource \"random_id\" \"instance\"" "$test_dir/.templates/common.tf"; then
                 TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -175,7 +188,7 @@ test_terraform_symlinks() {
         local test_dir
         test_dir=$(setup_test_dir)
         if [[ "$provider" == "libvirt" ]]; then
-            EXASOL_SKIP_PROVIDER_CHECKS=1 cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
+            cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --libvirt-uri qemu:///system 2>/dev/null
         elif [[ "$provider" == "azure" ]]; then
             # Create dummy Azure credentials for template validation
             local creds_file="$test_dir/azure_test_creds.json"
@@ -188,6 +201,10 @@ test_terraform_symlinks() {
 }
 EOF
             cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-credentials-file "$creds_file" 2>/dev/null
+        elif [[ "$provider" == "gcp" ]]; then
+            cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --gcp-project dummy-project 2>/dev/null
+        elif [[ "$provider" == "hetzner" ]]; then
+            cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --hetzner-token dummy-token 2>/dev/null
         else
             cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" 2>/dev/null
         fi

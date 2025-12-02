@@ -24,7 +24,7 @@ test_aws_template_validation() {
         return
     fi
 
-    cd "$test_dir/.templates" || exit 1
+    cd "$test_dir" || exit 1
     local rc=0
     if ! tofu_init_strict "AWS"; then
         rc=$?
@@ -82,7 +82,7 @@ EOF
         return
     fi
 
-    cd "$test_dir/.templates" || exit 1
+    cd "$test_dir" || exit 1
     local rc=0
     if ! tofu_init_strict "Azure"; then
         rc=$?
@@ -119,7 +119,25 @@ test_gcp_template_validation() {
 
     local test_dir
     test_dir=$(setup_test_dir)
-    cmd_init --cloud-provider gcp --deployment-dir "$test_dir" 2>/dev/null
+
+    # Create dummy GCP credentials for template validation
+    local creds_file="$test_dir/gcp_test_creds.json"
+    cat > "$creds_file" << 'EOF'
+{
+  "type": "service_account",
+  "project_id": "test-project-123",
+  "private_key_id": "test-key-id",
+  "private_key": "-----BEGIN PRIVATE KEY-----\ntest-private-key\n-----END PRIVATE KEY-----\n",
+  "client_email": "test@test-project-123.iam.gserviceaccount.com",
+  "client_id": "123456789",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/test%40test-project-123.iam.gserviceaccount.com"
+}
+EOF
+
+    cmd_init --cloud-provider gcp --deployment-dir "$test_dir" --gcp-credentials-file "$creds_file" 2>/dev/null
 
     if [[ ! -d "$test_dir/.templates" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -129,7 +147,7 @@ test_gcp_template_validation() {
         return
     fi
 
-    cd "$test_dir/.templates" || exit 1
+    cd "$test_dir" || exit 1
     local rc=0
     if ! tofu_init_strict "GCP"; then
         rc=$?
@@ -176,7 +194,7 @@ test_hetzner_template_validation() {
         return
     fi
 
-    cd "$test_dir/.templates" || exit 1
+    cd "$test_dir" || exit 1
     local rc=0
     if ! tofu_init_strict "Hetzner"; then
         rc=$?
@@ -213,7 +231,7 @@ test_digitalocean_template_validation() {
 
     local test_dir
     test_dir=$(setup_test_dir)
-    cmd_init --cloud-provider digitalocean --deployment-dir "$test_dir" 2>/dev/null
+    cmd_init --cloud-provider digitalocean --deployment-dir "$test_dir" --digitalocean-token "dummy-token-for-testing-12345" 2>/dev/null
 
     if [[ ! -d "$test_dir/.templates" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -223,7 +241,7 @@ test_digitalocean_template_validation() {
         return
     fi
 
-    cd "$test_dir/.templates" || exit 1
+    cd "$test_dir" || exit 1
     local rc=0
     if ! tofu_init_strict "DigitalOcean"; then
         rc=$?
@@ -260,7 +278,7 @@ test_libvirt_template_validation() {
 
     local test_dir
     test_dir=$(setup_test_dir)
-    cmd_init --cloud-provider libvirt --deployment-dir "$test_dir" 2>/dev/null
+    cmd_init --cloud-provider libvirt --deployment-dir "$test_dir" --libvirt-uri qemu:///system 2>/dev/null
 
     if [[ ! -d "$test_dir/.templates" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -270,7 +288,7 @@ test_libvirt_template_validation() {
         return
     fi
 
-    cd "$test_dir/.templates" || exit 1
+    cd "$test_dir" || exit 1
     local rc=0
     if ! tofu_init_strict "Libvirt"; then
         rc=$?

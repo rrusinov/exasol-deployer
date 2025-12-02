@@ -13,8 +13,33 @@ on:
 
 jobs:
   unit-tests:
-    name: Unit Tests
+    name: Unit Test - ${{ matrix.test_file }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test_file:
+          - test_shellcheck
+          - test_common
+          - test_progress
+          - test_versions
+          - test_state
+          - test_init
+          - test_power_control
+          - test_deploy_failures
+          - test_destroy_failures
+          - test_status
+          - test_template_formatting
+          - test_template_validation_common
+          - test_template_validation_aws
+          - test_template_validation_azure
+          - test_template_validation_gcp
+          - test_template_validation_hetzner
+          - test_template_validation_digitalocean
+          - test_template_validation_libvirt
+          - test_url_availability
+          - test_documentation
+          - test_help_options
+          - test_e2e_framework
 
     steps:
       - name: Checkout code
@@ -25,31 +50,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq python3 libvirt-clients genisoimage
 
-      - name: Detect libvirt availability
-        run: |
-          if command -v virsh >/dev/null 2>&1 && virsh uri >/dev/null 2>&1; then
-            echo "Libvirt available; running full unit test suite."
-            echo "EXASOL_SKIP_LIBVIRT_TESTS=0" >> "$GITHUB_ENV"
-          else
-            echo "Libvirt not available; skipping libvirt-specific unit tests."
-            echo "EXASOL_SKIP_LIBVIRT_TESTS=1" >> "$GITHUB_ENV"
-          fi
 
       - name: Install Terraform/OpenTofu
         uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: 1.6.0
 
-      - name: Run unit tests
+      - name: Run ${{ matrix.test_file }} test
         run: |
-          ./tests/run_tests.sh
+          export DIGITALOCEAN_TOKEN="${DIGITALOCEAN_TOKEN:-test-token}"
+          ./tests/${{ matrix.test_file }}.sh
 
       - name: Generate test report
         if: always()
         run: |
-          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "## Test Results for ${{ matrix.test_file }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Unit tests completed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ ${{ matrix.test_file }} completed" >> $GITHUB_STEP_SUMMARY
 
   shellcheck:
     name: Shell Script Linting
@@ -109,52 +126,6 @@ jobs:
       - name: Test status command
         run: |
           ./exasol status --deployment-dir /tmp/test-deploy
-
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -rf /tmp/test-deploy
-
-  validation:
-    name: Configuration Validation
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Terraform/OpenTofu
-        uses: opentofu/setup-opentofu@v1
-        with:
-          tofu_version: 1.6.0
-
-      - name: Set up dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq libvirt-clients genisoimage
-
-      - name: Set up test deployment
-        run: |
-          chmod +x exasol
-          ./exasol init --cloud-provider aws --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.4
-
-      - name: Validate Terraform configuration
-        run: |
-          cd /tmp/test-deploy/.templates
-          tofu init -backend=false
-          tofu validate
-          echo "✅ Terraform configuration is valid"
-
-      - name: Check Terraform formatting
-        run: |
-          # Run formatting check across provider-specific terraform template folders
-          for dir in templates/terraform-*; do
-            if [ -d "$dir" ]; then
-              echo "Checking formatting in $dir"
-              (cd "$dir" && tofu fmt -check) || echo "Formatting issues detected in $dir"
-            fi
-          done
-        continue-on-error: true
 
       - name: Cleanup
         if: always()

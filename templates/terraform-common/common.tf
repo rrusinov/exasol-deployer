@@ -80,6 +80,12 @@ locals {
         chmod 0440 "/etc/sudoers.d/10-$cloud_user-user"
       fi
     done
+
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq
+      apt-get install -y iproute2
+    fi
   EOF
 }
 
@@ -99,6 +105,10 @@ Host n${idx + 11}
     IdentitiesOnly yes
     StrictHostKeyChecking no
     UserKnownHostsFile=/dev/null
+    ConnectTimeout 30
+    ConnectionAttempts 5
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
 
 Host n${idx + 11}-cos
     HostName ${ip}
@@ -108,6 +118,10 @@ Host n${idx + 11}-cos
     IdentitiesOnly yes
     StrictHostKeyChecking no
     UserKnownHostsFile=/dev/null
+    ConnectTimeout 30
+    ConnectionAttempts 5
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
 
 %{endfor~}
   EOF
@@ -129,7 +143,7 @@ resource "local_file" "ansible_inventory" {
     node_volumes   = local.node_volumes
     cloud_provider = local.provider_code
     ssh_key        = local_file.exasol_private_key_pem.filename
-    gre_data       = try(local.gre_data, {})
+    overlay_data   = try(local.overlay_data, {})
   })
   filename        = "${path.module}/inventory.ini"
   file_permission = "0644"
@@ -138,10 +152,52 @@ resource "local_file" "ansible_inventory" {
 }
 
 # ==============================================================================
-# Common Variables (shared structure)
+# VXLAN Multicast Overlay Logic (shared across providers)
 # ==============================================================================
+
+locals {
+  # Reserve 172.16.0.0/16 for multicast overlay across providers
+  # Overlay network IPs (172.16.0.0/16) - used for Exasol clustering
+  overlay_network_ips = [for idx in range(var.node_count) : "172.16.0.${idx + 11}"]
+
+  # All nodes are seed nodes for full mesh connectivity in overlay network
+  seed_node_indices = [for idx in range(var.node_count) : idx]
+
+  # Common overlay data structure - providers can override physical_ips
+  # This respects the enable_multicast_overlay variable (for AWS, Azure, DigitalOcean, Libvirt)
+  overlay_data_common = var.enable_multicast_overlay ? {
+    for idx in range(var.node_count) : idx => {
+      overlay_ip  = local.overlay_network_ips[idx]
+      physical_ip = try(local.physical_ips[idx], "")
+      is_seed     = contains(local.seed_node_indices, idx)
+      seed_nodes = [
+        for seed_idx in local.seed_node_indices : {
+          name = "n${seed_idx + 11}"
+          ip   = try(local.physical_ips[seed_idx], "")
+        }
+      ]
+    }
+  } : {}
+
+  # Always-on overlay data structure for providers that require overlay unconditionally
+  # Used by GCP and Hetzner (they require overlay networking for proper multicast)
+  overlay_data_always_on = {
+    for idx in range(var.node_count) : idx => {
+      overlay_ip  = local.overlay_network_ips[idx]
+      physical_ip = local.physical_ips[idx]
+      is_seed     = contains(local.seed_node_indices, idx)
+      seed_nodes = [
+        for seed_idx in local.seed_node_indices : {
+          name = "n${seed_idx + 11}"
+          ip   = local.physical_ips[seed_idx]
+        }
+      ]
+    }
+  }
+}
 
 # These are used by the common outputs but defined in provider-specific variables.tf
 # variable "node_count" { ... }
 # variable "data_volumes_per_node" { ... }
 # variable "owner" { ... }
+# variable "enable_multicast_overlay" { ... }

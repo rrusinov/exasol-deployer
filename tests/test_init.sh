@@ -64,6 +64,10 @@ test_valid_cloud_providers() {
             local dummy_creds="$test_dir/azure.json"
             echo '{"appId":"a","password":"p","tenant":"t"}' > "$dummy_creds"
             args+=(--azure-subscription "dummy-sub" --azure-credentials-file "$dummy_creds")
+        elif [[ "$provider" == "gcp" ]]; then
+            args+=(--gcp-project "dummy-project")
+        elif [[ "$provider" == "hetzner" ]]; then
+            args+=(--hetzner-token "dummy-token")
         fi
 
         # Initialize with valid provider
@@ -174,7 +178,7 @@ test_inventory_cloud_provider() {
 
     local test_dir=$(setup_test_dir)
 
-    cmd_init --cloud-provider aws --deployment-dir "$test_dir"
+    cmd_init --cloud-provider aws --deployment-dir "$test_dir" --aws-region us-east-1
 
     local inventory_template="$test_dir/.templates/inventory.tftpl"
     if [[ -f "$inventory_template" ]] && grep -q "cloud_provider=" "$inventory_template"; then
@@ -295,12 +299,7 @@ test_exasol_entrypoint_init_providers() {
     echo ""
     echo "Test: exasol entrypoint init works for all providers"
 
-    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean")
-    if [[ "${EXASOL_SKIP_LIBVIRT_TESTS:-}" != "1" ]]; then
-        providers+=("libvirt")
-    else
-        echo -e "${YELLOW}⊘${NC} Skipping libvirt entrypoint init (EXASOL_SKIP_LIBVIRT_TESTS=1)"
-    fi
+    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean" "libvirt")
 
     for provider in "${providers[@]}"; do
         local test_dir
@@ -308,11 +307,15 @@ test_exasol_entrypoint_init_providers() {
 
         local init_cmd
         if [[ "$provider" == "libvirt" ]]; then
-            init_cmd=(env EXASOL_SKIP_PROVIDER_CHECKS=1 "$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
+            init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" --libvirt-uri qemu:///system)
         elif [[ "$provider" == "azure" ]]; then
             local dummy_creds="$test_dir/azure.json"
             echo '{"appId":"a","password":"p","tenant":"t"}' > "$dummy_creds"
             init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-subscription "dummy-sub" --azure-credentials-file "$dummy_creds")
+        elif [[ "$provider" == "gcp" ]]; then
+            init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" --gcp-project "dummy-project")
+        elif [[ "$provider" == "hetzner" ]]; then
+            init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" --hetzner-token "dummy-token")
         else
             init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
         fi
@@ -363,7 +366,7 @@ test_readme_generation() {
 
     local test_dir=$(setup_test_dir)
 
-    cmd_init --cloud-provider gcp --deployment-dir "$test_dir"
+    cmd_init --cloud-provider gcp --deployment-dir "$test_dir" --gcp-project "test-project-123"
 
     if [[ -f "$test_dir/README.md" ]]; then
         if grep -q "Google Cloud Platform" "$test_dir/README.md"; then
@@ -433,7 +436,8 @@ test_root_volume_size() {
     # Initialize with custom root volume size
     cmd_init --cloud-provider aws \
         --deployment-dir "$test_dir" \
-        --root-volume-size 100
+        --root-volume-size 100 \
+        --aws-region us-east-1
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
         if grep -q "root_volume_size = 100" "$test_dir/variables.auto.tfvars"; then
@@ -553,7 +557,8 @@ test_digitalocean_initialization() {
     # Initialize with DigitalOcean
     cmd_init --cloud-provider digitalocean \
         --deployment-dir "$test_dir" \
-        --digitalocean-region nyc3
+        --digitalocean-region nyc3 \
+        --digitalocean-token "dummy-token-for-testing-12345"
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -725,14 +730,14 @@ test_hetzner_private_ip_template() {
         return
     fi
 
-    if grep -q "node_private_ips = local.gre_overlay_ips" "$template_file"; then
+    if grep -q "node_private_ips = local.overlay_network_ips" "$template_file"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
-        echo -e "${GREEN}✓${NC} Hetzner node_private_ips use GRE overlay"
+        echo -e "${GREEN}✓${NC} Hetzner node_private_ips use multicast overlay"
     else
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} Hetzner node_private_ips should use GRE overlay IPs"
+        echo -e "${RED}✗${NC} Hetzner node_private_ips should use multicast overlay IPs"
     fi
 }
 
@@ -782,7 +787,7 @@ test_gcp_zone_configuration() {
     local default_dir
     default_dir=$(setup_test_dir)
 
-    cmd_init --cloud-provider gcp --deployment-dir "$default_dir"
+    cmd_init --cloud-provider gcp --deployment-dir "$default_dir" --gcp-project "test-project-123"
 
     if grep -q 'gcp_zone = "us-central1-a"' "$default_dir/variables.auto.tfvars"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -802,7 +807,8 @@ test_gcp_zone_configuration() {
     cmd_init --cloud-provider gcp \
         --deployment-dir "$custom_dir" \
         --gcp-region europe-west3 \
-        --gcp-zone europe-west3-b
+        --gcp-zone europe-west3-b \
+        --gcp-project "test-project-123"
 
     if grep -q 'gcp_zone = "europe-west3-b"' "$custom_dir/variables.auto.tfvars"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))

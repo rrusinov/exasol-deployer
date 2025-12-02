@@ -95,6 +95,33 @@ resolve_provider_token() {
     echo ""
 }
 
+# Load GCP credentials from a service account key JSON file
+load_gcp_credentials_file() {
+    local file_path="${1:-}"
+
+    # Expand leading ~ to HOME for consistency
+    if [[ $file_path == ~/* ]]; then
+        file_path="${HOME}${file_path#~}"
+    fi
+
+    if [[ -z "$file_path" || ! -f "$file_path" ]]; then
+        echo ""
+        return 1
+    fi
+
+    local project_id client_email
+    project_id=$(jq -r '.project_id // empty' "$file_path" 2>/dev/null || true)
+    client_email=$(jq -r '.client_email // empty' "$file_path" 2>/dev/null || true)
+
+    if [[ -z "$project_id" || -z "$client_email" ]]; then
+        log_warn "GCP credentials file $file_path is missing project_id or client_email fields"
+        echo ""
+        return 1
+    fi
+
+    echo "$file_path|$project_id|$client_email"
+}
+
 # Load Azure credentials from a JSON file (output of az ad sp create-for-rbac)
 load_azure_credentials_file() {
     local file_path="${1:-}"
@@ -149,6 +176,7 @@ Common Flags:
   --adminui-password <password>  Admin UI password (random if not specified)
   --owner <tag>                  Owner tag for resources (default: "exasol-deployer")
   --allowed-cidr <cidr>          CIDR allowed to access cluster (default: "0.0.0.0/0")
+  --enable-multicast-overlay     Enable VXLAN overlay network for multicast support (enabled by default for Hetzner, GCP)
   -h, --help                     Show help
 
 AWS-Specific Flags:
@@ -165,7 +193,8 @@ Azure-Specific Flags:
 GCP-Specific Flags:
   --gcp-region <region>          GCP region (default: "us-central1")
   --gcp-zone <zone>              GCP zone (default: "<region>-a")
-  --gcp-project <project>        GCP project ID
+  --gcp-project <project>        GCP project ID (optional: auto-detected from ~/.gcp_credentials.json or GOOGLE_CLOUD_PROJECT env var)
+  --gcp-credentials-file <path>  Path to GCP service account key JSON (default: "~/.gcp_credentials.json")
   --gcp-spot-instance            Enable spot (preemptible) instances
 
 Hetzner-Specific Flags:
@@ -200,7 +229,10 @@ Examples:
   # Initialize Azure deployment
   exasol init --cloud-provider azure --azure-region westus2 --azure-subscription <sub-id>
 
-  # Initialize GCP deployment with spot instances
+  # Initialize GCP deployment (project auto-detected from ~/.gcp_credentials.json)
+  exasol init --cloud-provider gcp --gcp-spot-instance
+
+  # Initialize GCP deployment with explicit project (overrides auto-detection)
   exasol init --cloud-provider gcp --gcp-project my-project --gcp-spot-instance
 
   # Initialize libvirt deployment for local testing
@@ -222,6 +254,7 @@ cmd_init() {
     local adminui_password=""
     local owner="exasol-deployer"
     local allowed_cidr="0.0.0.0/0"
+    local enable_multicast_overlay=false
 
 
     # AWS-specific variables
@@ -242,6 +275,7 @@ cmd_init() {
     local gcp_region=""
     local gcp_zone=""
     local gcp_project=""
+    local gcp_credentials_file="$HOME/.gcp_credentials.json"
     local gcp_spot_instance=false
 
     # Hetzner-specific variables
@@ -358,6 +392,10 @@ cmd_init() {
                 gcp_project="$2"
                 shift 2
                 ;;
+            --gcp-credentials-file)
+                gcp_credentials_file="$2"
+                shift 2
+                ;;
             --gcp-spot-instance)
                 gcp_spot_instance=true
                 shift
@@ -404,6 +442,10 @@ cmd_init() {
             --libvirt-uri)
                 libvirt_uri="$2"
                 shift 2
+                ;;
+            --enable-multicast-overlay)
+                enable_multicast_overlay=true
+                shift
                 ;;
             --list-versions)
                 log_info "Available database versions:"
@@ -548,6 +590,37 @@ cmd_init() {
         fi
     fi
 
+    # Resolve GCP credentials from file for service account authentication
+    if [[ "$cloud_provider" == "gcp" ]]; then
+        local gcp_credentials_data
+        gcp_credentials_data=$(load_gcp_credentials_file "$gcp_credentials_file") || true
+        local gcp_file_project_id=""
+        local gcp_client_email=""
+        if [[ -n "$gcp_credentials_data" ]]; then
+            IFS="|" read -r gcp_credentials_file gcp_file_project_id gcp_client_email <<<"$gcp_credentials_data"
+            if [[ -z "$gcp_file_project_id" || -z "$gcp_client_email" ]]; then
+                die "GCP credentials file '$gcp_credentials_file' is missing required fields: project_id or client_email."
+            fi
+            log_info "Using GCP credentials file: $gcp_credentials_file"
+        else
+            log_info "GCP credentials file not found at $gcp_credentials_file. You can create one with 'gcloud iam service-accounts keys create ~/.gcp_credentials.json --iam-account=<service-account-email>'."
+        fi
+
+        # Precedence: 1. Flag (already in gcp_project), 2. Env Var, 3. Config File
+        if [[ -z "$gcp_project" ]]; then
+            if [[ -n "${GOOGLE_CLOUD_PROJECT:-}" ]]; then
+                gcp_project="${GOOGLE_CLOUD_PROJECT}"
+                log_info "Using GCP project ID from GOOGLE_CLOUD_PROJECT environment variable"
+            elif [[ -n "$gcp_file_project_id" ]]; then
+                gcp_project="$gcp_file_project_id"
+                log_info "Using GCP project ID from credentials file"
+            fi
+        fi
+
+        if [[ -z "$gcp_project" ]]; then
+            die "GCP project ID is required. Please provide it via --gcp-project, GOOGLE_CLOUD_PROJECT env var, or ensure your ~/.gcp_credentials.json file contains a valid project_id field."
+        fi
+    fi
 
     # Set default instance type if not provided
     if [[ -z "$instance_type" ]]; then
@@ -666,7 +739,8 @@ cmd_init() {
         cp "$script_root/templates/terraform-common/common-firewall.tf" "$templates_dir/" 2>/dev/null || true
         cp "$script_root/templates/terraform-common/common-outputs.tf" "$templates_dir/" 2>/dev/null || true
         cp "$script_root/templates/terraform-common/inventory.tftpl" "$templates_dir/" 2>/dev/null || true
-        log_debug "Copied common Terraform resources (common.tf, common-firewall.tf, common-outputs.tf, inventory.tftpl)"
+        cp "$script_root/templates/terraform-common/cloud-init-generic.tftpl" "$templates_dir/" 2>/dev/null || true
+        log_debug "Copied common Terraform resources (common.tf, common-firewall.tf, common-outputs.tf, inventory.tftpl, cloud-init-generic.tftpl)"
     fi
 
     # Then, copy cloud-provider-specific terraform templates
@@ -698,24 +772,20 @@ cmd_init() {
 
     # Validate DigitalOcean token
     if [[ "$cloud_provider" == "digitalocean" ]]; then
-        if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
-            log_warn "Skipping DigitalOcean token validation because EXASOL_SKIP_PROVIDER_CHECKS=1"
-        else
-            # If token is empty, try to read from ~/.digitalocean_token
-            if [[ -z "$digitalocean_token" ]]; then
-                local token_file="$HOME/.digitalocean_token"
-                if [[ -f "$token_file" ]]; then
-                    digitalocean_token=$(tr -d '[:space:]' < "$token_file")
-                    log_info "Using DigitalOcean token from $token_file"
-                else
-                    die "DigitalOcean token is required. Please provide via --digitalocean-token or create ~/.digitalocean_token file"
-                fi
+        # If token is empty, try to read from ~/.digitalocean_token
+        if [[ -z "$digitalocean_token" ]]; then
+            local token_file="$HOME/.digitalocean_token"
+            if [[ -f "$token_file" ]]; then
+                digitalocean_token=$(tr -d '[:space:]' < "$token_file")
+                log_info "Using DigitalOcean token from $token_file"
+            else
+                die "DigitalOcean token is required. Please provide via --digitalocean-token or create ~/.digitalocean_token file"
             fi
+        fi
 
-            # Validate token is not empty after reading from file
-            if [[ -z "$digitalocean_token" ]]; then
-                die "DigitalOcean token cannot be empty"
-            fi
+        # Validate token is not empty after reading from file
+        if [[ -z "$digitalocean_token" ]]; then
+            die "DigitalOcean token cannot be empty"
         fi
     fi
 
@@ -723,13 +793,13 @@ cmd_init() {
     write_provider_variables "$deploy_dir" "$cloud_provider" \
         "$aws_region" "$aws_profile" "$aws_spot_instance" \
         "$azure_region" "$azure_subscription" "$azure_client_id" "$azure_client_secret" "$azure_tenant_id" "$azure_spot_instance" \
-        "$gcp_region" "$gcp_zone" "$gcp_project" "$gcp_spot_instance" \
+        "$gcp_region" "$gcp_zone" "$gcp_project" "$gcp_credentials_file" "$gcp_spot_instance" \
         "$hetzner_location" "$hetzner_network_zone" "$hetzner_token" \
         "$digitalocean_region" "$digitalocean_token" \
         "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool" "$libvirt_uri" \
         "$instance_type" "$architecture" "$cluster_size" \
         "$data_volume_size" "$data_volumes_per_node" "$root_volume_size" \
-        "$allowed_cidr" "$owner"
+        "$allowed_cidr" "$owner" "$enable_multicast_overlay"
 
     # Create Terraform files in deployment directory (after variables are written so macOS HVF can be detected)
     create_terraform_files "$deploy_dir" "$architecture" "$cloud_provider"
@@ -778,6 +848,22 @@ EOF
     log_info ""
     log_info "✅ Deployment directory initialized successfully!"
     log_info ""
+
+    # Show power control capabilities for the selected provider
+    case "$cloud_provider" in
+        aws|azure|gcp)
+            log_info "Power Control: Automatic (start/stop via cloud API)"
+            ;;
+        hetzner|digitalocean)
+            log_info "Power Control: Manual start required (in-guest shutdown supported)"
+            log_info "  Note: Use 'exasol start' for power-on instructions after stopping"
+            ;;
+        libvirt)
+            log_info "Power Control: Manual (use virsh commands for local VMs)"
+            ;;
+    esac
+
+    log_info ""
     log_info "Next steps:"
     log_info "  1. Review configuration in: $deploy_dir/variables.auto.tfvars"
     log_info "  2. Deploy with: exasol deploy --deployment-dir $deploy_dir"
@@ -793,11 +879,6 @@ calculate_aws_availability_zone() {
     local instance_type="$3"
 
     log_debug "Calculating best availability zone for instance type $instance_type in region $aws_region"
-
-    if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
-        echo "${aws_region}a"
-        return 0
-    fi
 
     # Create a temporary directory for the AZ query
     local temp_dir
@@ -888,11 +969,7 @@ detect_libvirt_uri() {
         return 0
     fi
 
-    if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
-        log_warn "EXASOL_SKIP_PROVIDER_CHECKS=1 set; defaulting libvirt URI to qemu:///system without validation."
-        echo "qemu:///system"
-        return 0
-    fi
+
 
     local virsh_uri=""
     if command -v virsh >/dev/null 2>&1; then
@@ -929,25 +1006,27 @@ write_provider_variables() {
     local gcp_region="${12}"
     local gcp_zone="${13}"
     local gcp_project="${14}"
-    local gcp_spot_instance="${15}"
-    local hetzner_location="${16}"
-    local hetzner_network_zone="${17}"
-    local hetzner_token="${18}"
-    local digitalocean_region="${19}"
-    local digitalocean_token="${20}"
-    local libvirt_memory_gb="${21}"
-    local libvirt_vcpus="${22}"
-    local libvirt_network_bridge="${23}"
-    local libvirt_disk_pool="${24}"
-    local libvirt_uri="${25}"
-    local instance_type="${26}"
-    local architecture="${27}"
-    local cluster_size="${28}"
-    local data_volume_size="${29}"
-    local data_volumes_per_node="${30}"
-    local root_volume_size="${31}"
-    local allowed_cidr="${32}"
-    local owner="${33}"
+    local gcp_credentials_file="${15}"
+    local gcp_spot_instance="${16}"
+    local hetzner_location="${17}"
+    local hetzner_network_zone="${18}"
+    local hetzner_token="${19}"
+    local digitalocean_region="${20}"
+    local digitalocean_token="${21}"
+    local libvirt_memory_gb="${22}"
+    local libvirt_vcpus="${23}"
+    local libvirt_network_bridge="${24}"
+    local libvirt_disk_pool="${25}"
+    local libvirt_uri="${26}"
+    local instance_type="${27}"
+    local architecture="${28}"
+    local cluster_size="${29}"
+    local data_volume_size="${30}"
+    local data_volumes_per_node="${31}"
+    local root_volume_size="${32}"
+    local allowed_cidr="${33}"
+    local owner="${34}"
+    local enable_multicast_overlay="${35}"
 
     case "$cloud_provider" in
         aws)
@@ -967,7 +1046,8 @@ write_provider_variables() {
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
-                "enable_spot_instances=$aws_spot_instance"
+                "enable_spot_instances=$aws_spot_instance" \
+                "enable_multicast_overlay=$enable_multicast_overlay"
             ;;
         azure)
             local azure_vars=(
@@ -982,6 +1062,7 @@ write_provider_variables() {
                 "allowed_cidr=$allowed_cidr"
                 "owner=$owner"
                 "enable_spot_instances=$azure_spot_instance"
+                "enable_multicast_overlay=$enable_multicast_overlay"
             )
             if [[ -n "$azure_client_id" ]]; then
                 azure_vars+=("azure_client_id=$azure_client_id")
@@ -1000,6 +1081,7 @@ write_provider_variables() {
                 "gcp_region=$gcp_region" \
                 "gcp_zone=$gcp_zone" \
                 "gcp_project=$gcp_project" \
+                "gcp_credentials_file=$gcp_credentials_file" \
                 "instance_type=$instance_type" \
                 "instance_architecture=$architecture" \
                 "node_count=$cluster_size" \
@@ -1008,7 +1090,8 @@ write_provider_variables() {
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
-                "enable_spot_instances=$gcp_spot_instance"
+                "enable_spot_instances=$gcp_spot_instance" \
+                "enable_multicast_overlay=$enable_multicast_overlay"
             ;;
         hetzner)
             write_variables_file "$deploy_dir" \
@@ -1022,7 +1105,8 @@ write_provider_variables() {
                 "data_volumes_per_node=$data_volumes_per_node" \
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
-                "owner=$owner"
+                "owner=$owner" \
+                "enable_multicast_overlay=$enable_multicast_overlay"
             ;;
         digitalocean)
             write_variables_file "$deploy_dir" \
@@ -1035,7 +1119,8 @@ write_provider_variables() {
                 "data_volumes_per_node=$data_volumes_per_node" \
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
-                "owner=$owner"
+                "owner=$owner" \
+                "enable_multicast_overlay=$enable_multicast_overlay"
             ;;
         libvirt)
             local libvirt_domain_type="kvm"
@@ -1055,7 +1140,8 @@ write_provider_variables() {
                 "data_volumes_per_node=$data_volumes_per_node" \
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
-                "owner=$owner"
+                "owner=$owner" \
+                "enable_multicast_overlay=$enable_multicast_overlay"
 
             # Check and create default libvirt storage pool if it doesn't exist
             if ! virsh -c "$libvirt_uri" version >/dev/null 2>&1; then
@@ -1129,16 +1215,16 @@ create_readme() {
     local region_info=""
     local additional_config=""
     case "$cloud_provider" in
-        aws) 
+        aws)
             region_info="AWS Region: $aws_region"
             ;;
-        azure) 
+        azure)
             region_info="Azure Region: $azure_region"
             ;;
-        gcp) 
+        gcp)
             region_info="GCP Region: $gcp_region"
             ;;
-        libvirt) 
+        libvirt)
             region_info="Local KVM Deployment"
             additional_config="- **Memory**: ${libvirt_memory_gb}GB per VM\n- **vCPUs**: $libvirt_vcpus per VM\n- **Network**: $libvirt_network_bridge\n- **Storage Pool**: $libvirt_disk_pool"
             ;;

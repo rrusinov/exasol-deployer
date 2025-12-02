@@ -116,3 +116,9 @@ variable "libvirt_firmware" {
   type        = string
   default     = ""
 }
+
+variable "enable_multicast_overlay" {
+  description = "Enable VXLAN overlay network for multicast support. Set with --enable-multicast-overlay during initialization."
+  type        = bool
+  default     = false
+}

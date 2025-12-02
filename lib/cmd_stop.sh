@@ -136,18 +136,12 @@ cmd_stop() {
         die "Ansible inventory not found"
     fi
 
-    # Run Ansible to stop the database
-    local ansible_extra=(-i inventory.ini .templates/stop-exasol-cluster.yml)
-    [[ "$infra_power_supported" == "false" ]] && ansible_extra+=(-e "power_off_fallback=true")
+    # Run Ansible to stop the database with graceful shutdown for all providers
+    local ansible_extra=(-i inventory.ini .templates/stop-exasol-cluster.yml -e "power_off_fallback=true")
 
     if ! ansible-playbook "${ansible_extra[@]}"; then
-        # For providers without infra power control, unreachable hosts after shutdown are expected
-        if [[ "$infra_power_supported" == "false" ]]; then
-            log_warn "Ansible reported unreachable hosts after shutdown; this is expected if VMs are powered off."
-        else
-            state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
-            die "Ansible stop operation failed"
-        fi
+        # Unreachable hosts after shutdown are expected since we're powering off the hosts
+        log_warn "Ansible reported unreachable hosts after shutdown; this is expected if VMs are powered off."
     fi
 
     # If provider supports infra power control, stop instances via tofu
