@@ -162,16 +162,30 @@ main() {
     local command="${1:-help}"
     shift || true
 
+    # Check dependencies early for commands that need them
+    # Skip for help, version, and init --list-versions
+    case "$command" in
+        help|--help|-h|version)
+            # Skip dependency check for help and version
+            ;;
+        init)
+            # Skip dependency check only for --list-versions
+            if [[ "${1:-}" != "--list-versions" ]] && [[ "${1:-}" != "--help" ]] && [[ "${1:-}" != "-h" ]]; then
+                check_required_commands
+            fi
+            ;;
+        *)
+            # Check dependencies for all other commands
+            check_required_commands
+            ;;
+    esac
+
     # Route to appropriate command
     case "$command" in
         init)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
                 show_init_help
                 exit 0
-            fi
-            # Skip dependency check for --list-versions
-            if [[ "${1:-}" != "--list-versions" ]]; then
-                check_required_commands
             fi
             cmd_init --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
@@ -180,7 +194,6 @@ main() {
                 show_deploy_help
                 exit 0
             fi
-            check_required_commands
             progress_wrap_command "deploy" "$DEPLOYMENT_DIR" cmd_deploy --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         destroy)
@@ -188,7 +201,6 @@ main() {
                 show_destroy_help
                 exit 0
             fi
-            check_required_commands
             progress_wrap_command "destroy" "$DEPLOYMENT_DIR" cmd_destroy --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         start)
@@ -196,7 +208,6 @@ main() {
                 show_start_help
                 exit 0
             fi
-            check_required_commands
             progress_wrap_command "start" "$DEPLOYMENT_DIR" cmd_start --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         stop)
@@ -204,7 +215,6 @@ main() {
                 show_stop_help
                 exit 0
             fi
-            check_required_commands
             progress_wrap_command "stop" "$DEPLOYMENT_DIR" cmd_stop --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         status)
