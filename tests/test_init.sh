@@ -64,6 +64,10 @@ test_valid_cloud_providers() {
             local dummy_creds="$test_dir/azure.json"
             echo '{"appId":"a","password":"p","tenant":"t"}' > "$dummy_creds"
             args+=(--azure-subscription "dummy-sub" --azure-credentials-file "$dummy_creds")
+        elif [[ "$provider" == "gcp" ]]; then
+            args+=(--gcp-project "dummy-project")
+        elif [[ "$provider" == "hetzner" ]]; then
+            args+=(--hetzner-token "dummy-token")
         fi
 
         # Initialize with valid provider
