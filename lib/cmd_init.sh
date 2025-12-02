@@ -174,6 +174,7 @@ Common Flags:
   --root-volume-size <gb>        Root volume size in GB (default: 50)
   --db-password <password>       Database password (random if not specified)
   --adminui-password <password>  Admin UI password (random if not specified)
+  --host-password <password>     Host OS password (random if not specified)
   --owner <tag>                  Owner tag for resources (default: "exasol-deployer")
   --allowed-cidr <cidr>          CIDR allowed to access cluster (default: "0.0.0.0/0")
   --enable-multicast-overlay     Enable VXLAN overlay network for multicast support (enabled by default for Hetzner, GCP)
@@ -252,6 +253,7 @@ cmd_init() {
     local root_volume_size=50
     local db_password=""
     local adminui_password=""
+    local host_password=""
     local owner="exasol-deployer"
     local allowed_cidr="0.0.0.0/0"
     local enable_multicast_overlay=false
@@ -339,6 +341,10 @@ cmd_init() {
                 ;;
             --adminui-password)
                 adminui_password="$2"
+                shift 2
+                ;;
+            --host-password)
+                host_password="$2"
                 shift 2
                 ;;
             --owner)
@@ -673,6 +679,11 @@ cmd_init() {
         log_info "Generated random AdminUI password"
     fi
 
+    if [[ -z "$host_password" ]]; then
+        host_password=$(generate_password 16)
+        log_info "Generated random host password"
+    fi
+
     log_info "Initializing deployment directory: $deploy_dir"
     log_info "  Cloud Provider: $(get_provider_description "$cloud_provider")"
     log_info "  Database version: $db_version"
@@ -799,7 +810,7 @@ cmd_init() {
         "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool" "$libvirt_uri" \
         "$instance_type" "$architecture" "$cluster_size" \
         "$data_volume_size" "$data_volumes_per_node" "$root_volume_size" \
-        "$allowed_cidr" "$owner" "$enable_multicast_overlay"
+        "$allowed_cidr" "$owner" "$enable_multicast_overlay" "$host_password"
 
     # Create Terraform files in deployment directory (after variables are written so macOS HVF can be detected)
     create_terraform_files "$deploy_dir" "$architecture" "$cloud_provider"
@@ -826,6 +837,7 @@ cmd_init() {
 {
   "db_password": "$db_password",
   "adminui_password": "$adminui_password",
+  "host_password": "$host_password",
   "db_download_url": "$db_url",
   "c4_download_url": "$c4_url",
   "db_working_copy": "$db_working_copy",
@@ -1027,6 +1039,7 @@ write_provider_variables() {
     local allowed_cidr="${33}"
     local owner="${34}"
     local enable_multicast_overlay="${35}"
+    local host_password="${36}"
 
     case "$cloud_provider" in
         aws)
@@ -1047,7 +1060,8 @@ write_provider_variables() {
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
                 "enable_spot_instances=$aws_spot_instance" \
-                "enable_multicast_overlay=$enable_multicast_overlay"
+                "enable_multicast_overlay=$enable_multicast_overlay" \
+                "host_password=$host_password"
             ;;
         azure)
             local azure_vars=(
@@ -1063,6 +1077,7 @@ write_provider_variables() {
                 "owner=$owner"
                 "enable_spot_instances=$azure_spot_instance"
                 "enable_multicast_overlay=$enable_multicast_overlay"
+                "host_password=$host_password"
             )
             if [[ -n "$azure_client_id" ]]; then
                 azure_vars+=("azure_client_id=$azure_client_id")
@@ -1091,7 +1106,8 @@ write_provider_variables() {
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
                 "enable_spot_instances=$gcp_spot_instance" \
-                "enable_multicast_overlay=$enable_multicast_overlay"
+                "enable_multicast_overlay=$enable_multicast_overlay" \
+                "host_password=$host_password"
             ;;
         hetzner)
             write_variables_file "$deploy_dir" \
@@ -1106,7 +1122,8 @@ write_provider_variables() {
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
-                "enable_multicast_overlay=$enable_multicast_overlay"
+                "enable_multicast_overlay=$enable_multicast_overlay" \
+                "host_password=$host_password"
             ;;
         digitalocean)
             write_variables_file "$deploy_dir" \
@@ -1120,7 +1137,8 @@ write_provider_variables() {
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
-                "enable_multicast_overlay=$enable_multicast_overlay"
+                "enable_multicast_overlay=$enable_multicast_overlay" \
+                "host_password=$host_password"
             ;;
         libvirt)
             local libvirt_domain_type="kvm"
@@ -1141,7 +1159,8 @@ write_provider_variables() {
                 "root_volume_size=$root_volume_size" \
                 "allowed_cidr=$allowed_cidr" \
                 "owner=$owner" \
-                "enable_multicast_overlay=$enable_multicast_overlay"
+                "enable_multicast_overlay=$enable_multicast_overlay" \
+                "host_password=$host_password"
 
             # Check and create default libvirt storage pool if it doesn't exist
             if ! virsh -c "$libvirt_uri" version >/dev/null 2>&1; then
@@ -1247,7 +1266,7 @@ $([ -n "$additional_config" ] && echo -e "$additional_config")
 
 ## Credentials
 
-Database and AdminUI credentials are stored in \`.credentials.json\` (protected file).
+Database, AdminUI, and host OS credentials are stored in \`.credentials.json\` (protected file).
 
 ## Next Steps
 

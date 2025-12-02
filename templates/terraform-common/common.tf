@@ -73,6 +73,9 @@ locals {
     chmod 700 /home/exasol/.ssh
     chmod 600 /home/exasol/.ssh/authorized_keys
 
+    # Set password for exasol user (for OS-level access)
+    echo "exasol:${var.host_password}" | chpasswd
+
     # Ensure original cloud user also has passwordless sudo (for compatibility)
     for cloud_user in ubuntu azureuser admin ec2-user debian; do
       if id -u "$cloud_user" >/dev/null 2>&1; then

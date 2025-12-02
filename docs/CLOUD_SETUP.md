@@ -113,6 +113,7 @@ All cloud providers support these common options:
 | `--root-volume-size` | Root volume size in GB | `50` |
 | `--db-password` | Database password | Random (16 chars) |
 | `--adminui-password` | Admin UI password | Random (16 chars) |
+| `--host-password` | Host OS password for the `exasol` user | Random (16 chars) |
 | `--owner` | Owner tag for resources | `exasol-deployer` |
 | `--allowed-cidr` | CIDR for access control | `0.0.0.0/0` |
 
@@ -145,6 +146,7 @@ All cloud providers support these common options:
   echo "$HETZNER_TOKEN" > ~/.hetzner_token
   ./exasol init --cloud-provider hetzner  # uses env/file automatically
   ```
+- **Host OS password**: The `host_password` for the `exasol` user is stored in `.credentials.json`. Retrieve it with `cat .credentials.json | jq -r '.host_password'` and rotate it regularly.
 - **Rotate credentials regularly**: Update API tokens and passwords periodically
 - **Use IAM roles when possible**: Especially for AWS/Azure/GCP
 

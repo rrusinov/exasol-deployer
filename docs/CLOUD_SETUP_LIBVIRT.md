@@ -353,6 +353,18 @@ exasol init --cloud-provider libvirt --deployment-dir ./perf-test \
     --data-volumes-per-node 4
 ```
 
+## Accessing Your Cluster
+
+```bash
+# Recommended: Using generated SSH config
+ssh -F ./my-deployment/ssh_config n11
+```
+
+Host OS password for the `exasol` user (useful for console access or password-based SSH if enabled):
+```bash
+cat .credentials.json | jq -r '.host_password'
+```
+
 ## Troubleshooting
 
 ### Common Issues

@@ -60,6 +60,13 @@ variable "allowed_cidr" {
   # Value will be set in variables.auto.tfvars during initialization
 }
 
+variable "host_password" {
+  description = "Host OS password for the exasol user (SSH/console access). Set with --host-password or generated automatically."
+  type        = string
+  sensitive   = true
+  # Value will be set in variables.auto.tfvars during initialization
+}
+
 variable "root_volume_size" {
   description = "The size of the root volume in GB."
   type        = number

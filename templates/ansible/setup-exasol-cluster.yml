@@ -48,6 +48,7 @@
       ansible.builtin.set_fact:
         exa_db_password: "{{ deployment_config.db_password }}"
         exa_admin_password: "{{ deployment_config.adminui_password }}"
+        exa_host_password: "{{ deployment_config.host_password }}"
         db_download_url: "{{ deployment_config.db_download_url }}"
         c4_download_url: "{{ deployment_config.c4_download_url }}"
         exa_working_copy: "{{ deployment_config.db_working_copy | default('@' + (deployment_config.db_download_url | basename | regex_replace('\\.tar\\.gz$', ''))) }}"
@@ -98,8 +99,15 @@
             name:
               - parted
               - lvm2
-              - python3-passlib # Required for password generation
+              - python3-passlib # Required for password hashing
             state: present
+
+        - name: Ensure exasol user password is set for OS logins
+          ansible.builtin.user:
+            name: "{{ exa_user }}"
+            password: "{{ exa_host_password | password_hash('sha512') }}"
+            update_password: always
+            create_home: yes
 
         - name: Build hosts file entry for all nodes in the cluster
           ansible.builtin.lineinfile:
@@ -119,11 +127,6 @@
     # ==============================================================================
     # NOTE: The exasol user is now created via cloud-init during instance boot.
     # This section only handles SSH key generation and distribution.
-    - name: Generate a single password for the exasol user
-      ansible.builtin.set_fact:
-        random_image_pass: "{{ lookup('password', '/dev/null length=16 chars=ascii_letters,digits') }}"
-      run_once: true
-
     - name: "SECTION 2: Configure SSH for Inter-Node Communication"
       block:
         - name: Generate SSH key for exasol user on n11
@@ -360,7 +363,7 @@
         internal_ips: "{{ computed_internal_ips | join(' ') }}"
         external_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, 'ansible_host') | join(' ') }}"
         data_disk_paths_var: "{{ data_disk_paths | join(',') }}"
-        exa_image_password: "{{ random_image_pass }}"
+        exa_host_password: "{{ exa_host_password }}"
         exa_working_copy: "{{ exa_working_copy }}"
 
     - name: "PROGRESS: Config generation complete"

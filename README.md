@@ -19,7 +19,7 @@ This directory contains a deployment configuration for Exasol database.
 - **State Management**: Tracks deployment state with file-based locking for safe concurrent operations
 - **Infrastructure as Code**: Uses OpenTofu/Terraform for reproducible infrastructure provisioning
 - **Automated Configuration**: Ansible playbooks for complete cluster setup
-- **Credential Management**: Secure password generation and storage
+- **Credential Management**: Secure password generation and storage for database, AdminUI, and host OS access
 - **Dynamic Configuration**: All Terraform variables generated from command-line parameters and version configurations
 
 ## Prerequisites
@@ -400,6 +400,7 @@ Initialize a new deployment directory with configuration files.
 - `--root-volume-size number`: Root volume size in GB (default: 50).
 - `--db-password string`: Database password (random if not specified).
 - `--adminui-password string`: Admin UI password (random if not specified).
+- `--host-password string`: Host OS password for the `exasol` user (random if not specified).
 - `--owner string`: Owner tag for resources (default: `exasol-deployer`).
 - `--allowed-cidr string`: CIDR block that can reach the cluster (default: `0.0.0.0/0`).
 - `--enable-multicast-overlay`: Enable the multicast overlay network (VXLAN) for providers that can run without it by default.
@@ -635,7 +636,7 @@ Show help information.
 
 ## Credentials
 
-Database and AdminUI credentials are stored in `.credentials.json` (protected file).
+Database, AdminUI, and host OS credentials are stored in `.credentials.json` (protected file). The host password (`host_password`) is used for OS-level access to the `exasol` user (for example, `ssh exasol@n11`) and can be retrieved with `cat .credentials.json | jq -r '.host_password'`.
 
 ## Next Steps
 
@@ -705,5 +706,5 @@ This is expected behavior for Hetzner, DigitalOcean, and libvirt. Follow the man
 
 - `.exasol.json` - Deployment state (do not modify)
 - `variables.auto.tfvars` - Terraform variables
-- `.credentials.json` - Passwords (keep secure)
+- `.credentials.json` - Passwords (DB/AdminUI/host; keep secure)
 - `terraform.tfstate` - Terraform state (created after deployment)
