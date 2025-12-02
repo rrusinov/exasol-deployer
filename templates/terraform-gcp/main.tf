@@ -168,6 +168,15 @@ resource "google_compute_instance" "exasol_node" {
     }
   }
 
+  # Attach data disks inline to ensure they persist across stop/start cycles
+  dynamic "attached_disk" {
+    for_each = range(var.data_volumes_per_node)
+    content {
+      source      = google_compute_disk.data_volume[count.index * var.data_volumes_per_node + attached_disk.value].id
+      device_name = google_compute_disk.data_volume[count.index * var.data_volumes_per_node + attached_disk.value].name
+    }
+  }
+
   network_interface {
     subnetwork = google_compute_subnetwork.exasol.id
 
@@ -191,6 +200,9 @@ resource "google_compute_instance" "exasol_node" {
     cluster = "exasol-cluster"
     owner   = var.owner
   }
+
+  # Ensure disks are created before attaching them
+  depends_on = [google_compute_disk.data_volume]
 }
 
 # ==============================================================================
@@ -210,12 +222,6 @@ resource "google_compute_disk" "data_volume" {
     node_index   = tostring(floor(count.index / var.data_volumes_per_node) + 11)
     owner        = var.owner
   }
-}
-
-resource "google_compute_attached_disk" "data_attachment" {
-  count    = var.node_count * var.data_volumes_per_node
-  disk     = google_compute_disk.data_volume[count.index].id
-  instance = google_compute_instance.exasol_node[floor(count.index / var.data_volumes_per_node)].id
 }
 
 # ==============================================================================

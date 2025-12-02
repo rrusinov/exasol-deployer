@@ -161,7 +161,8 @@ for vol_id in "${VOLUME_IDS[@]}"; do
             data_disk_candidates=()
 
             # Collect all potential data disks (exclude OS disk index 0)
-            for gcp_disk_link in /dev/disk/by-id/google-persistent-disk-[1-9]*; do
+            # Check both legacy persistent-disk-X naming and new exasol-data-X-Y naming
+            for gcp_disk_link in /dev/disk/by-id/google-persistent-disk-[1-9]* /dev/disk/by-id/google-exasol-data-*; do
                 if [[ -e "$gcp_disk_link" && ! "$gcp_disk_link" == *-part* ]]; then
                     candidate_device=$(readlink -f "$gcp_disk_link")
                     if [[ -b "$candidate_device" ]]; then
@@ -176,8 +177,8 @@ for vol_id in "${VOLUME_IDS[@]}"; do
                 fi
             done
 
-            # Also check SCSI patterns
-            for scsi_link in /dev/disk/by-id/scsi-0Google_PersistentDisk_persistent-disk-[1-9]*; do
+            # Also check SCSI patterns - support both naming conventions
+            for scsi_link in /dev/disk/by-id/scsi-0Google_PersistentDisk_persistent-disk-[1-9]* /dev/disk/by-id/scsi-0Google_PersistentDisk_exasol-data-*; do
                 if [[ -e "$scsi_link" && ! "$scsi_link" == *-part* ]]; then
                     candidate_device=$(readlink -f "$scsi_link")
                     if [[ -b "$candidate_device" ]]; then
@@ -278,6 +279,7 @@ for vol_id in "${VOLUME_IDS[@]}"; do
             gcp)
                 log_available_devices "Available GCP disks:" "/dev/disk/by-id/google-*"
                 log_available_devices "Available GCP SCSI disks:" "/dev/disk/by-id/scsi-0Google_PersistentDisk_*"
+                log_available_devices "Available GCP data disks:" "/dev/disk/by-id/google-exasol-data-*"
                 if [[ -n "$gcp_metadata_disk_info" ]]; then
                     log "GCP metadata disk information: $gcp_metadata_disk_info"
                 else
