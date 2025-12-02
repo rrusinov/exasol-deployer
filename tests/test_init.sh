@@ -312,6 +312,10 @@ test_exasol_entrypoint_init_providers() {
             local dummy_creds="$test_dir/azure.json"
             echo '{"appId":"a","password":"p","tenant":"t"}' > "$dummy_creds"
             init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-subscription "dummy-sub" --azure-credentials-file "$dummy_creds")
+        elif [[ "$provider" == "gcp" ]]; then
+            init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" --gcp-project "dummy-project")
+        elif [[ "$provider" == "hetzner" ]]; then
+            init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" --hetzner-token "dummy-token")
         else
             init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
         fi
