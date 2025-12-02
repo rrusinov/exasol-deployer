@@ -136,6 +136,14 @@ EOF
             if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-credentials-file "$creds_file"; then
                 echo "Warning: cmd_init failed for $provider (azure), continuing test..."
             fi
+        elif [[ "$provider" == "gcp" ]]; then
+            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --gcp-project dummy-project; then
+                echo "Warning: cmd_init failed for $provider (gcp), continuing test..."
+            fi
+        elif [[ "$provider" == "hetzner" ]]; then
+            if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --hetzner-token dummy-token; then
+                echo "Warning: cmd_init failed for $provider (hetzner), continuing test..."
+            fi
         else
             if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir"; then
                 echo "Warning: cmd_init failed for $provider, continuing test..."
