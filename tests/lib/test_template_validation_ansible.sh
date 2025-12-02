@@ -142,9 +142,9 @@ EOF
             fi
         fi
 
-        if [[ -f "$test_dir/.templates/common.tf" ]]; then
-            if grep -q "resource \"tls_private_key\" \"exasol_key\"" "$test_dir/.templates/common.tf" && \
-               grep -q "resource \"random_id\" \"instance\"" "$test_dir/.templates/common.tf"; then
+        if [[ -f "$test_dir/.templates/terraform-common/common.tf" ]]; then
+            if grep -q "resource \"tls_private_key\" \"exasol_key\"" "$test_dir/.templates/terraform-common/common.tf" && \
+               grep -q "resource \"random_id\" \"instance\"" "$test_dir/.templates/terraform-common/common.tf"; then
                 TESTS_TOTAL=$((TESTS_TOTAL + 1))
                 TESTS_PASSED=$((TESTS_PASSED + 1))
                 echo -e "${GREEN}✓${NC} $provider: common.tf included and valid"
