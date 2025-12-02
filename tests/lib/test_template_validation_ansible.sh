@@ -142,6 +142,8 @@ EOF
             fi
         fi
 
+        echo "Checking for common.tf in $test_dir/.templates/terraform-common/common.tf"
+        ls -la "$test_dir/.templates/terraform-common/" 2>/dev/null || echo "Directory not found"
         if [[ -f "$test_dir/.templates/terraform-common/common.tf" ]]; then
             if grep -q "resource \"tls_private_key\" \"exasol_key\"" "$test_dir/.templates/terraform-common/common.tf" && \
                grep -q "resource \"random_id\" \"instance\"" "$test_dir/.templates/terraform-common/common.tf"; then
