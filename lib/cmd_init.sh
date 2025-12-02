@@ -772,24 +772,20 @@ cmd_init() {
 
     # Validate DigitalOcean token
     if [[ "$cloud_provider" == "digitalocean" ]]; then
-        if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
-            log_warn "Skipping DigitalOcean token validation because EXASOL_SKIP_PROVIDER_CHECKS=1"
-        else
-            # If token is empty, try to read from ~/.digitalocean_token
-            if [[ -z "$digitalocean_token" ]]; then
-                local token_file="$HOME/.digitalocean_token"
-                if [[ -f "$token_file" ]]; then
-                    digitalocean_token=$(tr -d '[:space:]' < "$token_file")
-                    log_info "Using DigitalOcean token from $token_file"
-                else
-                    die "DigitalOcean token is required. Please provide via --digitalocean-token or create ~/.digitalocean_token file"
-                fi
+        # If token is empty, try to read from ~/.digitalocean_token
+        if [[ -z "$digitalocean_token" ]]; then
+            local token_file="$HOME/.digitalocean_token"
+            if [[ -f "$token_file" ]]; then
+                digitalocean_token=$(tr -d '[:space:]' < "$token_file")
+                log_info "Using DigitalOcean token from $token_file"
+            else
+                die "DigitalOcean token is required. Please provide via --digitalocean-token or create ~/.digitalocean_token file"
             fi
+        fi
 
-            # Validate token is not empty after reading from file
-            if [[ -z "$digitalocean_token" ]]; then
-                die "DigitalOcean token cannot be empty"
-            fi
+        # Validate token is not empty after reading from file
+        if [[ -z "$digitalocean_token" ]]; then
+            die "DigitalOcean token cannot be empty"
         fi
     fi
 
@@ -884,11 +880,6 @@ calculate_aws_availability_zone() {
 
     log_debug "Calculating best availability zone for instance type $instance_type in region $aws_region"
 
-    if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
-        echo "${aws_region}a"
-        return 0
-    fi
-
     # Create a temporary directory for the AZ query
     local temp_dir
     temp_dir=$(mktemp -d)
@@ -978,11 +969,7 @@ detect_libvirt_uri() {
         return 0
     fi
 
-    if [[ "${EXASOL_SKIP_PROVIDER_CHECKS:-}" == "1" ]]; then
-        log_warn "EXASOL_SKIP_PROVIDER_CHECKS=1 set; defaulting libvirt URI to qemu:///system without validation."
-        echo "qemu:///system"
-        return 0
-    fi
+
 
     local virsh_uri=""
     if command -v virsh >/dev/null 2>&1; then

@@ -64,7 +64,7 @@ resource "azurerm_virtual_network" "exasol" {
   # Format: 10.X.0.0/16 where X is derived from cluster ID hex digits
   # Provides 254 possible unique networks
   # Use /16 network and carve subnets from it
-  address_space       = ["10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254  ) + 1}.0.0/16"]
+  address_space       = ["10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.0.0/16"]
   location            = azurerm_resource_group.exasol.location
   resource_group_name = azurerm_resource_group.exasol.name
 

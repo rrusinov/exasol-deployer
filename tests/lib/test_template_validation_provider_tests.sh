@@ -24,7 +24,7 @@ test_aws_template_validation() {
         return
     fi
 
-    cd "$test_dir/.templates" || exit 1
+    cd "$test_dir" || exit 1
     local rc=0
     if ! tofu_init_strict "AWS"; then
         rc=$?
@@ -82,7 +82,7 @@ EOF
         return
     fi
 
-    cd "$test_dir/.templates" || exit 1
+    cd "$test_dir" || exit 1
     local rc=0
     if ! tofu_init_strict "Azure"; then
         rc=$?
@@ -147,7 +147,7 @@ EOF
         return
     fi
 
-    cd "$test_dir/.templates" || exit 1
+    cd "$test_dir" || exit 1
     local rc=0
     if ! tofu_init_strict "GCP"; then
         rc=$?
@@ -194,7 +194,7 @@ test_hetzner_template_validation() {
         return
     fi
 
-    cd "$test_dir/.templates" || exit 1
+    cd "$test_dir" || exit 1
     local rc=0
     if ! tofu_init_strict "Hetzner"; then
         rc=$?
@@ -231,7 +231,7 @@ test_digitalocean_template_validation() {
 
     local test_dir
     test_dir=$(setup_test_dir)
-    cmd_init --cloud-provider digitalocean --deployment-dir "$test_dir" 2>/dev/null
+    cmd_init --cloud-provider digitalocean --deployment-dir "$test_dir" --digitalocean-token "dummy-token-for-testing-12345" 2>/dev/null
 
     if [[ ! -d "$test_dir/.templates" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -241,7 +241,7 @@ test_digitalocean_template_validation() {
         return
     fi
 
-    cd "$test_dir/.templates" || exit 1
+    cd "$test_dir" || exit 1
     local rc=0
     if ! tofu_init_strict "DigitalOcean"; then
         rc=$?
@@ -278,7 +278,7 @@ test_libvirt_template_validation() {
 
     local test_dir
     test_dir=$(setup_test_dir)
-    cmd_init --cloud-provider libvirt --deployment-dir "$test_dir" 2>/dev/null
+    cmd_init --cloud-provider libvirt --deployment-dir "$test_dir" --libvirt-uri qemu:///system 2>/dev/null
 
     if [[ ! -d "$test_dir/.templates" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -288,7 +288,7 @@ test_libvirt_template_validation() {
         return
     fi
 
-    cd "$test_dir/.templates" || exit 1
+    cd "$test_dir" || exit 1
     local rc=0
     if ! tofu_init_strict "Libvirt"; then
         rc=$?

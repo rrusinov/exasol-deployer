@@ -160,8 +160,8 @@ locals {
   # Overlay network IPs (172.16.0.0/16) - used for Exasol clustering
   overlay_network_ips = [for idx in range(var.node_count) : "172.16.0.${idx + 11}"]
 
-  # Determine seed nodes (first 2 nodes in the cluster for redundancy)
-  seed_node_indices = slice([for idx in range(var.node_count) : idx], 0, min(2, var.node_count))
+  # All nodes are seed nodes for full mesh connectivity in overlay network
+  seed_node_indices = [for idx in range(var.node_count) : idx]
 
   # Common overlay data structure - providers can override physical_ips
   # This respects the enable_multicast_overlay variable (for AWS, Azure, DigitalOcean, Libvirt)

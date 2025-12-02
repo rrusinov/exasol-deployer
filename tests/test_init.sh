@@ -174,7 +174,7 @@ test_inventory_cloud_provider() {
 
     local test_dir=$(setup_test_dir)
 
-    cmd_init --cloud-provider aws --deployment-dir "$test_dir"
+    cmd_init --cloud-provider aws --deployment-dir "$test_dir" --aws-region us-east-1
 
     local inventory_template="$test_dir/.templates/inventory.tftpl"
     if [[ -f "$inventory_template" ]] && grep -q "cloud_provider=" "$inventory_template"; then
@@ -295,12 +295,7 @@ test_exasol_entrypoint_init_providers() {
     echo ""
     echo "Test: exasol entrypoint init works for all providers"
 
-    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean")
-    if [[ "${EXASOL_SKIP_LIBVIRT_TESTS:-}" != "1" ]]; then
-        providers+=("libvirt")
-    else
-        echo -e "${YELLOW}⊘${NC} Skipping libvirt entrypoint init (EXASOL_SKIP_LIBVIRT_TESTS=1)"
-    fi
+    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean" "libvirt")
 
     for provider in "${providers[@]}"; do
         local test_dir
@@ -308,7 +303,7 @@ test_exasol_entrypoint_init_providers() {
 
         local init_cmd
         if [[ "$provider" == "libvirt" ]]; then
-            init_cmd=(env EXASOL_SKIP_PROVIDER_CHECKS=1 "$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
+            init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" --libvirt-uri qemu:///system)
         elif [[ "$provider" == "azure" ]]; then
             local dummy_creds="$test_dir/azure.json"
             echo '{"appId":"a","password":"p","tenant":"t"}' > "$dummy_creds"
@@ -433,7 +428,8 @@ test_root_volume_size() {
     # Initialize with custom root volume size
     cmd_init --cloud-provider aws \
         --deployment-dir "$test_dir" \
-        --root-volume-size 100
+        --root-volume-size 100 \
+        --aws-region us-east-1
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
         if grep -q "root_volume_size = 100" "$test_dir/variables.auto.tfvars"; then
@@ -553,7 +549,8 @@ test_digitalocean_initialization() {
     # Initialize with DigitalOcean
     cmd_init --cloud-provider digitalocean \
         --deployment-dir "$test_dir" \
-        --digitalocean-region nyc3
+        --digitalocean-region nyc3 \
+        --digitalocean-token "dummy-token-for-testing-12345"
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -725,7 +722,7 @@ test_hetzner_private_ip_template() {
         return
     fi
 
-    if grep -q "node_private_ips = local.gre_overlay_ips" "$template_file"; then
+    if grep -q "node_private_ips = local.overlay_network_ips" "$template_file"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "${GREEN}✓${NC} Hetzner node_private_ips use multicast overlay"

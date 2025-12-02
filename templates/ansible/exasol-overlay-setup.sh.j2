@@ -52,9 +52,12 @@ if [[ -z "${primary_iface}" || "${primary_iface}" == "lo" ]]; then
     primary_iface=$(ip route get "${PUBLIC_IP}" 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
 fi
 if [[ -z "${primary_iface}" || "${primary_iface}" == "lo" ]]; then
-    log "Unable to determine primary network interface"
+    log "ERROR: Unable to determine primary network interface (got: ${primary_iface:-none})"
+    log "Available interfaces:"
+    ip -o link show | awk -F': ' '{print "  " $2}' | systemd-cat -t exasol-overlay -p err
     exit 1
 fi
+log "Using primary interface: ${primary_iface}"
 
 # Clean up any existing overlay devices
 if ip link show "${BRIDGE_IFACE}" >/dev/null 2>&1; then

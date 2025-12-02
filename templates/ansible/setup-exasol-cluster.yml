@@ -223,13 +223,19 @@
             state: started
 
         - name: Wait for VXLAN overlay device
-          ansible.builtin.command: ip addr show vxlan0
+          ansible.builtin.command: ip addr show vxlan-br0
           register: overlay_status
           changed_when: false
-          retries: 5
+          retries: 36 # 36 * 5 seconds = 3 minutes max
           delay: 5
           until: overlay_status.rc == 0
           failed_when: overlay_status.rc != 0
+
+        - name: Assert overlay IP is present
+          ansible.builtin.shell: ip -o addr show vxlan-br0 | grep -q "{{ overlay_ip }}"
+          register: overlay_ip_check
+          changed_when: false
+          failed_when: overlay_ip_check.rc != 0
 
         - name: Display overlay network status
           ansible.builtin.debug:

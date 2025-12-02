@@ -402,6 +402,7 @@ Initialize a new deployment directory with configuration files.
 - `--adminui-password string`: Admin UI password (random if not specified).
 - `--owner string`: Owner tag for resources (default: `exasol-deployer`).
 - `--allowed-cidr string`: CIDR block that can reach the cluster (default: `0.0.0.0/0`).
+- `--enable-multicast-overlay`: Enable the multicast overlay network (VXLAN) for providers that can run without it by default.
 - `-h, --help`: Show inline help for the `init` command and exit.
 
 **AWS-Specific Flags**
@@ -420,6 +421,7 @@ Initialize a new deployment directory with configuration files.
 - `--gcp-zone string`: GCP zone (default: `<region>-a`).
 - `--gcp-project string`: GCP project ID.
 - `--gcp-spot-instance`: Enable GCP spot (preemptible) instances.
+- `--gcp-credentials-file string`: Path to GCP service account credentials JSON (default: `~/.gcp_credentials.json`).
 
 **Hetzner-Specific Flags**
 - `--hetzner-location string`: Hetzner location (default: `nbg1`).
