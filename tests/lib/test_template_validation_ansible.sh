@@ -145,6 +145,9 @@ EOF
         echo "Checking for common.tf in $test_dir/.templates/common.tf"
         ls -la "$test_dir/.templates/" 2>/dev/null || echo "Directory not found"
         if [[ -f "$test_dir/.templates/common.tf" ]]; then
+            echo "File exists, checking contents"
+            grep -q "resource \"tls_private_key\" \"exasol_key\"" "$test_dir/.templates/common.tf" && echo "Found tls_private_key" || echo "Missing tls_private_key"
+            grep -q "resource \"random_id\" \"instance\"" "$test_dir/.templates/common.tf" && echo "Found random_id" || echo "Missing random_id"
             if grep -q "resource \"tls_private_key\" \"exasol_key\"" "$test_dir/.templates/common.tf" && \
                grep -q "resource \"random_id\" \"instance\"" "$test_dir/.templates/common.tf"; then
                 TESTS_TOTAL=$((TESTS_TOTAL + 1))
