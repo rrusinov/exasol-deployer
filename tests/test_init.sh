@@ -358,7 +358,7 @@ test_readme_generation() {
 
     local test_dir=$(setup_test_dir)
 
-    cmd_init --cloud-provider gcp --deployment-dir "$test_dir"
+    cmd_init --cloud-provider gcp --deployment-dir "$test_dir" --gcp-project "test-project-123"
 
     if [[ -f "$test_dir/README.md" ]]; then
         if grep -q "Google Cloud Platform" "$test_dir/README.md"; then
