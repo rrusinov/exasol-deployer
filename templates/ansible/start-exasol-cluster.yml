@@ -115,7 +115,7 @@
 
     - name: "PROGRESS: Service startup complete"
       ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: start:04:Service_Startup"
+        msg: "PROGRESS_MARKER: start:04:Service_Startup"
       run_once: true
 
     # ==============================================================================
@@ -140,7 +140,7 @@
 
     - name: "PROGRESS: Database boot complete"
       ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: start:05:Database_Boot"
+        msg: "PROGRESS_MARKER: start:05:Database_Boot"
       run_once: true
 
     # ==============================================================================
@@ -173,5 +173,5 @@
 
     - name: "PROGRESS: Start complete"
       ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: start:06:Start_Complete"
+        msg: "PROGRESS_MARKER: start:06:Start_Complete"
       run_once: true

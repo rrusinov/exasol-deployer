@@ -51,7 +51,6 @@ jobs:
           sudo apt-get install -y jq python3 libvirt-clients genisoimage
 
 
-
       - name: Install Terraform/OpenTofu
         uses: opentofu/setup-opentofu@v1
         with:
@@ -132,5 +131,3 @@ jobs:
         if: always()
         run: |
           rm -rf /tmp/test-deploy
-
-
