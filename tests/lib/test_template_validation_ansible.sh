@@ -142,11 +142,11 @@ EOF
             fi
         fi
 
-        echo "Checking for common.tf in $test_dir/.templates/terraform-common/common.tf"
-        ls -la "$test_dir/.templates/terraform-common/" 2>/dev/null || echo "Directory not found"
-        if [[ -f "$test_dir/.templates/terraform-common/common.tf" ]]; then
-            if grep -q "resource \"tls_private_key\" \"exasol_key\"" "$test_dir/.templates/terraform-common/common.tf" && \
-               grep -q "resource \"random_id\" \"instance\"" "$test_dir/.templates/terraform-common/common.tf"; then
+        echo "Checking for common.tf in $test_dir/.templates/common.tf"
+        ls -la "$test_dir/.templates/" 2>/dev/null || echo "Directory not found"
+        if [[ -f "$test_dir/.templates/common.tf" ]]; then
+            if grep -q "resource \"tls_private_key\" \"exasol_key\"" "$test_dir/.templates/common.tf" && \
+               grep -q "resource \"random_id\" \"instance\"" "$test_dir/.templates/common.tf"; then
                 TESTS_TOTAL=$((TESTS_TOTAL + 1))
                 TESTS_PASSED=$((TESTS_PASSED + 1))
                 echo -e "${GREEN}✓${NC} $provider: common.tf included and valid"
