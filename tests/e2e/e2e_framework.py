@@ -182,6 +182,7 @@ class HTMLReportGenerator:
         self.output_dir = Path(output_dir)
 
     def generate(self, summary: Dict[str, Any], filename: str):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         rows = []
         for result in summary.get('results', []):
             status = 'PASS' if result.get('success') else 'FAIL'
@@ -263,11 +264,14 @@ summary {{ cursor: pointer; font-weight: bold; padding: 0.5rem; background: #f0f
 <tbody>
 {rows_html}
 </tbody>
-</table>
-</body>
-</html>"""
+        </table>
+        </body>
+        </html>"""
         report_path = self.output_dir / filename
         with open(report_path, 'w', encoding='utf-8') as handle:
+            handle.write(html_content)
+        latest_path = self.output_dir / 'latest_results.html'
+        with open(latest_path, 'w', encoding='utf-8') as handle:
             handle.write(html_content)
 
 
@@ -329,22 +333,21 @@ class E2ETestFramework:
             fallback_dir = Path(tempfile.mkdtemp(prefix="exasol_e2e_logs_"))
             self.results_dir = fallback_dir / 'results'
             self.results_dir.mkdir(parents=True, exist_ok=True)
-        
-        log_file = self.results_dir / "execution.log"
+
+        log_file = self.results_dir / f"e2e_test_{self.execution_timestamp}.log"
         # Ensure parent directory exists for FileHandler
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        self.file_handler = logging.FileHandler(log_file)
-        self.execution_log_file = log_file
-        
-        # Configure logger specifically for this module instead of basicConfig
-        self.logger = logging.getLogger(__name__)
+
+        self.logger = logging.getLogger('e2e_framework')
         self.logger.setLevel(logging.INFO)
 
-        # Remove any existing file handlers for this logger
+        # Remove any existing handlers for this logger
         for handler in self.logger.handlers[:]:
-            if isinstance(handler, logging.FileHandler):
-                handler.close()
-                self.logger.removeHandler(handler)
+            handler.close()
+            self.logger.removeHandler(handler)
+
+        self.file_handler = logging.FileHandler(log_file)
+        self.execution_log_file = log_file
 
         # Create formatter
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
