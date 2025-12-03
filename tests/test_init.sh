@@ -643,7 +643,6 @@ DB_CHECKSUM=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 C4_VERSION=4.28.4
 C4_DOWNLOAD_URL=https://example.com/c4-arm64
 C4_CHECKSUM=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-DEFAULT_INSTANCE_TYPE=c-2
 
 [default]
 VERSION=exasol-2099.1.1-arm64

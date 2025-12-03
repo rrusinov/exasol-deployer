@@ -1,0 +1,18 @@
+{
+  "provider": "libvirt",
+  "description": "Libvirt E2E test configurations combining different SUTs and workflows",
+  "test_suites": [
+    {
+      "sut": "sut/libvirt-1n.json",
+      "workflow": "workflow/basic.json"
+    },
+    {
+      "sut": "sut/libvirt-2n-vx.json",
+      "workflow": "workflow/basic.json"
+    },
+    {
+      "sut": "sut/libvirt-3n.json",
+      "workflow": "workflow/failsafety.json"
+    }
+  ]
+}

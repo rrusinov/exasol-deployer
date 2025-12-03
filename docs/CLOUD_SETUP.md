@@ -230,6 +230,7 @@ After setting up your cloud provider credentials:
    ```bash
    ./exasol init --list-versions
    ```
+   (Shows availability and CPU architecture for each version)
 
 2. **Initialize deployment**:
    ```bash

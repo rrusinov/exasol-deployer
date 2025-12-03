@@ -1,0 +1,14 @@
+{
+  "provider": "gcp",
+  "description": "GCP E2E test configurations combining different SUTs and workflows",
+  "test_suites": [
+    {
+      "sut": "sut/gcp-1n.json",
+      "workflow": "workflow/basic.json"
+    },
+    {
+      "sut": "sut/gcp-4n.json",
+      "workflow": "workflow/enhanced.json"
+    }
+  ]
+}

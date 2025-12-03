@@ -232,13 +232,98 @@ class WorkflowExecutor:
     """Executes workflow-based test scenarios"""
 
     def __init__(self, deploy_dir: Path, provider: str, logger: logging.Logger,
-                 log_callback: Optional[Callable] = None):
+                 log_callback: Optional[Callable] = None, db_version: Optional[str] = None):
         self.deploy_dir = deploy_dir
         self.provider = provider
         self.logger = logger
         self.log_callback = log_callback or (lambda msg: logger.info(msg))
         self.validation_registry = ValidationRegistry(deploy_dir, provider, logger)
         self.context: Dict[str, Any] = {}
+        self.db_version = db_version  # Optional database version override
+
+    def _run_command_with_streaming(self, cmd: List[str], timeout: int) -> subprocess.CompletedProcess:
+        """Run a command and stream output in real-time to log_callback.
+        
+        Returns a CompletedProcess-like object with stdout, stderr, and returncode.
+        """
+        cmd_str = ' '.join(cmd)
+        self.log_callback(f"Running command: {cmd_str}")
+        
+        # Use Popen to stream output in real-time
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1  # Line buffered
+        )
+        
+        stdout_lines = []
+        stderr_lines = []
+        
+        import select
+        import sys
+        
+        # Stream both stdout and stderr in real-time
+        streams = {
+            process.stdout.fileno(): ('stdout', stdout_lines),
+            process.stderr.fileno(): ('stderr', stderr_lines)
+        }
+        
+        start_time = time.time()
+        while True:
+            # Check timeout
+            if timeout and time.time() - start_time > timeout:
+                process.kill()
+                process.wait()
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            
+            # Check if process finished
+            if process.poll() is not None:
+                # Read any remaining output
+                for line in process.stdout:
+                    self.log_callback(line.rstrip())
+                    stdout_lines.append(line)
+                for line in process.stderr:
+                    self.log_callback(line.rstrip())
+                    stderr_lines.append(line)
+                break
+            
+            # Use select to check which streams have data (Unix only)
+            if hasattr(select, 'select'):
+                ready, _, _ = select.select(list(streams.keys()), [], [], 0.1)
+                for fd in ready:
+                    stream_name, line_list = streams[fd]
+                    line = process.stdout.readline() if stream_name == 'stdout' else process.stderr.readline()
+                    if line:
+                        self.log_callback(line.rstrip())
+                        line_list.append(line)
+            else:
+                # Fallback for non-Unix (Windows) - read line by line with small delay
+                time.sleep(0.1)
+                if process.stdout:
+                    line = process.stdout.readline()
+                    if line:
+                        self.log_callback(line.rstrip())
+                        stdout_lines.append(line)
+                if process.stderr:
+                    line = process.stderr.readline()
+                    if line:
+                        self.log_callback(line.rstrip())
+                        stderr_lines.append(line)
+        
+        returncode = process.wait()
+        self.log_callback(f"Command exited with {returncode}")
+        
+        # Create a result object similar to subprocess.CompletedProcess
+        class Result:
+            def __init__(self, args, returncode, stdout, stderr):
+                self.args = args
+                self.returncode = returncode
+                self.stdout = stdout
+                self.stderr = stderr
+        
+        return Result(cmd, returncode, ''.join(stdout_lines), ''.join(stderr_lines))
 
     def execute_workflow(self, workflow: List[Dict[str, Any]],
                         params: Dict[str, Any]) -> List[WorkflowStep]:
@@ -248,7 +333,6 @@ class WorkflowExecutor:
 
         for step_config in workflow:
             step = self._parse_step_config(step_config)
-            self.logger.info(f"Executing step: {step.description}")
             self.log_callback(f"STEP: {step.description}")
 
             step_result = self._execute_step(step, params)
@@ -263,9 +347,12 @@ class WorkflowExecutor:
 
     def _parse_step_config(self, config: Dict[str, Any]) -> WorkflowStep:
         """Parse step configuration into WorkflowStep object"""
+        step_type = config['step']
+        # Use step type as description if none provided
+        description = config.get('description', step_type)
         return WorkflowStep(
-            step_type=config['step'],
-            description=config.get('description', ''),
+            step_type=step_type,
+            description=description,
             target_node=config.get('target_node'),
             method=config.get('method'),
             command=config.get('command'),
@@ -302,6 +389,8 @@ class WorkflowExecutor:
                 self._execute_crash_node(step)
             elif step.step_type == 'custom_command':
                 self._execute_custom_command(step)
+            elif step.step_type == 'destroy':
+                self._execute_destroy(step)
             else:
                 raise ValueError(f"Unknown step type: {step.step_type}")
 
@@ -318,29 +407,68 @@ class WorkflowExecutor:
         return step
 
     def _execute_init(self, step: WorkflowStep, params: Dict[str, Any]):
-        """Execute init step"""
+        """Execute init step.
+        
+        Supported SUT parameters (add to your SUT config's 'parameters' field):
+        Parameter names use underscores and map 1:1 to CLI flags (underscore -> hyphen).
+        
+        Common parameters:
+          - cluster_size: Number of nodes (int) → --cluster-size
+          - instance_type: Cloud instance type (str) → --instance-type
+          - data_volumes_per_node: Number of data volumes per node (int) → --data-volumes-per-node
+          - data_volume_size: Size of each data volume in GB (int) → --data-volume-size
+          - root_volume_size: Size of root volume in GB (int) → --root-volume-size
+          - libvirt_memory: Memory in GB for libvirt VMs (int) → --libvirt-memory
+          - libvirt_vcpus: Number of vCPUs for libvirt VMs (int) → --libvirt-vcpus
+          
+        Boolean flags (set to true to enable):
+          - enable_multicast_overlay: Enable VXLAN overlay network → --enable-multicast-overlay
+          - aws_spot_instance: Enable AWS spot instances → --aws-spot-instance
+          - azure_spot_instance: Enable Azure spot instances → --azure-spot-instance
+          - gcp_spot_instance: Enable GCP preemptible instances → --gcp-spot-instance
+        
+        For provider-specific flags (aws_region, azure_region, etc.), add to param_map below.
+        """
         cmd = [
             './exasol', 'init',
             '--cloud-provider', self.provider,
             '--deployment-dir', str(self.deploy_dir)
         ]
 
-        # Add parameters
+        # Add database version if provided
+        if self.db_version:
+            cmd.extend(['--db-version', self.db_version])
+
+        # Standard parameters with 1:1 mapping (underscore -> hyphen)
         param_map = {
             'cluster_size': '--cluster-size',
             'instance_type': '--instance-type',
             'data_volumes_per_node': '--data-volumes-per-node',
             'data_volume_size': '--data-volume-size',
             'root_volume_size': '--root-volume-size',
-            'libvirt_memory_gb': '--libvirt-memory',
+            'libvirt_memory': '--libvirt-memory',
             'libvirt_vcpus': '--libvirt-vcpus',
         }
 
         for key, flag in param_map.items():
             if key in params:
                 cmd.extend([flag, str(params[key])])
+        
+        # Boolean flags (parameters that don't take values)
+        boolean_flags = {
+            'enable_multicast_overlay': '--enable-multicast-overlay',
+            'aws_spot_instance': '--aws-spot-instance',
+            'azure_spot_instance': '--azure-spot-instance',
+            'gcp_spot_instance': '--gcp-spot-instance',
+        }
+        
+        for key, flag in boolean_flags.items():
+            if params.get(key):
+                cmd.append(flag)
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        # Run command with real-time output streaming
+        result = self._run_command_with_streaming(cmd, timeout=300)
+        
         if result.returncode != 0:
             raise RuntimeError(f"Init failed: {result.stderr}")
 
@@ -348,14 +476,14 @@ class WorkflowExecutor:
 
     def _execute_deploy(self, step: WorkflowStep):
         """Execute deploy step"""
-        result = subprocess.run(
-            ['./exasol', 'deploy', '--deployment-dir', str(self.deploy_dir)],
-            capture_output=True, text=True, timeout=3600
-        )
+        cmd = ['./exasol', 'deploy', '--deployment-dir', str(self.deploy_dir)]
+        
+        result = self._run_command_with_streaming(cmd, timeout=3600)
+        
         if result.returncode != 0:
             raise RuntimeError(f"Deploy failed: {result.stderr}")
 
-        step.result = {'stdout': result.stdout}
+        step.result = {'stdout': result.stdout, 'stderr': result.stderr}
 
     def _execute_validate(self, step: WorkflowStep):
         """Execute validation step with multiple checks"""
@@ -407,25 +535,36 @@ class WorkflowExecutor:
 
     def _execute_stop_cluster(self, step: WorkflowStep):
         """Execute cluster stop"""
-        result = subprocess.run(
-            ['./exasol', 'stop', '--deployment-dir', str(self.deploy_dir)],
-            capture_output=True, text=True, timeout=600
-        )
+        cmd = ['./exasol', 'stop', '--deployment-dir', str(self.deploy_dir)]
+        
+        result = self._run_command_with_streaming(cmd, timeout=600)
+        
         if result.returncode != 0:
             raise RuntimeError(f"Stop cluster failed: {result.stderr}")
 
-        step.result = {'stdout': result.stdout}
+        step.result = {'stdout': result.stdout, 'stderr': result.stderr}
 
     def _execute_start_cluster(self, step: WorkflowStep):
         """Execute cluster start"""
-        result = subprocess.run(
-            ['./exasol', 'start', '--deployment-dir', str(self.deploy_dir)],
-            capture_output=True, text=True, timeout=600
-        )
+        cmd = ['./exasol', 'start', '--deployment-dir', str(self.deploy_dir)]
+        
+        result = self._run_command_with_streaming(cmd, timeout=600)
+        
         if result.returncode != 0:
             raise RuntimeError(f"Start cluster failed: {result.stderr}")
 
-        step.result = {'stdout': result.stdout}
+        step.result = {'stdout': result.stdout, 'stderr': result.stderr}
+
+    def _execute_destroy(self, step: WorkflowStep):
+        """Execute destroy step to tear down the cluster"""
+        cmd = ['./exasol', 'destroy', '--deployment-dir', str(self.deploy_dir), '--auto-approve']
+        
+        result = self._run_command_with_streaming(cmd, timeout=600)
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"Destroy failed: {result.stderr}")
+
+        step.result = {'stdout': result.stdout, 'stderr': result.stderr}
 
     def _execute_stop_node(self, step: WorkflowStep):
         """Stop a specific node"""

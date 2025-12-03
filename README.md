@@ -141,7 +141,7 @@ Install libvirt and KVM, then ensure your user is in the `libvirt` and `kvm` gro
 # List supported cloud providers
 ./exasol init --list-providers
 
-# List available database versions
+# List available database versions (shows availability and architecture)
 ./exasol init --list-versions
 ```
 
@@ -391,7 +391,7 @@ Initialize a new deployment directory with configuration files.
 **Common Flags**
 - `--deployment-dir string`: Directory for deployment files (default: current directory).
 - `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., `exasol-2025.1.4`; x86_64 is implicit).
-- `--list-versions`: List all available database versions and exit.
+- `--list-versions`: List all available database versions (with availability and architecture) and exit.
 - `--list-providers`: List all supported cloud providers and exit.
 - `--cluster-size number`: Number of nodes (default: 1).
 - `--instance-type string`: Instance/VM type (auto-detected from version if omitted).

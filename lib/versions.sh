@@ -36,6 +36,124 @@ list_versions() {
     get_config_sections "$config_file" | grep -v "^default$"
 }
 
+check_download_target_availability() {
+    local url="$1"
+    local label="$2"
+
+    if [[ -z "$url" ]]; then
+        echo "missing|No $label URL configured"
+        return 1
+    fi
+
+    if [[ "$url" == file://* ]]; then
+        local path="${url#file://}"
+        if [[ $path == ~/* ]]; then
+            path="${HOME}${path#~}"
+        fi
+
+        if [[ -r "$path" ]]; then
+            echo "ok|$label file available: $path"
+            return 0
+        fi
+
+        echo "missing|$label file not found: $path"
+        return 1
+    fi
+
+    if ! command_exists curl; then
+        echo "unknown|Cannot check $label URL (curl not installed)"
+        return 1
+    fi
+
+    if curl --head --silent --fail --location --max-time 10 "$url" >/dev/null 2>&1; then
+        echo "ok|$label reachable: $url"
+        return 0
+    fi
+
+    echo "missing|$label not reachable: $url"
+    return 1
+}
+
+list_versions_with_availability() {
+    local config_file
+    config_file=$(get_versions_config_path)
+
+    if [[ ! -f "$config_file" ]]; then
+        die "Versions config file not found: $config_file"
+    fi
+
+    local default_version
+    default_version=$(get_default_version)
+
+    local versions
+    versions=$(get_config_sections "$config_file" | grep -v "^default$")
+
+    if [[ -z "$versions" ]]; then
+        log_info "  (no versions configured)"
+        return 0
+    fi
+
+    while IFS= read -r version; do
+        [[ -z "$version" ]] && continue
+
+        local db_url c4_url
+        db_url=$(parse_config_file "$config_file" "$version" "DB_DOWNLOAD_URL")
+        c4_url=$(parse_config_file "$config_file" "$version" "C4_DOWNLOAD_URL")
+        local architecture
+        architecture=$(parse_config_file "$config_file" "$version" "ARCHITECTURE")
+
+        local has_error=0
+        local comments=()
+
+        if [[ -z "$architecture" ]]; then
+            has_error=1
+            comments+=("Architecture not set")
+        fi
+
+        local db_result db_status db_comment
+        db_result=$(check_download_target_availability "$db_url" "DB package")
+        db_status="${db_result%%|*}"
+        db_comment="${db_result#*|}"
+        if [[ "$db_status" != "ok" ]]; then
+            has_error=1
+            comments+=("$db_comment")
+        fi
+
+        local c4_result c4_status c4_comment
+        c4_result=$(check_download_target_availability "$c4_url" "c4 binary")
+        c4_status="${c4_result%%|*}"
+        c4_comment="${c4_result#*|}"
+        if [[ "$c4_status" != "ok" ]]; then
+            has_error=1
+            comments+=("$c4_comment")
+        fi
+
+        local marker="[+]"
+        if [[ $has_error -ne 0 ]]; then
+            marker="[x]"
+        fi
+
+        local suffix=""
+        if [[ "$version" == "$default_version" ]]; then
+            suffix=" (default)"
+        fi
+
+        local arch_display
+        arch_display="$architecture"
+        if [[ -z "$arch_display" ]]; then
+            arch_display="unknown"
+        fi
+
+        local comment_text=""
+        if [[ ${#comments[@]} -gt 0 ]]; then
+            comment_text=$(IFS='; '; echo "${comments[*]}")
+            comment_text=" - $comment_text"
+        fi
+
+        log_info "  $marker $version [$arch_display]$suffix$comment_text"
+    done <<< "$versions"
+}
+
 # Get default version
 get_default_version() {
     local config_file

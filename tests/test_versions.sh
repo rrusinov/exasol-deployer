@@ -96,9 +96,6 @@ test_get_version_config() {
     result=$(get_version_config "exasol-2025.1.4" "ARCHITECTURE")
     assert_equals "x86_64" "$result" "Should get architecture from version config"
 
-    result=$(get_version_config "exasol-2025.1.4" "DEFAULT_INSTANCE_TYPE_LIBVIRT")
-    assert_equals "libvirt-custom" "$result" "Should get libvirt instance type from version config"
-
     result=$(get_version_config "exasol-2025.1.4" "C4_VERSION")
     assert_equals "4.28.4" "$result" "Should get C4 version from config"
 }
@@ -123,6 +120,48 @@ test_list_versions() {
     versions=$(list_versions)
 
     assert_contains "$versions" "exasol-2025.1.4" "Should list available version"
+}
+
+test_list_versions_with_architecture_output() {
+    echo ""
+    echo "Test: list_versions_with_availability includes architecture"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+    local fake_db="$test_dir/db.tar.gz"
+    local fake_c4="$test_dir/c4"
+    touch "$fake_db" "$fake_c4"
+
+    local versions_override="$test_dir/versions.conf"
+    cat > "$versions_override" <<EOF
+[exasol-test-arch]
+ARCHITECTURE=arm64
+DB_VERSION=@exasol-test-arch
+DB_DOWNLOAD_URL=file://$fake_db
+DB_CHECKSUM=sha256:$(sha256sum "$fake_db" | awk '{print $1}')
+C4_VERSION=dev
+C4_DOWNLOAD_URL=file://$fake_c4
+C4_CHECKSUM=sha256:$(sha256sum "$fake_c4" | awk '{print $1}')
+
+[default]
+VERSION=exasol-test-arch
+EOF
+
+    local previous_versions_config="${EXASOL_VERSIONS_CONFIG:-}"
+    EXASOL_VERSIONS_CONFIG="$versions_override"
+
+    local output
+    output=$(list_versions_with_availability)
+
+    if [[ -n "$previous_versions_config" ]]; then
+        EXASOL_VERSIONS_CONFIG="$previous_versions_config"
+    else
+        unset EXASOL_VERSIONS_CONFIG
+    fi
+
+    assert_contains "$output" "[+] exasol-test-arch [arm64]" "Should show architecture in list output"
+
+    cleanup_test_dir "$test_dir"
 }
 
 # Test get_instance_types_config_path

@@ -32,11 +32,10 @@ class TestEnhancedE2ETestFramework(unittest.TestCase):
                 'test_suite': {
                     'provider': 'aws',
                     'parameters': {
-                        'cluster_size': [1],
-                        'instance_type': ['t3a.large'],
-                        'data_volume_size': [100]
-                    },
-                    'combinations': '1-wise'
+                        'cluster_size': 1,
+                        'instance_type': 't3a.large',
+                        'data_volume_size': 100
+                    }
                 }
             }
         }
@@ -334,9 +333,8 @@ class TestEnhancedE2EFrameworkMain(unittest.TestCase):
                 'test_suite': {
                     'provider': 'aws',
                     'parameters': {
-                        'cluster_size': [1]
-                    },
-                    'combinations': '1-wise'
+                        'cluster_size': 1
+                    }
                 }
             }
         }

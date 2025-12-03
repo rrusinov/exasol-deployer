@@ -1,0 +1,43 @@
+{
+  "workflow_name": "enhanced",
+  "description": "Deploy, stop, start, and destroy workflow",
+  "steps": [
+    {
+      "step": "init"
+    },
+    {
+      "step": "deploy"
+    },
+    {
+      "step": "validate",
+      "description": "Validate initial deployment",
+      "checks": [
+        "cluster_status",
+        "ssh_connectivity",
+        "database_running"
+      ]
+    },
+    {
+      "step": "stop_cluster"
+    },
+    {
+      "step": "validate",
+      "description": "Validate cluster stopped",
+      "checks": [
+        "cluster_status_stopped"
+      ]
+    },
+    {
+      "step": "start_cluster"
+    },
+    {
+      "step": "validate",
+      "description": "Validate cluster restarted",
+      "checks": [
+        "cluster_status",
+        "ssh_connectivity",
+        "database_running"
+      ]
+    }
+  ]
+}
