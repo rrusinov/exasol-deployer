@@ -630,22 +630,11 @@ cmd_init() {
 
     # Set default instance type if not provided
     if [[ -z "$instance_type" ]]; then
-        if [[ "$cloud_provider" == "libvirt" ]]; then
-            instance_type=$(parse_config_file "$(get_instance_types_config_path)" "libvirt" "DEFAULT_INSTANCE_TYPE_LIBVIRT")
-            if [[ -z "$instance_type" ]]; then
-                instance_type=$(get_instance_type_default "$cloud_provider" "$architecture")
-            fi
-            if [[ -z "$instance_type" ]]; then
-                instance_type="libvirt-custom"
-            fi
-            log_info "Using default instance type for libvirt: $instance_type"
-        else
-            instance_type=$(get_instance_type_default "$cloud_provider" "$architecture")
-            if [[ -z "$instance_type" ]]; then
-                die "No default instance type found for provider '$cloud_provider' and architecture '$architecture'"
-            fi
-            log_info "Using default instance type for $cloud_provider ($architecture): $instance_type"
+        instance_type=$(get_instance_type_default "$cloud_provider" "$architecture")
+        if [[ -z "$instance_type" ]]; then
+            die "No default instance type found for provider '$cloud_provider' and architecture '$architecture'"
         fi
+        log_info "Using default instance type for $cloud_provider ($architecture): $instance_type"
     fi
 
     # Set default region/location if not provided, using instance-types.conf

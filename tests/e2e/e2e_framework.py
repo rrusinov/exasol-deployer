@@ -284,7 +284,8 @@ class E2ETestFramework:
         
         # Create execution-timestamp directory: ./tmp/tests/e2e-YYYYMMDD-HHMMSS/
         self.execution_timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-        base_dir = Path('./tmp/tests')
+        # Use absolute path to ensure logs go to correct location regardless of cwd
+        base_dir = Path('./tmp/tests').resolve()
         self.results_dir = results_dir if results_dir else (base_dir / f'e2e-{self.execution_timestamp}')
         self.results_dir.mkdir(parents=True, exist_ok=True)
         
