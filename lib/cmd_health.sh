@@ -1007,6 +1007,18 @@ EOF
     "services": {
       "active": $services_active,
       "failed": $services_failed
+    },
+    "adminui": {
+      "passed": $adminui_passed,
+      "failed": $adminui_failed
+    },
+    "database": {
+      "passed": $database_passed,
+      "failed": $database_failed
+    },
+    "cos_ssh": {
+      "passed": $cos_ssh_passed,
+      "failed": $cos_ssh_failed
     }
   },
   "issues_count": $overall_issues,

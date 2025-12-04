@@ -13,6 +13,6 @@
   "requirements": {
     "libvirt_available": true,
     "kvm_available": true,
-    "min_memory_gb": 32
+    "min_memory_gb": 24
   }
 }

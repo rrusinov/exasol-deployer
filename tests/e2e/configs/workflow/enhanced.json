@@ -1,6 +1,6 @@
 {
-  "workflow_name": "enhanced",
-  "description": "Deploy, stop, start, and destroy workflow",
+  "workflow_name": "failsafety",
+  "description": "Comprehensive failsafety testing with node failures and recovery",
   "steps": [
     {
       "step": "init"
@@ -12,9 +12,9 @@
       "step": "validate",
       "description": "Validate initial deployment",
       "checks": [
-        "cluster_status",
-        "ssh_connectivity",
-        "database_running"
+        "cluster_status==database_ready",
+        "health_status[*].ssh==ok",
+        "health_status[*].adminui==ok"
       ]
     },
     {
@@ -24,7 +24,7 @@
       "step": "validate",
       "description": "Validate cluster stopped",
       "checks": [
-        "cluster_status_stopped"
+        "cluster_status==stopped"
       ]
     },
     {
@@ -34,10 +34,63 @@
       "step": "validate",
       "description": "Validate cluster restarted",
       "checks": [
-        "cluster_status",
-        "ssh_connectivity",
-        "database_running"
+        "cluster_status==database_ready",
+        "health_status[*].ssh==ok",
+        "health_status[*].adminui==ok",
+        "health_status[*].database==ok"
       ]
+    },
+    {
+      "step": "restart_node",
+      "description": "Restart single node n12",
+      "target_node": "n12",
+      "method": "ssh"
+    },
+    {
+      "step": "validate",
+      "description": "Validate after node restart",
+      "checks": [
+        "cluster_status==database_ready",
+        "health_status[n12].ssh==ok",
+        "health_status[n12].adminui==ok",
+        "health_status[n12].database==ok"
+      ]
+    },
+    {
+      "step": "crash_node",
+      "description": "Simulate crash on n11",
+      "target_node": "n11",
+      "method": "ssh"
+    },
+    {
+      "step": "validate",
+      "description": "Validate cluster with crashed node",
+      "checks": [
+        "cluster_status==degraded",
+        "health_status[n11].ssh!=ok"
+      ],
+      "allow_failures": [
+        "cluster_status==degraded"
+      ]
+    },
+    {
+      "step": "start_node",
+      "description": "Recover n11",
+      "target_node": "n11"
+    },
+    {
+      "step": "validate",
+      "description": "Validate cluster recovered",
+      "checks": [
+        "cluster_status==database_ready",
+        "health_status[*].ssh==ok",
+        "health_status[*].adminui==ok",
+        "health_status[*].database==ok"
+      ],
+      "retry": {
+        "max_attempts": 5,
+        "delay_seconds": 30
+      }
     }
   ]
 }

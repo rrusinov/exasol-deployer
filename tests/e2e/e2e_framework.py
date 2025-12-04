@@ -45,6 +45,16 @@ except ImportError:
     EMERGENCY_TOOLING_AVAILABLE = False
     EmergencyHandler = ResourceTracker = ResourceInfo = None
 
+try:
+    from config_schema import (
+        validate_workflow_step,
+        validate_validation_check,
+        validate_sut_parameters
+    )
+    CONFIG_VALIDATION_AVAILABLE = True
+except ImportError:
+    CONFIG_VALIDATION_AVAILABLE = False
+
 
 class NotificationManager:
     """Collects notification events and persists them to disk."""
@@ -188,7 +198,8 @@ class HTMLReportGenerator:
             status = 'PASS' if result.get('success') else 'FAIL'
             row_class = 'pass' if result.get('success') else 'fail'
             error = html.escape(result.get('error') or '')
-            suite_name = html.escape(result.get('suite_name', result.get('suite', result.get('deployment_id', 'n/a'))))
+            suite_name = html.escape(result.get('suite', result.get('deployment_id', 'n/a')))
+            db_version = html.escape(result.get('db_version', 'default'))
             
             # Build workflow steps display
             steps_html = []
@@ -209,7 +220,8 @@ class HTMLReportGenerator:
             # Build parameters display
             params = result.get('parameters', {})
             params_items = [f"{k}={v}" for k, v in params.items()]
-            params_display = html.escape(', '.join(params_items[:5]))  # Show first 5 params
+            params_display_short = html.escape(', '.join(params_items[:5]))  # Show first 5 in table
+            params_display_full = html.escape(', '.join(params_items)) if params_items else 'N/A'  # Show all in details
             
             # Description from SUT
             sut_desc = html.escape(result.get('sut_description') or '')
@@ -218,12 +230,15 @@ class HTMLReportGenerator:
                 f"<tr class='{row_class}'>"
                 f"<td><strong>{suite_name}</strong><br/><small>{sut_desc}</small></td>"
                 f"<td>{html.escape(result.get('provider') or '')}</td>"
-                f"<td><small>{params_display}</small></td>"
+                f"<td>{db_version}</td>"
+                f"<td><small>{params_display_short}</small></td>"
                 f"<td>{result.get('duration', 0):.1f}s</td>"
                 f"<td>{status}</td>"
                 f"<td>{error}</td>"
                 "</tr>"
-                f"<tr class='{row_class}-details'><td colspan='6'><details><summary>Steps</summary>{steps_display}</details></td></tr>"
+                f"<tr class='{row_class}-details'><td colspan='7'><details><summary>Steps & Config</summary>"
+                f"<div class='config-section'><strong>Parameters:</strong> {params_display_full}</div>"
+                f"{steps_display}</details></td></tr>"
             )
         rows_html = '\n'.join(rows)
         html_content = f"""<!DOCTYPE html>
@@ -247,6 +262,7 @@ summary {{ cursor: pointer; font-weight: bold; padding: 0.5rem; background: #f0f
 .step-pending {{ border-left-color: #faad14; }}
 .summary-box {{ background: #f0f0f0; padding: 1rem; border-radius: 5px; margin-bottom: 1rem; }}
 .summary-box h2 {{ margin-top: 0; }}
+.config-section {{ background: #f9f9f9; padding: 0.5rem; margin: 0.3rem 0; border-radius: 3px; }}
 </style>
 </head>
 <body>
@@ -254,13 +270,15 @@ summary {{ cursor: pointer; font-weight: bold; padding: 0.5rem; background: #f0f
 <div class="summary-box">
 <h2>Summary</h2>
 <p><strong>Execution:</strong> {summary.get('execution_dir', 'N/A')}</p>
+<p><strong>Database Version:</strong> {summary.get('db_version', 'default')} | 
+   <strong>Provider:</strong> {', '.join(summary.get('provider')) if isinstance(summary.get('provider'), list) else summary.get('provider', 'N/A')}</p>
 <p><strong>Total tests:</strong> {summary.get('total_tests', 0)} | 
    <strong>Passed:</strong> {summary.get('passed', 0)} | 
    <strong>Failed:</strong> {summary.get('failed', 0)} | 
    <strong>Total time:</strong> {summary.get('total_time', 0):.1f}s</p>
 </div>
 <table>
-<thead><tr><th>Suite</th><th>Provider</th><th>Parameters</th><th>Duration</th><th>Status</th><th>Error</th></tr></thead>
+<thead><tr><th>Suite</th><th>Provider</th><th>DB Version</th><th>Parameters</th><th>Duration</th><th>Status</th><th>Error</th></tr></thead>
 <tbody>
 {rows_html}
 </tbody>
@@ -308,6 +326,10 @@ class E2ETestFramework:
         # Setup logging
         self._setup_logging()
         self.config = self._load_config()
+        
+        # Validate configuration
+        self._validate_configuration()
+        
         self.live_mode = bool(self.config.get('live_mode', False))
         self.enable_live_validation = bool(self.config.get('enable_live_validation', True))
         resource_limits = self.config.get('resource_limits', {})
@@ -441,6 +463,55 @@ class E2ETestFramework:
             'test_suites': merged_suites  # This is the correct key
         }
 
+    def _validate_configuration(self):
+        """Validate all test suite configurations for correctness."""
+        if not CONFIG_VALIDATION_AVAILABLE:
+            self.logger.warning("Configuration validation module not available, skipping validation")
+            return
+        
+        all_errors = []
+        
+        for suite_name, suite_config in self.config.get('test_suites', {}).items():
+            suite_errors = []
+            provider = suite_config.get('provider', 'unknown')
+            
+            # Validate parameters
+            if 'parameters' in suite_config:
+                param_errors = validate_sut_parameters(suite_config['parameters'], provider)
+                if param_errors:
+                    suite_errors.append(f"Parameter validation errors:")
+                    suite_errors.extend([f"  - {err}" for err in param_errors])
+            
+            # Validate workflow steps
+            workflow = suite_config.get('workflow', [])
+            for step_idx, step in enumerate(workflow):
+                step_errors = validate_workflow_step(step, provider)
+                if step_errors:
+                    suite_errors.append(f"Step {step_idx + 1} ({step.get('step', 'unknown')}) validation errors:")
+                    suite_errors.extend([f"  - {err}" for err in step_errors])
+                
+                # Validate validation checks within validate steps
+                if step.get('step') == 'validate' and 'checks' in step:
+                    for check_idx, check in enumerate(step['checks']):
+                        check_errors = validate_validation_check(check)
+                        if check_errors:
+                            suite_errors.append(f"Step {step_idx + 1}, check {check_idx + 1} ('{check}') validation errors:")
+                            suite_errors.extend([f"  - {err}" for err in check_errors])
+            
+            if suite_errors:
+                all_errors.append(f"\nSuite '{suite_name}':")
+                all_errors.extend(suite_errors)
+        
+        if all_errors:
+            error_msg = "\n" + "="*80 + "\n"
+            error_msg += "CONFIGURATION VALIDATION FAILED\n"
+            error_msg += "="*80 + "\n"
+            error_msg += "\n".join(all_errors)
+            error_msg += "\n" + "="*80 + "\n"
+            self.logger.error(error_msg)
+            print(error_msg, file=sys.stderr)
+            raise ValueError("Configuration validation failed. Please fix the errors above.")
+
     def _validate_config_keys(self, config: Dict[str, Any]):
         """Validate configuration for misspelled keys."""
         valid_keys = {
@@ -549,7 +620,8 @@ class E2ETestFramework:
             
             # Each suite has a single set of parameters (no combinations)
             parameters = suite_config.get('parameters', {})
-            deployment_id = self._build_deployment_id(suite_name, suite_config['provider'], parameters)
+            # Use suite name directly as deployment ID (simple and readable)
+            deployment_id = suite_name
             # Match by suite name or deployment ID
             if only_tests and suite_name not in only_tests and deployment_id not in only_tests:
                 continue
@@ -703,9 +775,14 @@ class E2ETestFramework:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         results_file = self.results_dir / "results.json"
 
+        # Extract unique providers from results
+        providers = sorted(set(r.get('provider', 'unknown') for r in results))
+        
         summary = {
             'timestamp': timestamp,
             'execution_dir': str(self.results_dir),
+            'db_version': self.db_version or 'default',
+            'provider': providers[0] if len(providers) == 1 else providers,
             'total_tests': len(results),
             'passed': sum(1 for r in results if r['success']),
             'failed': sum(1 for r in results if not r['success']),
@@ -788,10 +865,10 @@ class E2ETestFramework:
         result = {
             'deployment_id': deployment_id,  # Keep for backward compatibility
             'suite': suite_name,
-            'suite_name': suite_name,
             'provider': provider,
             'test_type': 'workflow',
             'run_number': run_number,
+            'db_version': self.db_version or 'default',
             'success': False,
             'duration': 0,
             'error': None,
@@ -1735,7 +1812,11 @@ def main():
 
     args = parser.parse_args()
 
-    framework = E2ETestFramework(args.config, Path(args.results_dir) if args.results_dir else None, db_version=args.db_version)
+    try:
+        framework = E2ETestFramework(args.config, Path(args.results_dir) if args.results_dir else None, db_version=args.db_version)
+    except ValueError as e:
+        # Configuration validation failed - error already printed to stderr
+        sys.exit(1)
 
     provider_filter = (
         {p.strip().lower() for p in args.providers.split(',') if p.strip()}

@@ -68,7 +68,7 @@ def list_tests_for_configs(results_dir: str, provider_filter: str, configs: list
     """List all available tests grouped by provider."""
     from tests.e2e.e2e_framework import E2ETestFramework
     
-    results_dir_path = Path(results_dir)
+    results_dir_path = Path(results_dir) if results_dir else None
     provider_filter = provider_filter.lower() if provider_filter else ''
 
     if not configs:
@@ -183,7 +183,7 @@ def resolve_selected_tests(results_dir: str, requested_ids: str, configs: list) 
     """Resolve test suite names/IDs to config files."""
     from tests.e2e.e2e_framework import E2ETestFramework
     
-    results_dir_path = Path(results_dir)
+    results_dir_path = Path(results_dir) if results_dir else None
     requested = {value.strip() for value in requested_ids.split(',') if value.strip()}
 
     if not requested:
@@ -191,7 +191,13 @@ def resolve_selected_tests(results_dir: str, requested_ids: str, configs: list) 
 
     found = set()
     for cfg in configs:
-        framework = E2ETestFramework(cfg, results_dir_path)
+        try:
+            framework = E2ETestFramework(cfg, results_dir_path)
+        except ValueError as e:
+            # Configuration validation failed - error already printed to stderr
+            # Skip this config and continue with others
+            continue
+        
         for test in framework.generate_test_plan():
             deployment_id = test.get('deployment_id')
             suite = test.get('suite', '')

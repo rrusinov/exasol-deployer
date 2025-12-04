@@ -232,13 +232,103 @@ The following parameters can be specified in the `parameters` section of SUT con
 
 ## Validation Checks
 
-The framework performs the following validation checks for each test:
+The framework supports dynamic validation checks based on data from `exasol status` and `exasol health` commands.
 
-- **Terraform State**: Verifies `.terraform/terraform.tfstate` exists
-- **Outputs File**: Checks for `outputs.tf` file presence
-- **Inventory File**: Validates `inventory.ini` exists and contains expected nodes
-- **Cluster Size**: Verifies the number of nodes matches the specified cluster size
-- **Terraform Logs**: Checks for errors in terraform execution logs
+### Cluster Status Checks
+
+Format: `cluster_status==<value>` or `cluster_status!=<value>`
+
+Validates the cluster status from `.exasol.json` state file.
+
+**Examples:**
+- `cluster_status==database_ready` - Cluster is ready
+- `cluster_status==stopped` - Cluster is stopped
+- `cluster_status!=error` - Cluster is not in error state
+
+**Valid Status Values:**
+- `database_ready` - Cluster deployed and database is ready
+- `stopped` - Cluster is stopped
+- `starting` - Cluster is starting up
+- `stopping` - Cluster is shutting down  
+- `error` - Cluster is in error state
+- `degraded` - Cluster is degraded (some nodes down but operational)
+- `deploy_failed` - Deployment failed
+- `stop_failed` - Stop operation failed
+- `start_failed` - Start operation failed
+
+### Health Status Checks
+
+Format: `health_status[<nodes>].<component>==<value>` or `!=<value>`
+
+Validates health status from `exasol health --output-format json` command.
+
+**Node Selectors:**
+- `[*]` - All nodes (aggregate check across all nodes)
+- `[n11]` - Specific node (note: per-node checks not yet supported, falls back to aggregate)
+- `[n11,n12,n13]` - Multiple nodes (note: per-node checks not yet supported, falls back to aggregate)
+
+**Component Selectors:**
+Components map to the health check categories returned by `exasol health`:
+- `.ssh` → SSH connectivity checks
+- `.adminui` → Admin UI service checks (part of services)
+- `.database` → Database service checks (part of services)
+- `.cos_ssh` → COS SSH connectivity (part of SSH checks)
+
+**Value Comparisons:**
+- `ok` or `true` → Expects all nodes passed (failed count = 0, passed count > 0)
+- `failed` or `false` → Expects some failures (failed count > 0)
+
+**Current Implementation:**
+The health check uses aggregate data from `exasol health --output-format json`:
+```json
+{
+  "status": "healthy",
+  "checks": {
+    "ssh": {"passed": 3, "failed": 0},
+    "services": {"active": 12, "failed": 0}
+  },
+  "issues_count": 0,
+  "issues": []
+}
+```
+
+For `health_status[*].ssh==ok`, the check verifies that `checks.ssh.failed == 0` and `checks.ssh.passed > 0`.
+
+**Examples:**
+- `health_status[*].ssh==ok` - SSH OK on all nodes (no failed SSH checks)
+- `health_status[*].adminui==ok` - Admin UI services OK on all nodes (no failed services)
+- `health_status[*].database==ok` - Database services OK on all nodes (no failed services)
+- `health_status[*].ssh!=ok` - Some SSH failures detected
+- `health_status[*].database!=failed` - No database failures detected (same as ==ok)
+
+**Note:** Per-node granular health checks are not yet supported by the current `exasol health` JSON output. The [*] wildcard selector checks aggregate health across all nodes. Specific node selectors ([n11], [n12,n13]) fall back to aggregate checks with a warning logged.
+
+### Validation Step Configuration
+
+```json
+{
+  "step": "validate",
+  "description": "Validate cluster state",
+  "checks": [
+    "cluster_status==database_ready",
+    "health_status[*].ssh==ok",
+    "health_status[*].adminui==ok"
+  ],
+  "allow_failures": ["health_status[*].adminui==ok"],
+  "retry": {
+    "max_attempts": 5,
+    "delay_seconds": 30
+  }
+}
+```
+
+**Fields:**
+- `checks` (required): List of validation check strings
+- `allow_failures` (optional): List of checks that can fail without failing the step
+- `retry` (optional): Retry configuration
+  - `max_attempts`: Maximum number of retry attempts
+  - `delay_seconds`: Delay between retries in seconds
+- `description` (optional): Human-readable description of what's being validated
 
 ## Results
 
@@ -346,6 +436,55 @@ The framework can be integrated with GitHub Actions and other CI/CD systems:
 
 The framework uses only Python standard library for maximum compatibility and minimal dependencies. All cloud provider interactions are handled through the existing Exasol CLI commands.
 
+### Configuration Validation
+
+The E2E framework includes comprehensive configuration validation to ensure correctness before tests run:
+
+**Schema Validation (`tests/e2e/config_schema.py`):**
+- Defines supported workflow steps, validation checks, and SUT parameters
+- Validates workflow step configurations against schema
+- Validates SUT parameters for each provider
+- Validates validation check syntax and values
+
+**Unit Tests (`tests/e2e/test_config_validation.py`):**
+- Tests workflow configuration files are valid
+- Tests SUT configuration files are valid
+- Tests documentation matches implementation
+- Tests schema definitions are consistent
+
+**Run validation tests:**
+```bash
+cd tests/e2e
+python3 -m unittest test_config_validation -v
+```
+
+**Key Validation Features:**
+- Workflow step validation (required/optional fields, provider support)
+- Validation check syntax validation (cluster_status, health_status patterns)
+- SUT parameter validation (type checking, provider compatibility)
+- Documentation consistency checks (ensures README matches implementation)
+
+### Adding New Features
+
+**Adding a New Workflow Step:**
+1. Add step handler to `WorkflowExecutor._execute_step()` in `workflow_engine.py`
+2. Implement `_execute_<step_name>()` method
+3. Add step schema to `WORKFLOW_STEPS` in `config_schema.py`
+4. Update documentation in `E2E-README.md`
+5. Run validation tests to ensure consistency
+
+**Adding a New Validation Check Component:**
+1. Add component mapping to `HEALTH_CHECK_COMPONENTS` in `config_schema.py`
+2. Update `_create_health_status_check()` in `workflow_engine.py`
+3. Document in validation checks section of README
+4. Run validation tests
+
+**Adding a New SUT Parameter:**
+1. Add parameter to `SUT_PARAMETERS` in `config_schema.py`
+2. Add parameter mapping in `WorkflowExecutor._execute_init()` in `workflow_engine.py`
+3. Document in SUT Configuration Parameters section
+4. Run validation tests
+
 ---
 
 # Workflow-Based E2E Testing
@@ -402,6 +541,74 @@ The following operations work on **all providers** via SSH:
 
 Workflows are stored in `tests/e2e/configs/workflow/` and define sequences of test steps independent of specific deployment parameters.
 
+## Workflow Configuration Format
+
+Workflows are stored in `tests/e2e/configs/workflow/` and define sequences of test steps independent of specific deployment parameters.
+
+### Workflow File Structure
+
+```json
+{
+  "description": "Brief description of the workflow purpose",
+  "steps": [
+    { "step": "init" },
+    { "step": "deploy" },
+    { "step": "validate", "checks": [...] },
+    { "step": "destroy" }
+  ]
+}
+```
+
+**Key Points:**
+- Workflows are **abstract and reusable** - no deployment-specific parameters
+- The `workflow_name` field is **not needed** - derived from filename (e.g., `enhanced.json` → `enhanced`)
+- The `description` field is **optional** for self-explanatory steps
+- Suite name format: `{sut-name}_{workflow-name}` (e.g., `aws-4n_enhanced`)
+
+### SUT (System Under Test) File Structure
+
+SUT configurations define infrastructure parameters and are stored in `tests/e2e/configs/sut/`.
+
+```json
+{
+  "description": "Brief description of the SUT configuration",
+  "provider": "aws",
+  "parameters": {
+    "cluster_size": 4,
+    "instance_type": "t3a.xlarge",
+    "data_volumes_per_node": 2,
+    "data_volume_size": 200,
+    "root_volume_size": 100
+  }
+}
+```
+
+**Key Points:**
+- The `sut_name` field is **not needed** - derived from filename (e.g., `aws-4n.json` → `aws-4n`)
+- The `provider` field is **required** and must be one of: `aws`, `azure`, `gcp`, `digitalocean`, `hetzner`, `libvirt`
+- The `parameters` field is **required** and contains deployment-specific parameters
+- See [SUT Configuration Parameters](#sut-configuration-parameters) section for available parameters
+
+### Supported Workflow Steps
+
+The following step types are supported (in typical lifecycle order):
+
+| Step | Required Fields | Optional Fields | Description |
+|------|----------------|-----------------|-------------|
+| `init` | `step` | `description` | Initialize deployment directory |
+| `deploy` | `step` | `description` | Deploy the cluster |
+| `validate` | `step`, `checks` | `description`, `allow_failures`, `retry` | Perform validation checks |
+| `stop_cluster` | `step` | `description` | Stop entire cluster |
+| `start_cluster` | `step` | `description` | Start entire cluster |
+| `stop_node` | `step`, `target_node` | `description` | Stop specific node (not yet implemented) |
+| `start_node` | `step`, `target_node` | `description` | Start specific node (not yet implemented) |
+| `restart_node` | `step`, `target_node` | `description`, `method` | Restart specific node |
+| `crash_node` | `step`, `target_node` | `description`, `method` | Simulate node crash |
+| `custom_command` | `step`, `custom_command` | `description` | Execute custom command |
+| `destroy` | `step` | `description` | Destroy cluster and cleanup |
+
+**Note:** Steps like `stop_node` and `start_node` are planned for AWS/Azure/GCP but not yet implemented. All providers support `restart_node` and `crash_node` via SSH (`method: "ssh"`).
+
 ### Basic Structure
 
 ```json
@@ -410,7 +617,10 @@ Workflows are stored in `tests/e2e/configs/workflow/` and define sequences of te
   "steps": [
     { "step": "init" },
     { "step": "deploy" },
-    { "step": "validate", "checks": ["cluster_status", "ssh_connectivity"] },
+    { "step": "validate", "checks": [
+      "cluster_status==database_ready",
+      "health_status[*].ssh==ok"
+    ] },
     { "step": "destroy" }
   ]
 }
@@ -451,11 +661,11 @@ Perform validation checks on the cluster state. Supports multiple checks, retry 
   "step": "validate",
   "description": "Validate cluster state after restart",
   "checks": [
-    "cluster_status",
-    "ssh_connectivity",
-    "database_running"
+    "cluster_status==database_ready",
+    "health_status[*].ssh==ok",
+    "health_status[*].database==ok"
   ],
-  "allow_failures": ["optional_check"],
+  "allow_failures": ["health_status[*].adminui==ok"],
   "retry": {
     "max_attempts": 5,
     "delay_seconds": 30
@@ -556,40 +766,20 @@ Destroy the cluster and clean up all cloud resources.
 ```
 **Note:** This step tears down the entire deployment. It's typically used at the end of a test workflow to ensure proper cleanup.
 
-## Built-in Validation Checks
-
-### Cluster Status Checks
-- `cluster_status` - Cluster is healthy and operational
-- `cluster_status_stopped` - Cluster is fully stopped
-- `cluster_degraded` - Cluster is degraded but operational
-- `cluster_critical` - Cluster is in critical state
-
-### Node Status Checks
-- `all_nodes_running` - All nodes are running
-- `ssh_connectivity` - SSH connectivity to all nodes
-- `vms_powered_off` - All VMs are powered off
-- `node_status:<node>` - Check specific node status (e.g., `node_status:n12`)
-- `node_status:<node>:<state>` - Check node in specific state (e.g., `node_status:n12:running`)
-
-### Database Checks
-- `database_running` - Database services are running
-- `database_degraded` - Database is in degraded state
-- `database_down` - Database is completely down
-- `admin_ui_accessible` - Admin UI is accessible
-- `data_integrity` - Verify data integrity after operations
-
 ## Example Workflows
 
 ### 1. Basic Deploy and Destroy
 
 ```json
 {
-  "workflow_name": "basic",
   "description": "Basic deploy and destroy workflow",
   "steps": [
     {"step": "init"},
     {"step": "deploy"},
-    {"step": "validate", "description": "Validate deployment", "checks": ["cluster_status", "ssh_connectivity"]},
+    {"step": "validate", "description": "Validate deployment", "checks": [
+      "cluster_status==database_ready",
+      "health_status[*].ssh==ok"
+    ]},
     {"step": "destroy"}
   ]
 }
@@ -599,56 +789,75 @@ Destroy the cluster and clean up all cloud resources.
 
 ```json
 {
-  "workflow_name": "enhanced",
   "description": "Deploy, stop, start, and destroy workflow",
   "steps": [
     {"step": "init"},
     {"step": "deploy"},
-    {"step": "validate", "description": "Validate initial deployment", "checks": ["cluster_status", "database_running"]},
+    {"step": "validate", "description": "Validate initial deployment", "checks": [
+      "cluster_status==database_ready",
+      "health_status[*].database==ok"
+    ]},
     {"step": "stop_cluster"},
-    {"step": "validate", "description": "Validate cluster stopped", "checks": ["cluster_status_stopped"]},
+    {"step": "validate", "description": "Validate cluster stopped", "checks": ["cluster_status==stopped"]},
     {"step": "start_cluster"},
-    {"step": "validate", "description": "Validate cluster restarted", "checks": ["cluster_status", "database_running"]},
+    {"step": "validate", "description": "Validate cluster restarted", "checks": [
+      "cluster_status==database_ready",
+      "health_status[*].database==ok"
+    ]},
     {"step": "destroy"}
   ]
 }
 ```
 
-### 3. Single Node Failure Test
+### 3. Single Node Failure Test (Planned)
+
+**Note:** This workflow uses `stop_node` and `start_node` steps which are planned but not yet implemented for any provider.
 
 ```json
 {
-  "workflow": [
+  "description": "Single node failure and recovery test",
+  "steps": [
     {"step": "init"},
     {"step": "deploy"},
-    {"step": "validate", "description": "All nodes running", "checks": ["all_nodes_running"]},
+    {"step": "validate", "description": "All nodes healthy", "checks": [
+      "cluster_status==database_ready",
+      "health_status[*].ssh==ok"
+    ]},
     {"step": "stop_node", "description": "Stop node n12 for failover test", "target_node": "n12"},
     {"step": "validate", "description": "Cluster degraded with n12 down", "checks": [
-      "cluster_degraded",
-      "node_status:n11:running",
-      "node_status:n12:stopped",
-      "node_status:n13:running"
+      "cluster_status==degraded",
+      "health_status[*].ssh!=ok"
     ]},
     {"step": "start_node", "description": "Recover node n12", "target_node": "n12"},
-    {"step": "validate", "description": "All nodes recovered", "checks": ["all_nodes_running"]},
+    {"step": "validate", "description": "All nodes recovered", "checks": [
+      "cluster_status==database_ready",
+      "health_status[*].ssh==ok"
+    ]},
     {"step": "destroy"}
   ]
 }
 ```
 
-### 4. Crash Recovery Test
+### 4. Crash Recovery Test (Planned)
+
+**Note:** This workflow uses `crash_node` with `method: "destroy"` and `start_node` which are planned but not yet implemented.
 
 ```json
 {
-  "workflow": [
+  "description": "Multi-node crash and recovery test",
+  "steps": [
     {"step": "init"},
     {"step": "deploy"},
     {"step": "crash_node", "description": "Simulate hard crash on n11", "target_node": "n11", "method": "destroy"},
     {"step": "crash_node", "description": "Simulate hard crash on n12", "target_node": "n12", "method": "destroy"},
-    {"step": "validate", "description": "Cluster critical with 2 nodes down", "checks": ["cluster_critical"], "allow_failures": ["database_down"]},
+    {"step": "validate", "description": "Cluster degraded with 2 nodes down", "checks": [
+      "cluster_status==degraded"
+    ]},
     {"step": "start_node", "description": "Recover n11", "target_node": "n11"},
     {"step": "start_node", "description": "Recover n12", "target_node": "n12"},
-    {"step": "validate", "checks": ["cluster_status"], "retry": {"max_attempts": 5, "delay_seconds": 30}}
+    {"step": "validate", "description": "Cluster recovered", "checks": [
+      "cluster_status==database_ready"
+    ], "retry": {"max_attempts": 5, "delay_seconds": 30}}
   ]
 }
 ```

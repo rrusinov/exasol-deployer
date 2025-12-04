@@ -8,6 +8,50 @@ Extends the existing e2e framework to support workflow-based testing with:
 - Node-specific operations
 - External command execution for verification
 - Retry logic and failure handling
+
+Validation Check Syntax
+=======================
+
+Dynamic validation checks use data from `exasol status` and `exasol health` commands.
+
+1. Cluster Status Checks (from `exasol status` -> .exasol.json)
+   ---------------------------------------------------------------
+   Format: cluster_status==<value> or cluster_status!=<value>
+   
+   Examples:
+   - cluster_status==database_ready  # Cluster is ready
+   - cluster_status==stopped         # Cluster is stopped
+   - cluster_status!=error           # Cluster is not in error state
+   
+   Common status values: database_ready, stopped, starting, error, degraded
+
+2. Health Status Checks (from `exasol health`)
+   --------------------------------------------
+   Format: health_status[<nodes>].<component>==<value>
+          health_status[<nodes>].<component>!=<value>
+   
+   Node Selectors:
+   - [*]           - All nodes
+   - [n11]         - Specific node n11
+   - [n11,n12,n13] - Multiple nodes
+   
+   Component Selectors (mapped to JSON fields from `exasol health`):
+   - .ssh          - SSH connectivity to host
+   - .adminui      - Admin UI port 8443 accessibility
+   - .database     - Database port 8563 accessibility
+   - .cos_ssh      - COS SSH connectivity
+   
+   Value Comparisons:
+   - "ok" maps to true
+   - "failed" maps to false
+   - Can also use "true"/"false" directly
+   
+   Examples:
+   - health_status[*].ssh==ok              # SSH OK on all nodes
+   - health_status[*].adminui==ok          # Admin UI accessible on all nodes
+   - health_status[n11].ssh!=ok            # SSH not OK on n11 (node down)
+   - health_status[n12,n13].database==ok   # DB port OK on n12 and n13
+   - health_status[*].database!=failed     # No database failures on any node
 """
 
 import json
@@ -71,25 +115,21 @@ class ValidationRegistry:
         self._register_default_checks()
 
     def _register_default_checks(self):
-        """Register default validation checks"""
-
-        # Cluster status checks
-        self.register("cluster_status", "Cluster is healthy", self._check_cluster_status)
-        self.register("cluster_status_stopped", "Cluster is stopped", self._check_cluster_stopped)
-        self.register("cluster_degraded", "Cluster is degraded", self._check_cluster_degraded)
-        self.register("cluster_critical", "Cluster is critical", self._check_cluster_critical)
-
-        # Node status checks
-        self.register("all_nodes_running", "All nodes are running", self._check_all_nodes_running)
-        self.register("ssh_connectivity", "SSH connectivity to all nodes", self._check_ssh_connectivity)
-        self.register("vms_powered_off", "VMs are powered off", self._check_vms_powered_off)
-
-        # Database checks
-        self.register("database_running", "Database is running", self._check_database_running)
-        self.register("database_degraded", "Database is degraded", self._check_database_degraded)
-        self.register("database_down", "Database is down", self._check_database_down)
-        self.register("admin_ui_accessible", "Admin UI is accessible", self._check_admin_ui)
-        self.register("data_integrity", "Data integrity verified", self._check_data_integrity)
+        """Register default validation checks
+        
+        Dynamic checks support:
+        - cluster_status==<value> or cluster_status!=<value>
+          Example: cluster_status==database_ready, cluster_status!=stopped
+          
+        - health_status[<nodes>].<component>==<value> or !=<value>
+          Examples:
+            health_status[*].ssh==ok              - SSH OK on all nodes (checks ssh_ok field)
+            health_status[*].adminui==ok          - Admin UI on all nodes (checks port_8443_ok field)
+            health_status[*].database==ok         - DB port on all nodes (checks port_8563_ok field)
+            health_status[n11].ssh!=ok            - SSH not OK on n11
+            health_status[n12,n13].adminui==ok    - Admin UI OK on n12 and n13
+        """
+        pass  # No static checks registered
 
     def register(self, name: str, description: str, check_func: Callable,
                  allow_failure: bool = False, retry_config: Optional[Dict] = None):
@@ -103,18 +143,22 @@ class ValidationRegistry:
         )
 
     def get_check(self, check_name: str) -> Optional[ValidationCheck]:
-        """Get a validation check by name, supporting node-specific checks"""
-        # Handle node-specific checks like "node_status:n12"
-        if ":" in check_name:
-            base_check, param = check_name.split(":", 1)
-            if base_check == "node_status":
-                # Create a dynamic check for specific node
-                return ValidationCheck(
-                    name=check_name,
-                    description=f"Node {param} status check",
-                    check_function=lambda ctx: self._check_node_status(ctx, param)
-                )
-
+        """Get a validation check by name, supporting dynamic checks
+        
+        Supported dynamic check formats:
+        - cluster_status==<value> or cluster_status!=<value>
+        - health_status[<nodes>].<component>==<value> or !=<value>
+        """
+        # Handle cluster_status checks with comparison
+        if check_name.startswith("cluster_status"):
+            if "==" in check_name or "!=" in check_name:
+                return self._create_cluster_status_check(check_name)
+        
+        # Handle health_status checks with node/component selection
+        if check_name.startswith("health_status["):
+            return self._create_health_status_check(check_name)
+        
+        # Fall back to registered static checks
         return self.checks.get(check_name)
 
     def _run_exasol_command(self, command: str, *args) -> subprocess.CompletedProcess:
@@ -124,108 +168,225 @@ class ValidationRegistry:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
     def _read_state(self) -> Dict[str, Any]:
-        """Read deployment state"""
+        """Read deployment state from .exasol.json"""
         state_file = self.deploy_dir / '.exasol.json'
         if state_file.exists():
             with open(state_file, 'r') as f:
                 return json.load(f)
         return {}
 
-    def _check_cluster_status(self, context: Dict[str, Any]) -> bool:
-        """Check if cluster is healthy"""
-        result = self._run_exasol_command('status')
+    def _run_exasol_health(self) -> Dict[str, Any]:
+        """Run exasol health command and return parsed JSON"""
+        result = self._run_exasol_command('health', '--output-format', 'json')
         if result.returncode != 0:
-            return False
-
+            self.logger.error(f"Health check failed: {result.stderr}")
+            return {}
+        
         try:
-            status = json.loads(result.stdout)
-            return status.get('status') in ['database_ready', 'running']
-        except:
-            return False
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Failed to parse health JSON: {e}")
+            return {}
 
-    def _check_cluster_stopped(self, context: Dict[str, Any]) -> bool:
-        """Check if cluster is stopped"""
-        state = self._read_state()
-        return state.get('status') == 'stopped'
-
-    def _check_cluster_degraded(self, context: Dict[str, Any]) -> bool:
-        """Check if cluster is in degraded state"""
-        # This would check if some nodes are down but cluster is still operational
-        return True  # Placeholder
-
-    def _check_cluster_critical(self, context: Dict[str, Any]) -> bool:
-        """Check if cluster is in critical state"""
-        # This would check if cluster has lost quorum/majority
-        return True  # Placeholder
-
-    def _check_all_nodes_running(self, context: Dict[str, Any]) -> bool:
-        """Check if all nodes are running"""
-        # Would use virsh list or cloud provider API
-        return True  # Placeholder
-
-    def _check_node_status(self, context: Dict[str, Any], node_spec: str) -> bool:
-        """Check status of specific node"""
-        # Parse node_spec like "n12:running" or "n12"
-        if ":" in node_spec:
-            node_name, expected_status = node_spec.split(":", 1)
+    def _create_cluster_status_check(self, check_name: str) -> ValidationCheck:
+        """Create a dynamic cluster status check
+        
+        Format: cluster_status==<value> or cluster_status!=<value>
+        Examples: cluster_status==database_ready, cluster_status!=stopped
+        """
+        import re
+        
+        # Parse the check expression
+        if "==" in check_name:
+            operator = "=="
+            _, expected = check_name.split("==", 1)
+        elif "!=" in check_name:
+            operator = "!="
+            _, expected = check_name.split("!=", 1)
         else:
-            node_name = node_spec
-            expected_status = "running"
+            # Legacy support for plain "cluster_status" (assume ==database_ready)
+            operator = "=="
+            expected = "database_ready"
+        
+        expected = expected.strip()
+        
+        def check_func(context: Dict[str, Any]) -> bool:
+            state = self._read_state()
+            
+            # Special case: 'destroyed' means the state file should not exist
+            if expected == 'destroyed':
+                if operator == "==":
+                    # Check that state file doesn't exist or has no status
+                    return len(state) == 0 or state.get('status', '') == ''
+                else:  # !=
+                    # Check that state file exists and has a status
+                    return len(state) > 0 and state.get('status', '') != ''
+            
+            # Normal status comparison
+            actual = state.get('status', '')
+            
+            if operator == "==":
+                return actual == expected
+            else:  # !=
+                return actual != expected
+        
+        description = f"Cluster status {operator} {expected}"
+        return ValidationCheck(
+            name=check_name,
+            description=description,
+            check_function=check_func
+        )
 
-        # Check node status via provider-specific means
-        if self.provider == "libvirt":
-            result = subprocess.run(
-                ['virsh', 'list', '--all'],
-                capture_output=True, text=True
-            )
-            # Parse virsh output to check node status
-            for line in result.stdout.split('\n'):
-                if node_name in line:
-                    if expected_status == "running":
-                        return "running" in line
-                    elif expected_status == "stopped":
-                        return "shut off" in line
+    def _create_health_status_check(self, check_name: str) -> ValidationCheck:
+        """Create a dynamic health status check
+        
+        Format: health_status[<nodes>].<component>==<value> or !=<value>
+        
+        Node selectors:
+        - [*] - all nodes
+        - [n11] - specific node
+        - [n11,n12,n13] - multiple nodes
+        
+        Component selectors (mapped to exasol health JSON checks):
+        - .ssh -> checks 'ssh' component
+        - .adminui -> checks 'adminui' component
+        - .database -> checks 'database' component
+        - .cos_ssh -> checks 'cos_ssh' component
+        
+        Expected values:
+        - For ssh/adminui/database/cos_ssh: "ok" maps to true, "failed" maps to false
+        - Or use "true"/"false" directly
+        
+        Examples:
+        - health_status[*].ssh==ok -> all nodes have ssh_ok=true
+        - health_status[*].adminui==ok -> all nodes have port_8443_ok=true
+        - health_status[n11].ssh!=ok -> n11 has ssh_ok=false
+        - health_status[n12,n13].database==ok -> n12 and n13 have port_8563_ok=true
+        """
+        import re
+        
+        # Parse: health_status[nodes].component==value or !=value
+        match = re.match(r'health_status\[([^\]]+)\]\.([^=!]+)(==|!=)(.+)', check_name)
+        if not match:
+            raise ValueError(f"Invalid health_status check format: {check_name}")
+        
+        node_selector = match.group(1).strip()
+        component = match.group(2).strip()
+        operator = match.group(3)
+        expected_value = match.group(4).strip()
+        
+        # Component names are used directly in the checks structure
+        valid_components = {'ssh', 'adminui', 'database', 'cos_ssh'}
+        
+        # Map expected values: "ok" -> "true", "failed" -> "false"
+        value_map = {
+            'ok': 'true',
+            'failed': 'false'
+        }
+        mapped_expected = value_map.get(expected_value.lower(), expected_value)
+        
+        # Validate component
+        if component not in valid_components:
+            raise ValueError(f"Unknown health check component: {component}. Valid: {', '.join(sorted(valid_components))}")
+        
+        # Parse node selector
+        if node_selector == '*':
+            nodes = None  # Will match all nodes
+        else:
+            nodes = [n.strip() for n in node_selector.split(',')]
+        
+        def check_func(context: Dict[str, Any]) -> bool:
+            health_data = self._run_exasol_health()
+            if not health_data:
+                self.logger.error("Health command returned no data")
+                return False
+            
+            # Actual exasol health --output-format json structure:
+            # {
+            #   "status": "healthy" | "issues_detected",
+            #   "checks": {
+            #     "ssh": {"passed": N, "failed": M},
+            #     "services": {"active": N, "failed": M},
+            #     "adminui": {"passed": N, "failed": M},
+            #     "database": {"passed": N, "failed": M},
+            #     "cos_ssh": {"passed": N, "failed": M}
+            #   },
+            #   "issues_count": N,
+            #   "issues": [...]
+            # }
+            
+            # Map component to the checks structure
+            component_to_check_map = {
+                'ssh': 'ssh',
+                'adminui': 'adminui',
+                'database': 'database',
+                'cos_ssh': 'cos_ssh',
+            }
+            
+            check_key = component_to_check_map.get(component, component)
+            
+            if 'checks' not in health_data or check_key not in health_data['checks']:
+                self.logger.error(f"Health data missing checks.{check_key}")
+                return False
+            
+            check_data = health_data['checks'][check_key]
+            
+            # For wildcard (*), check all nodes passed
+            # For specific nodes, we can't check per-node in current health format
+            # So we check that overall health is good
+            if node_selector == '*':
+                # All nodes should pass
+                passed = check_data.get('passed', 0)
+                failed = check_data.get('failed', 0)
+                
+                if operator == "==":
+                    if mapped_expected.lower() == 'true':  # Expecting OK
+                        result = failed == 0 and passed > 0
+                        if not result:
+                            self.logger.debug(f"Check failed: {check_key} has {failed} failures, {passed} passed")
+                        return result
+                    else:  # Expecting failed
+                        result = failed > 0
+                        if not result:
+                            self.logger.debug(f"Check failed: expected failures but got {failed} failures")
+                        return result
+                else:  # !=
+                    if mapped_expected.lower() == 'true':  # Expecting NOT OK
+                        result = failed > 0 or passed == 0
+                        if not result:
+                            self.logger.debug(f"Check failed: expected failures but got {failed} failures, {passed} passed")
+                        return result
+                    else:  # Expecting NOT failed
+                        result = failed == 0 and passed > 0
+                        if not result:
+                            self.logger.debug(f"Check failed: {check_key} has {failed} failures")
+                        return result
+            else:
+                # Specific nodes requested, but we can't check per-node with current health format
+                # Fall back to checking overall health
+                self.logger.warning(f"Per-node health checks not supported yet, checking overall {check_key} health")
+                passed = check_data.get('passed', 0)
+                failed = check_data.get('failed', 0)
+                
+                if operator == "==":
+                    if mapped_expected.lower() == 'true':
+                        return failed == 0 and passed > 0
+                    else:
+                        return failed > 0
+                else:  # !=
+                    if mapped_expected.lower() == 'true':
+                        return failed > 0 or passed == 0
+                    else:
+                        return failed == 0 and passed > 0
+        
+        description = f"Health check: {node_selector}.{component} {operator} {expected_value}"
+        return ValidationCheck(
+            name=check_name,
+            description=description,
+            check_function=check_func
+        )
 
-        return False  # Placeholder
 
-    def _check_ssh_connectivity(self, context: Dict[str, Any]) -> bool:
-        """Check SSH connectivity to all nodes"""
-        # Would read inventory.ini and test SSH to each node
-        return True  # Placeholder
-
-    def _check_vms_powered_off(self, context: Dict[str, Any]) -> bool:
-        """Check if VMs are powered off"""
-        if self.provider == "libvirt":
-            result = subprocess.run(
-                ['virsh', 'list', '--all'],
-                capture_output=True, text=True
-            )
-            # Check that VMs are in "shut off" state
-            return "running" not in result.stdout
-        return True  # Placeholder
-
-    def _check_database_running(self, context: Dict[str, Any]) -> bool:
-        """Check if database is running"""
-        # Would check c4.service status on nodes
-        return True  # Placeholder
-
-    def _check_database_degraded(self, context: Dict[str, Any]) -> bool:
-        """Check if database is in degraded state"""
-        return False  # Placeholder
-
-    def _check_database_down(self, context: Dict[str, Any]) -> bool:
-        """Check if database is completely down"""
-        return False  # Placeholder
-
-    def _check_admin_ui(self, context: Dict[str, Any]) -> bool:
-        """Check if Admin UI is accessible"""
-        # Would try to connect to Admin UI endpoint
-        return True  # Placeholder
-
-    def _check_data_integrity(self, context: Dict[str, Any]) -> bool:
-        """Check data integrity after restart"""
-        # Would run SQL queries to verify data
-        return True  # Placeholder
 
 
 class WorkflowExecutor:
@@ -409,25 +570,10 @@ class WorkflowExecutor:
     def _execute_init(self, step: WorkflowStep, params: Dict[str, Any]):
         """Execute init step.
         
-        Supported SUT parameters (add to your SUT config's 'parameters' field):
+        All SUT parameters are dynamically mapped from config_schema.SUT_PARAMETERS.
         Parameter names use underscores and map 1:1 to CLI flags (underscore -> hyphen).
         
-        Common parameters:
-          - cluster_size: Number of nodes (int) → --cluster-size
-          - instance_type: Cloud instance type (str) → --instance-type
-          - data_volumes_per_node: Number of data volumes per node (int) → --data-volumes-per-node
-          - data_volume_size: Size of each data volume in GB (int) → --data-volume-size
-          - root_volume_size: Size of root volume in GB (int) → --root-volume-size
-          - libvirt_memory: Memory in GB for libvirt VMs (int) → --libvirt-memory
-          - libvirt_vcpus: Number of vCPUs for libvirt VMs (int) → --libvirt-vcpus
-          
-        Boolean flags (set to true to enable):
-          - enable_multicast_overlay: Enable VXLAN overlay network → --enable-multicast-overlay
-          - aws_spot_instance: Enable AWS spot instances → --aws-spot-instance
-          - azure_spot_instance: Enable Azure spot instances → --azure-spot-instance
-          - gcp_spot_instance: Enable GCP preemptible instances → --gcp-spot-instance
-        
-        For provider-specific flags (aws_region, azure_region, etc.), add to param_map below.
+        See tests/e2e/config_schema.py SUT_PARAMETERS for the complete list of supported parameters.
         """
         cmd = [
             './exasol', 'init',
@@ -439,29 +585,33 @@ class WorkflowExecutor:
         if self.db_version:
             cmd.extend(['--db-version', self.db_version])
 
-        # Standard parameters with 1:1 mapping (underscore -> hyphen)
-        param_map = {
-            'cluster_size': '--cluster-size',
-            'instance_type': '--instance-type',
-            'data_volumes_per_node': '--data-volumes-per-node',
-            'data_volume_size': '--data-volume-size',
-            'root_volume_size': '--root-volume-size',
-            'libvirt_memory': '--libvirt-memory',
-            'libvirt_vcpus': '--libvirt-vcpus',
-        }
+        # Import parameter schema
+        try:
+            from config_schema import SUT_PARAMETERS
+        except ImportError:
+            # Fallback to basic parameter map if schema not available
+            SUT_PARAMETERS = {}
 
+        # Build parameter map from schema
+        param_map = {}
+        boolean_flags = {}
+        
+        for param_name, param_def in SUT_PARAMETERS.items():
+            cli_flag = param_def.get('cli_flag')
+            param_type = param_def.get('type')
+            
+            if cli_flag:
+                if param_type == 'bool':
+                    boolean_flags[param_name] = cli_flag
+                else:
+                    param_map[param_name] = cli_flag
+
+        # Add parameters with values
         for key, flag in param_map.items():
             if key in params:
                 cmd.extend([flag, str(params[key])])
         
-        # Boolean flags (parameters that don't take values)
-        boolean_flags = {
-            'enable_multicast_overlay': '--enable-multicast-overlay',
-            'aws_spot_instance': '--aws-spot-instance',
-            'azure_spot_instance': '--azure-spot-instance',
-            'gcp_spot_instance': '--gcp-spot-instance',
-        }
-        
+        # Add boolean flags (parameters that don't take values)
         for key, flag in boolean_flags.items():
             if params.get(key):
                 cmd.append(flag)

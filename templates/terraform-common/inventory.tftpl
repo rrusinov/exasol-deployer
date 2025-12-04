@@ -6,4 +6,4 @@ n${idx + 11} ansible_host=${ip} ansible_user=exasol private_ip=${private_ips[idx
 [exasol_nodes:vars]
 ansible_user=exasol
 ansible_ssh_private_key_file=${ssh_key}
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes'
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes%{~ if trimspace(ssh_proxy_jump) != "" } -o ProxyJump=${trimspace(ssh_proxy_jump)}%{~ endif }'

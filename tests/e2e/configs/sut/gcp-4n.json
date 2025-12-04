@@ -6,7 +6,7 @@
     "cluster_size": 4,
     "instance_type": "n1-standard-8",
     "data_volumes_per_node": 2,
-    "data_volume_size": 200,
-    "root_volume_size": 100
+    "data_volume_size": 20,
+    "root_volume_size": 50
   }
 }

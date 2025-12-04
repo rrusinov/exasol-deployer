@@ -12,8 +12,8 @@
       "step": "validate",
       "description": "Validate deployment",
       "checks": [
-        "cluster_status",
-        "ssh_connectivity"
+        "cluster_status==database_ready",
+        "health_status[*].ssh==ok"
       ]
     },
     {

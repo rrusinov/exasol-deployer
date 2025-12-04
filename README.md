@@ -2,16 +2,15 @@
 
 This directory contains a deployment configuration for Exasol database.
 
-**Why bash and not Go/another compiled binary?**
-- Zero build toolchain required on the operator side; bash is ubiquitous on Linux/macOS runners and CI agents.
-- Tight integration with existing shell/Ansible/OpenTofu workflows (no cross-language shims needed).
-- Easier to vendor and tweak in-line with the Terraform/Ansible templates without rebuilding binaries.
-- Fast iteration for cloud releases; no cross-compilation or packaging pipeline to maintain for each platform.
-- Proven portability for the surrounding scripts (init/deploy/destroy/status) and test harness.
-
 ## Features
 
-- **Multi-Cloud Support**: Deploy on AWS, Azure, GCP, Hetzner Cloud, DigitalOcean, and local libvirt/KVM
+- **Multi-Cloud Support**:
+  - [AWS] Amazon Web Services
+  - [AZR] Microsoft Azure
+  - [GCP] Google Cloud Platform
+  - [HTZ] Hetzner Cloud
+  - [DO] DigitalOcean
+  - [LAB] libvirt/KVM (local or remote over SSH for Linux hosts)
 - **Multiple Database Versions**: Support for multiple Exasol database versions and architectures (x86_64, arm64)
 - **Cloud-Init Integration**: OS-agnostic user provisioning works across all Linux distributions
 - **Spot/Preemptible Instances**: Cost optimization with spot instances on AWS, Azure, and GCP
@@ -708,3 +707,16 @@ This is expected behavior for Hetzner, DigitalOcean, and libvirt. Follow the man
 - `variables.auto.tfvars` - Terraform variables
 - `.credentials.json` - Passwords (DB/AdminUI/host; keep secure)
 - `terraform.tfstate` - Terraform state (created after deployment)
+
+## Project Notes
+
+**Why bash and not Go/another compiled binary?**
+- Zero build toolchain required on the operator side; bash is ubiquitous on Linux/macOS runners and CI agents.
+- Tight integration with existing shell/Ansible/OpenTofu workflows (no cross-language shims needed).
+- Easier to vendor and tweak in-line with the Terraform/Ansible templates without rebuilding binaries.
+- Fast iteration for cloud releases; no cross-compilation or packaging pipeline to maintain for each platform.
+- Proven portability for the surrounding scripts (init/deploy/destroy/status) and test harness.
+
+**Support & Community**
+- This is an open-source community project and is not officially supported by Exasol.
+- Contributions and community support are welcome via issues and pull requests.

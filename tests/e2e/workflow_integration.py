@@ -159,6 +159,9 @@ def _run_workflow_test(framework, test_case: Dict[str, Any]) -> Dict[str, Any]:
 
         # Cleanup
         try:
+            framework.logger.info(f"Starting cleanup for {deployment_id}")
+            framework._log_to_file(log_file, "Starting cleanup phase")
+            
             with framework._progress_lock:
                 framework._current_step = "cleaning up"
             framework._log_deployment_step(deployment_id, "cleaning up", "in progress")
@@ -169,12 +172,17 @@ def _run_workflow_test(framework, test_case: Dict[str, Any]) -> Dict[str, Any]:
                 "cleaning up"
             )
 
+            framework.logger.info(f"Calling _cleanup_deployment for {deploy_dir}")
             retained_dir = framework._cleanup_deployment(
                 deploy_dir,
                 provider,
                 log_file,
                 keep_artifacts=not result['success']
             )
+            
+            framework.logger.info(f"Cleanup completed, retained_dir={retained_dir}")
+            framework._log_to_file(log_file, f"Cleanup completed, retained_dir={retained_dir}")
+            
             if retained_dir:
                 result['retained_deployment_dir'] = str(retained_dir)
                 framework._log_deployment_step(deployment_id, "cleaning up", "retained artifacts")
@@ -182,9 +190,12 @@ def _run_workflow_test(framework, test_case: Dict[str, Any]) -> Dict[str, Any]:
                 result['retained_deployment_dir'] = None
                 framework._log_deployment_step(deployment_id, "cleaning up", "completed")
         except Exception as e:
+            framework.logger.error(f"Cleanup error: {e}", exc_info=True)
             result['logs'].append(f"Cleanup error: {e}")
             framework._log_to_file(log_file, f"Cleanup error: {e}")
             framework._log_deployment_step(deployment_id, "cleaning up", "failed")
+            # Ensure retained_deployment_dir is set even on error
+            result['retained_deployment_dir'] = None
 
         if emergency_handler:
             emergency_handler.stop_timeout_monitoring()
@@ -222,9 +233,8 @@ def parse_workflow_test_plans(config: Dict[str, Any], suite_name: str,
     workflow = suite_config.get('workflow', [])
     description = suite_config.get('description', '')
 
-    # Generate deployment ID
-    param_str = '_'.join(f"{k}_{v}" for k, v in sorted(params.items()) if k != 'provider')
-    deployment_id = f"{provider}-workflow-{suite_name}-{param_str}"
+    # Use suite name as deployment ID (simple and readable)
+    deployment_id = suite_name
 
     test_plan = {
         'deployment_id': deployment_id,

@@ -6,7 +6,7 @@
     "cluster_size": 1,
     "instance_type": "t3a.large",
     "data_volumes_per_node": 1,
-    "data_volume_size": 100,
-    "root_volume_size": 50
+    "data_volume_size": 20,
+    "root_volume_size": 52
   }
 }

@@ -238,6 +238,9 @@ Examples:
 
   # Initialize libvirt deployment for local testing
   exasol init --cloud-provider libvirt --libvirt-memory 8 --libvirt-vcpus 4
+
+  # Initialize libvirt deployment using remote libvirt over SSH
+  exasol init --cloud-provider libvirt --libvirt-uri qemu+ssh://user@host/system
 EOF
 }
 
@@ -295,6 +298,7 @@ cmd_init() {
     local libvirt_network_bridge="default"
     local libvirt_disk_pool="default"
     local libvirt_uri=""
+    local libvirt_jump_host=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -538,6 +542,14 @@ cmd_init() {
         die "Directory already initialized: $deploy_dir"
     fi
 
+    if [[ -d "$deploy_dir" ]]; then
+        local existing_entry
+        existing_entry=$(find "$deploy_dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null || true)
+        if [[ -n "$existing_entry" ]]; then
+            die "Deployment directory must be empty: $deploy_dir"
+        fi
+    fi
+
     # Get version configuration
     local architecture
     architecture=$(get_version_config "$db_version" "ARCHITECTURE")
@@ -774,6 +786,14 @@ cmd_init() {
         if [[ -z "$libvirt_uri" ]]; then
             die "Failed to determine libvirt URI automatically. Please rerun with --libvirt-uri <uri>."
         fi
+
+        # When using libvirt over SSH, use the libvirt host as an SSH jump host so nodes are reachable
+        if [[ "$libvirt_uri" =~ ^qemu\+ssh://([^@/]+@)?([^/:]+)(:([0-9]+))?/ ]]; then
+            libvirt_jump_host="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+            if [[ -n "${BASH_REMATCH[4]}" ]]; then
+                libvirt_jump_host+=":${BASH_REMATCH[4]}"
+            fi
+        fi
     fi
 
     # Validate DigitalOcean token
@@ -805,7 +825,7 @@ cmd_init() {
         "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool" "$libvirt_uri" \
         "$instance_type" "$architecture" "$cluster_size" \
         "$data_volume_size" "$data_volumes_per_node" "$root_volume_size" \
-        "$allowed_cidr" "$owner" "$enable_multicast_overlay" "$host_password"
+        "$allowed_cidr" "$owner" "$enable_multicast_overlay" "$host_password" "$libvirt_jump_host"
 
     # Create Terraform files in deployment directory (after variables are written so macOS HVF can be detected)
     create_terraform_files "$deploy_dir" "$architecture" "$cloud_provider"
@@ -1035,6 +1055,7 @@ write_provider_variables() {
     local owner="${34}"
     local enable_multicast_overlay="${35}"
     local host_password="${36}"
+    local libvirt_jump_host="${37}"
 
     case "$cloud_provider" in
         aws)
@@ -1146,6 +1167,7 @@ write_provider_variables() {
                 "libvirt_uri=$libvirt_uri" \
                 "libvirt_domain_type=$libvirt_domain_type" \
                 "libvirt_firmware=$libvirt_firmware" \
+                "ssh_proxy_jump=$libvirt_jump_host" \
                 "instance_type=$instance_type" \
                 "instance_architecture=$architecture" \
                 "node_count=$cluster_size" \
