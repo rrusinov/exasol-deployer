@@ -454,8 +454,8 @@ cmd_init() {
                 shift
                 ;;
             --list-versions)
-                log_info "Available database versions:"
-                list_versions
+                log_info "Available database versions (\"[+]\" reachable, \"[x]\" missing):"
+                list_versions_with_availability
                 return 0
                 ;;
             --list-providers)
@@ -630,16 +630,11 @@ cmd_init() {
 
     # Set default instance type if not provided
     if [[ -z "$instance_type" ]]; then
-        if [[ "$cloud_provider" == "libvirt" ]]; then
-            instance_type=$(get_version_config "$db_version" "DEFAULT_INSTANCE_TYPE_LIBVIRT" || echo "libvirt-custom")
-            log_info "Using default instance type for libvirt: $instance_type"
-        else
-            instance_type=$(get_instance_type_default "$cloud_provider" "$architecture")
-            if [[ -z "$instance_type" ]]; then
-                die "No default instance type found for provider '$cloud_provider' and architecture '$architecture'"
-            fi
-            log_info "Using default instance type for $cloud_provider ($architecture): $instance_type"
+        instance_type=$(get_instance_type_default "$cloud_provider" "$architecture")
+        if [[ -z "$instance_type" ]]; then
+            die "No default instance type found for provider '$cloud_provider' and architecture '$architecture'"
         fi
+        log_info "Using default instance type for $cloud_provider ($architecture): $instance_type"
     fi
 
     # Set default region/location if not provided, using instance-types.conf

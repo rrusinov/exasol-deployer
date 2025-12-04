@@ -182,82 +182,121 @@ class HTMLReportGenerator:
         self.output_dir = Path(output_dir)
 
     def generate(self, summary: Dict[str, Any], filename: str):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         rows = []
         for result in summary.get('results', []):
             status = 'PASS' if result.get('success') else 'FAIL'
             row_class = 'pass' if result.get('success') else 'fail'
             error = html.escape(result.get('error') or '')
+            suite_name = html.escape(result.get('suite_name', result.get('suite', result.get('deployment_id', 'n/a'))))
+            
+            # Build workflow steps display
+            steps_html = []
+            for step in result.get('steps', []):
+                step_status = step.get('status', 'unknown')
+                step_class = 'pass' if step_status == 'completed' else 'fail' if step_status == 'failed' else 'pending'
+                step_name = html.escape(step.get('step', 'unknown'))
+                step_duration = step.get('duration', 0)
+                step_error = html.escape(step.get('error') or '')
+                steps_html.append(
+                    f"<div class='step step-{step_class}'>"
+                    f"<strong>{step_name}</strong>: {step_status} ({step_duration:.1f}s)"
+                    f"{(' - ' + step_error) if step_error else ''}"
+                    f"</div>"
+                )
+            steps_display = ''.join(steps_html) if steps_html else '<div class=\"step\">No steps recorded</div>'
+            
+            # Build parameters display
+            params = result.get('parameters', {})
+            params_items = [f"{k}={v}" for k, v in params.items()]
+            params_display = html.escape(', '.join(params_items[:5]))  # Show first 5 params
+            
+            # Description from SUT
+            sut_desc = html.escape(result.get('sut_description') or '')
+            
             rows.append(
                 f"<tr class='{row_class}'>"
-                f"<td>{html.escape(result.get('deployment_id', 'n/a'))}</td>"
-                f"<td>{html.escape(result.get('provider', ''))}</td>"
-                f"<td>{html.escape(result.get('test_type', ''))}</td>"
+                f"<td><strong>{suite_name}</strong><br/><small>{sut_desc}</small></td>"
+                f"<td>{html.escape(result.get('provider') or '')}</td>"
+                f"<td><small>{params_display}</small></td>"
                 f"<td>{result.get('duration', 0):.1f}s</td>"
                 f"<td>{status}</td>"
                 f"<td>{error}</td>"
                 "</tr>"
+                f"<tr class='{row_class}-details'><td colspan='6'><details><summary>Steps</summary>{steps_display}</details></td></tr>"
             )
         rows_html = '\n'.join(rows)
         html_content = f"""<!DOCTYPE html>
-<html lang=\"en\">
+<html lang="en">
 <head>
-<meta charset=\"UTF-8\">
+<meta charset="UTF-8">
 <title>Exasol E2E Test Report</title>
 <style>
 body {{ font-family: Arial, sans-serif; margin: 2rem; }}
-table {{ border-collapse: collapse; width: 100%; }}
-th, td {{ border: 1px solid #ddd; padding: 8px; }}
-th {{ background-color: #f4f4f4; }}
+table {{ border-collapse: collapse; width: 100%; margin-top: 1rem; }}
+th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+th {{ background-color: #4CAF50; color: white; }}
 tr.pass {{ background-color: #f6ffed; }}
 tr.fail {{ background-color: #fff1f0; }}
+tr.pass-details, tr.fail-details {{ background-color: #fafafa; }}
+details {{ margin: 0.5rem 0; }}
+summary {{ cursor: pointer; font-weight: bold; padding: 0.5rem; background: #f0f0f0; }}
+.step {{ padding: 0.3rem; margin: 0.2rem 0; border-left: 3px solid #ccc; padding-left: 0.5rem; }}
+.step-pass {{ border-left-color: #52c41a; }}
+.step-fail {{ border-left-color: #f5222d; }}
+.step-pending {{ border-left-color: #faad14; }}
+.summary-box {{ background: #f0f0f0; padding: 1rem; border-radius: 5px; margin-bottom: 1rem; }}
+.summary-box h2 {{ margin-top: 0; }}
 </style>
 </head>
 <body>
 <h1>Exasol E2E Test Report</h1>
-<p>Total tests: {summary.get('total_tests', 0)} | Passed: {summary.get('passed', 0)} | Failed: {summary.get('failed', 0)}</p>
+<div class="summary-box">
+<h2>Summary</h2>
+<p><strong>Execution:</strong> {summary.get('execution_dir', 'N/A')}</p>
+<p><strong>Total tests:</strong> {summary.get('total_tests', 0)} | 
+   <strong>Passed:</strong> {summary.get('passed', 0)} | 
+   <strong>Failed:</strong> {summary.get('failed', 0)} | 
+   <strong>Total time:</strong> {summary.get('total_time', 0):.1f}s</p>
+</div>
 <table>
-<thead><tr><th>Deployment</th><th>Provider</th><th>Type</th><th>Duration</th><th>Status</th><th>Error</th></tr></thead>
+<thead><tr><th>Suite</th><th>Provider</th><th>Parameters</th><th>Duration</th><th>Status</th><th>Error</th></tr></thead>
 <tbody>
 {rows_html}
 </tbody>
-</table>
-</body>
-</html>"""
+        </table>
+        </body>
+        </html>"""
         report_path = self.output_dir / filename
         with open(report_path, 'w', encoding='utf-8') as handle:
             handle.write(html_content)
-        latest = self.output_dir / 'latest_results.html'
-        shutil.copyfile(report_path, latest)
+        latest_path = self.output_dir / 'latest_results.html'
+        with open(latest_path, 'w', encoding='utf-8') as handle:
+            handle.write(html_content)
 
 
 class E2ETestFramework:
     """Main E2E test framework class."""
 
-    def __init__(self, config_path: str, results_dir: Optional[Path] = None):
+    def __init__(self, config_path: str, results_dir: Optional[Path] = None, db_version: Optional[str] = None):
         self.config_path = Path(config_path)
-        # Create temp directory with user and test ID for uniqueness and proper ownership
-        import getpass
-        username = getpass.getuser()
-        import uuid
-        test_id = str(uuid.uuid4())[:8]
+        self.db_version = db_version  # Optional database version override
         
-        # Use /var/tmp for persistence if available, otherwise fallback to /tmp
-        try:
-            self.work_dir = Path(tempfile.mkdtemp(prefix=f"exasol_e2e_{username}_{test_id}_", dir="/var/tmp"))
-        except (OSError, FileNotFoundError):
-            # Fallback to /tmp if /var/tmp is not available
-            self.work_dir = Path(tempfile.mkdtemp(prefix=f"exasol_e2e_{username}_{test_id}_"))
-        
-        self.results_dir = results_dir if results_dir else Path('./tmp/tests/results/')
+        # Create execution-timestamp directory: ./tmp/tests/e2e-YYYYMMDD-HHMMSS/
+        self.execution_timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        # Use absolute path to ensure logs go to correct location regardless of cwd
+        base_dir = Path('./tmp/tests').resolve()
+        self.results_dir = results_dir if results_dir else (base_dir / f'e2e-{self.execution_timestamp}')
         self.results_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create deployments directory under results directory
+        self.work_dir = self.results_dir / 'deployments'
+        self.work_dir.mkdir(parents=True, exist_ok=True)
         self.results = []
         # Run CLI commands from repository root so ./exasol can be found
         self.repo_root = Path(__file__).resolve().parents[2]
-        self.retained_root = self.results_dir / 'retained-deployments'
-        self.retained_root.mkdir(parents=True, exist_ok=True)
-        self.tests_root = self.results_dir / 'tests'
-        self.tests_root.mkdir(parents=True, exist_ok=True)
         self.generated_ids: Set[str] = set()
+        self.suite_run_counts: Dict[str, int] = {}  # Track reruns per suite
         self._progress_lock = threading.Lock()
         
         # Progress tracking
@@ -295,21 +334,21 @@ class E2ETestFramework:
             fallback_dir = Path(tempfile.mkdtemp(prefix="exasol_e2e_logs_"))
             self.results_dir = fallback_dir / 'results'
             self.results_dir.mkdir(parents=True, exist_ok=True)
-        
-        log_file = self.results_dir / f"e2e_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+
+        log_file = self.results_dir / f"e2e_test_{self.execution_timestamp}.log"
         # Ensure parent directory exists for FileHandler
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        self.file_handler = logging.FileHandler(log_file)
-        
-        # Configure logger specifically for this module instead of basicConfig
-        self.logger = logging.getLogger(__name__)
+
+        self.logger = logging.getLogger('e2e_framework')
         self.logger.setLevel(logging.INFO)
 
-        # Remove any existing file handlers for this logger
+        # Remove any existing handlers for this logger
         for handler in self.logger.handlers[:]:
-            if isinstance(handler, logging.FileHandler):
-                handler.close()
-                self.logger.removeHandler(handler)
+            handler.close()
+            self.logger.removeHandler(handler)
+
+        self.file_handler = logging.FileHandler(log_file)
+        self.execution_log_file = log_file
 
         # Create formatter
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -347,20 +386,90 @@ class E2ETestFramework:
 
         # Validate for misspelled keys
         self._validate_config_keys(config)
+        
+        # If using modular config structure, load and merge SUT/workflow files
+        if 'test_suites' in config and isinstance(config['test_suites'], list):
+            config = self._load_modular_config(config)
+        
         return config
+    
+    def _load_modular_config(self, provider_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Load modular configuration with separate SUT and workflow files."""
+        configs_dir = self.config_path.parent
+        provider = provider_config.get('provider', 'unknown')
+        merged_suites = {}
+        
+        for idx, test_suite in enumerate(provider_config.get('test_suites', [])):
+            sut_path = configs_dir / test_suite['sut']
+            workflow_path = configs_dir / test_suite['workflow']
+            
+            # Extract names from file paths (without extension)
+            # e.g., "sut/aws-4n.json" -> "aws-4n"
+            sut_name = Path(test_suite['sut']).stem
+            workflow_name = Path(test_suite['workflow']).stem
+            
+            # Check if files exist
+            if not sut_path.exists():
+                raise FileNotFoundError(f"SUT config file not found: {sut_path}")
+            if not workflow_path.exists():
+                raise FileNotFoundError(f"Workflow config file not found: {workflow_path}")
+            
+            # Load SUT config
+            with open(sut_path, 'r', encoding='utf-8') as f:
+                sut_config = json.load(f)
+            
+            # Load workflow config
+            with open(workflow_path, 'r', encoding='utf-8') as f:
+                workflow_config = json.load(f)
+            
+            # Create suite name from filenames (not from config fields)
+            suite_name = f"{sut_name}_{workflow_name}"
+            
+            # Merge into test suite structure expected by framework
+            merged_suites[suite_name] = {
+                'provider': sut_config.get('provider', provider),
+                'test_type': 'workflow',
+                'description': f"{sut_config.get('description', sut_name)} + {workflow_config.get('description', workflow_name)}",
+                'parameters': sut_config.get('parameters', {}),
+                'workflow': workflow_config.get('steps', [])
+            }
+        
+        # Return config in the format expected by generate_test_plan
+        return {
+            'provider': provider,
+            'description': provider_config.get('description', ''),
+            'test_suites': merged_suites  # This is the correct key
+        }
 
     def _validate_config_keys(self, config: Dict[str, Any]):
         """Validate configuration for misspelled keys."""
         valid_keys = {
             'test_suites',
             'provider',
+            'description',
+            'sut',
+            'workflow',
             'parameters',
             'combinations',
             'cluster_size',
             'instance_type',
             'data_volumes_per_node',
             'data_volume_size',
-            'root_volume_size'
+            'root_volume_size',
+            'sut_name',
+            'workflow_name',
+            'steps',
+            'step',
+            'checks',
+            'target_node',
+            'method',
+            'custom_command',
+            'allow_failures',
+            'retry',
+            'max_attempts',
+            'delay_seconds',
+            'test_type',
+            'requirements'
         }
 
         common_typos = {
@@ -382,7 +491,7 @@ class E2ETestFramework:
                     if key in common_typos:
                         raise ValueError(f"Possible misspelling in config at {current_path}: '{key}' should be '{common_typos[key]}'")
                     # Skip validation for suite names and parameter names
-                    if not (path == 'test_suites' or 'parameters' in path):
+                    if not (path == 'test_suites' or 'parameters' in path or 'workflow' in path or 'steps' in path):
                         if key not in valid_keys:
                             self.logger.warning(f"Unknown key in config at {current_path}: '{key}'")
                     check_keys(value, current_path)
@@ -437,30 +546,26 @@ class E2ETestFramework:
             provider_name = suite_config.get('provider', '').lower()
             if providers and provider_name not in providers:
                 continue
-            combinations_type = suite_config.get('combinations', '1-wise')
-            if combinations_type == '2-wise':
-                combinations = self._generate_2_wise_combinations(suite_config)
-            elif combinations_type == '1-wise':
-                combinations = self._generate_1_wise_combinations(suite_config)
-            else:
-                combinations = self._generate_full_combinations(suite_config)
-
-            for combo in combinations:
-                deployment_id = self._build_deployment_id(suite_name, suite_config['provider'], combo)
-                if only_tests and deployment_id not in only_tests:
-                    continue
-                test_case = {
-                    'suite': suite_name,
-                    'provider': suite_config['provider'],
-                    'test_type': combinations_type,
-                    'parameters': combo,
-                    'deployment_id': deployment_id,
-                    'config_path': str(self.config_path)
-                }
-                if self._provider_supports_spot(suite_config['provider']):
-                    test_case.setdefault('parameters', {})
-                    test_case['parameters'].setdefault('enable_spot_instances', True)
-                test_plan.append(test_case)
+            
+            # Each suite has a single set of parameters (no combinations)
+            parameters = suite_config.get('parameters', {})
+            deployment_id = self._build_deployment_id(suite_name, suite_config['provider'], parameters)
+            # Match by suite name or deployment ID
+            if only_tests and suite_name not in only_tests and deployment_id not in only_tests:
+                continue
+            
+            test_case = {
+                'suite': suite_name,
+                'provider': suite_config['provider'],
+                'test_type': suite_config.get('test_type', 'workflow'),
+                'parameters': parameters.copy(),
+                'deployment_id': deployment_id,
+                'config_path': str(self.config_path),
+                'workflow': suite_config.get('workflow', [])
+            }
+            if self._provider_supports_spot(suite_config['provider']):
+                test_case['parameters'].setdefault('enable_spot_instances', True)
+            test_plan.append(test_case)
 
         if dry_run:
             print(f"Dry run: Generated {len(test_plan)} test cases")
@@ -468,72 +573,6 @@ class E2ETestFramework:
                 print(f"  {i+1}: {test['deployment_id']} - {test['parameters']}")
         
         return test_plan
-
-    def _generate_2_wise_combinations(self, suite_config: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Generate 2-wise parameter combinations for a test suite."""
-        parameters = suite_config.get('parameters', {})
-        param_names = list(parameters.keys())
-        param_values = [parameters[name] if isinstance(parameters[name], list) else [parameters[name]] for name in param_names]
-
-        # For this implementation, use a simple pairwise covering for up to 5 parameters
-        # Using a covering design for 5 parameters with 2 values each
-        if len(param_names) == 5 and all(len(v) == 2 for v in param_values):
-            # Covering matrix: each row is a combination, 1=first value, 2=second value
-            covering_matrix = [
-                [1, 1, 1, 1, 1],
-                [1, 1, 2, 2, 2],
-                [1, 2, 1, 2, 1],
-                [1, 2, 2, 1, 2],
-                [2, 1, 1, 2, 2],
-                [2, 1, 2, 1, 1],
-                [2, 2, 1, 1, 2],
-                [2, 2, 2, 2, 1],
-            ]
-            combinations = []
-            for row in covering_matrix:
-                combo = {}
-                for i, idx in enumerate(row):
-                    combo[param_names[i]] = param_values[i][idx - 1]
-                combinations.append(combo)
-            return combinations
-        else:
-            # For other cases, fall back to full combinations
-            return self._generate_full_combinations(suite_config)
-
-    def _generate_1_wise_combinations(self, suite_config: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Generate 1-wise parameter combinations for a test suite."""
-        parameters = suite_config.get('parameters', {})
-        param_names = list(parameters.keys())
-        param_values = [parameters[name] if isinstance(parameters[name], list) else [parameters[name]] for name in param_names]
-
-        # 1-wise: ensure every parameter value appears at least once
-        # Minimal number of tests is the maximum number of values across parameters
-        max_vals = max(len(v) for v in param_values) if param_values else 0
-        combinations = []
-        for i in range(max_vals):
-            combo = {}
-            for name, vals in zip(param_names, param_values):
-                # Use the i-th value if available, otherwise use the first
-                combo[name] = vals[min(i, len(vals) - 1)]
-            combinations.append(combo)
-        return combinations
-
-    def _generate_full_combinations(self, suite_config: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Generate full Cartesian product of parameter combinations."""
-        parameters = suite_config.get('parameters', {})
-        param_names = list(parameters.keys())
-        param_values = [parameters[name] if isinstance(parameters[name], list) else [parameters[name]] for name in param_names]
-
-        combinations = [{}]
-        for param_name, param_vals in zip(param_names, param_values):
-            new_combinations = []
-            for combo in combinations:
-                for value in param_vals:
-                    new_combo = combo.copy()
-                    new_combo[param_name] = value
-                    new_combinations.append(new_combo)
-            combinations = new_combinations
-        return combinations
 
     def run_tests(self, test_plan: List[Dict[str, Any]], max_parallel: int = 1) -> List[Dict[str, Any]]:
         """Execute tests in parallel."""
@@ -544,6 +583,9 @@ class E2ETestFramework:
             self.logger.warning("No tests to execute.")
             return results
 
+        # Print execution directory info
+        print(f"Results will be saved to: {self.results_dir.absolute()}")
+        
         if max_parallel <= 0:
             max_parallel = max(1, len(test_plan))
 
@@ -596,7 +638,7 @@ class E2ETestFramework:
         bar = '#' * filled + '-' * (bar_length - filled)
         
         # Build progress message
-        message = f"\rProgress: [{bar}] {completed}/{total} tests completed"
+        message = f"Progress: [{bar}] {completed}/{total} tests completed"
         
         # Add current deployment info
         if current_deployment:
@@ -609,7 +651,9 @@ class E2ETestFramework:
             message += f" - {current_step}"
         
         with self._progress_lock:
-            print(message, end='', flush=True)
+            # Clear line completely, then write message
+            # Use ANSI escape codes to clear the line
+            print(f"\r\033[K{message}", end='', flush=True)
     
     def _log_deployment_step(self, deployment_id: str, step: str, status: str = "STARTED"):
         """Log deployment step to stdout with timestamp."""
@@ -631,6 +675,9 @@ class E2ETestFramework:
 
     def _log_to_file(self, log_file: Path, message: str):
         """Append timestamped log entry to the per-test log file."""
+        # Ensure parent directory exists
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         with log_file.open('a', encoding='utf-8') as log_handle:
             log_handle.write(f"[{timestamp}] {message}\n")
@@ -654,10 +701,11 @@ class E2ETestFramework:
     def _save_results(self, results: List[Dict[str, Any]], total_time: float):
         """Save test results to JSON file."""
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        results_file = self.results_dir / f"test_results_{timestamp}.json"
+        results_file = self.results_dir / "results.json"
 
         summary = {
             'timestamp': timestamp,
+            'execution_dir': str(self.results_dir),
             'total_tests': len(results),
             'passed': sum(1 for r in results if r['success']),
             'failed': sum(1 for r in results if not r['success']),
@@ -673,14 +721,13 @@ class E2ETestFramework:
         with open(results_file, 'w', encoding='utf-8') as f:
             json.dump(summary, f, indent=2, default=str)
 
-        latest_file = self.results_dir / 'latest_results.json'
-        with open(latest_file, 'w', encoding='utf-8') as latest:
-            json.dump(summary, latest, indent=2, default=str)
-
-        html_filename = f"test_results_{timestamp}.html"
+        html_filename = "results.html"
         self.html_report_generator.generate(summary, html_filename)
 
         self.logger.info(f"Results saved to {results_file}")
+        print(f"\nResults saved to: {self.results_dir}")
+        print(f"  - results.json")
+        print(f"  - results.html")
 
     def _print_summary(self, results: List[Dict[str, Any]], total_time: float):
         """Print test execution summary."""
@@ -712,43 +759,55 @@ class E2ETestFramework:
                     print(f"- {result['deployment_id']}: {result.get('error', 'Unknown error')}")
 
     def _run_single_test(self, test_case: Dict[str, Any]) -> Dict[str, Any]:
-        """Run a single test case."""
+        """Run a single test case using the workflow engine."""
         deployment_id = test_case['deployment_id']
+        suite_name = test_case['suite']
         provider = test_case['provider']
-        test_type = test_case.get('test_type', 'matrix')
+        workflow_steps = test_case.get('workflow', [])
 
-        test_output_dir = self.tests_root / deployment_id
-        test_output_dir.mkdir(parents=True, exist_ok=True)
-        log_file = test_output_dir / 'test.log'
-        self._log_to_file(log_file, f"Starting test {deployment_id} ({provider})")
+        # Determine run number for this suite
+        run_number = self.suite_run_counts.get(suite_name, 0) + 1
+        self.suite_run_counts[suite_name] = run_number
+        
+        # Create log file and deployment directory with matching names
+        if run_number == 1:
+            base_name = suite_name
+        else:
+            base_name = f"{suite_name}-run{run_number}"
+        
+        log_file = self.results_dir / f"{base_name}.log"
+        self._log_to_file(log_file, f"Starting workflow test {suite_name} ({provider})")
         
         # Update progress tracking
         with self._progress_lock:
-            self._current_deployment = deployment_id
+            self._current_deployment = suite_name
             self._current_step = "initializing"
         
-        # Log deployment start
-        self._log_deployment_step(deployment_id, "STARTED", "initializing")
+        self._log_deployment_step(suite_name, "STARTED", "workflow")
 
         result = {
-            'deployment_id': deployment_id,
-            'suite': test_case['suite'],
+            'deployment_id': deployment_id,  # Keep for backward compatibility
+            'suite': suite_name,
+            'suite_name': suite_name,
             'provider': provider,
-            'test_type': test_type,
+            'test_type': 'workflow',
+            'run_number': run_number,
             'success': False,
             'duration': 0,
             'error': None,
             'logs': [],
-            'variation_results': [],
+            'steps': [],  # Workflow step results
             'log_file': str(log_file),
-            'log_directory': str(test_output_dir),
-            'config_path': test_case.get('config_path', str(self.config_path))
+            'config_path': test_case.get('config_path', str(self.config_path)),
+            'parameters': test_case.get('parameters', {}),
+            'workflow': workflow_steps,
+            'sut_description': test_case.get('sut_description', '')
         }
 
         start_time = time.time()
 
-        # Create deployment directory
-        deploy_dir = self.work_dir / deployment_id
+        # Create deployment directory with same name as log file (without .log extension)
+        deploy_dir = self.work_dir / base_name
         deploy_dir.mkdir(exist_ok=True)
         result['deployment_dir'] = str(deploy_dir)
 
@@ -756,49 +815,98 @@ class E2ETestFramework:
         resource_tracker = self._initialize_resource_tracker(deploy_dir, emergency_handler)
 
         try:
-            if test_type in ['2-wise', '1-wise', 'full']:
-                # Run test
-                params = test_case['parameters']
-                result['parameters'] = params
+            params = test_case['parameters']
+            
+            # Import workflow engine (relative import within package)
+            import sys
+            from pathlib import Path
+            # Add tests directory to path if not already there
+            tests_dir = Path(__file__).resolve().parent.parent
+            if str(tests_dir) not in sys.path:
+                sys.path.insert(0, str(tests_dir))
+            
+            from e2e.workflow_engine import WorkflowExecutor, StepStatus
+            
+            # Create log callback for workflow executor
+            def log_callback(msg: str):
+                self._log_to_file(log_file, msg)
+                # Extract step name from message if possible
+                if msg.startswith('STEP:'):
+                    step_name = msg[6:].strip()[:30]
+                    with self._progress_lock:
+                        self._current_step = step_name
+                    self._render_progress(
+                        self._completed_tests,
+                        self._total_tests,
+                        suite_name,
+                        step_name
+                    )
 
-                # Initialize deployment
-                with self._progress_lock:
-                    self._current_step = "initializing"
-                self._log_deployment_step(deployment_id, "initializing", "in progress")
-                self._render_progress(self._completed_tests, self._total_tests, deployment_id, "initializing")
-                self._init_deployment(deploy_dir, provider, params, log_file)
-                self._log_deployment_step(deployment_id, "initializing", "completed")
+            # Create workflow executor
+            executor = WorkflowExecutor(
+                deploy_dir=deploy_dir,
+                provider=provider,
+                logger=self.logger,
+                log_callback=log_callback,
+                db_version=self.db_version
+            )
 
-                # Deploy
-                with self._progress_lock:
-                    self._current_step = "deploying"
-                self._log_deployment_step(deployment_id, "deploying", "in progress")
-                self._render_progress(self._completed_tests, self._total_tests, deployment_id, "deploying")
-                self._deploy(deploy_dir, params, log_file)
-                self._log_deployment_step(deployment_id, "deploying", "completed")
+            # Execute workflow
+            self._log_to_file(log_file, f"Workflow has {len(workflow_steps)} steps")
 
-                # Validate
-                with self._progress_lock:
-                    self._current_step = "validating"
-                self._log_deployment_step(deployment_id, "validating", "in progress")
-                self._render_progress(self._completed_tests, self._total_tests, deployment_id, "validating")
-                validation_result = self._validate_deployment(
-                    deploy_dir,
-                    params,
-                    provider,
-                    log_file,
-                    resource_tracker=resource_tracker
-                )
-                self._log_deployment_step(deployment_id, "validating", "completed")
-                result['validation'] = validation_result
-                result['success'] = validation_result['success']
-            else:
-                raise ValueError(f"Unsupported test_type: {test_type}")
+            step_results = executor.execute_workflow(workflow_steps, params)
+
+            # Convert step results to serializable format
+            for step_result in step_results:
+                step_dict = {
+                    'step': step_result.step_type,
+                    'description': step_result.description,
+                    'status': step_result.status.value,
+                    'duration': step_result.duration,
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                    'error': step_result.error,
+                    'result': step_result.result,
+                    'validation_results': step_result.validation_results,
+                    'target_node': step_result.target_node,
+                    'method': step_result.method
+                }
+                result['steps'].append(step_dict)
+
+                # Log each step completion
+                status_symbol = "✓" if step_result.status == StepStatus.COMPLETED else "✗"
+                status_msg = f"{status_symbol} Step: {step_result.step_type}"
+                if step_result.description:
+                    status_msg += f" ({step_result.description})"
+                status_msg += f" - {step_result.status.value} ({step_result.duration:.1f}s)"
+                
+                self._log_to_file(log_file, status_msg)
+                self._log_deployment_step(suite_name, step_result.step_type, step_result.status.value)
+
+            # Determine overall success
+            failed_steps = [s for s in step_results if s.status == StepStatus.FAILED]
+            result['success'] = len(failed_steps) == 0
+
+            if failed_steps:
+                result['error'] = f"{len(failed_steps)} workflow step(s) failed"
+                for failed in failed_steps:
+                    error_msg = f"Failed: {failed.step_type}"
+                    if failed.description:
+                        error_msg += f" ({failed.description})"
+                    error_msg += f" - {failed.error}"
+                    result['logs'].append(error_msg)
+                    self._log_to_file(log_file, error_msg)
 
         except Exception as e:
             result['error'] = str(e)
-            result['logs'].append(f"Error: {e}")
-            self._log_to_file(log_file, f"Test {deployment_id} failed: {e}")
+            result['logs'].append(f"Workflow execution error: {e}")
+            result['steps'].append({
+                'step': self._current_step or 'unknown',
+                'status': 'failed',
+                'duration': 0,
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'error': str(e)
+            })
+            self._log_to_file(log_file, f"Workflow test {suite_name} failed: {e}")
             if emergency_handler:
                 try:
                     emergency_handler.emergency_cleanup(deployment_id)
@@ -808,30 +916,9 @@ class E2ETestFramework:
         finally:
             result['duration'] = time.time() - start_time
 
-            # Cleanup
-            try:
-                with self._progress_lock:
-                    self._current_step = "cleaning up"
-                self._log_deployment_step(deployment_id, "cleaning up", "in progress")
-                self._render_progress(self._completed_tests, self._total_tests, deployment_id, "cleaning up")
-                
-                retained_dir = self._cleanup_deployment(
-                    deploy_dir,
-                    provider,
-                    log_file,
-                    keep_artifacts=not result['success']
-                )
-                if retained_dir:
-                    result['retained_deployment_dir'] = str(retained_dir)
-                    self._log_deployment_step(deployment_id, "cleaning up", "retained artifacts")
-                else:
-                    result['retained_deployment_dir'] = None
-                    self._log_deployment_step(deployment_id, "cleaning up", "completed")
-            except Exception as e:
-                result['logs'].append(f"Cleanup error: {e}")
-                self._log_to_file(log_file, f"Cleanup error: {e}")
-                self._log_deployment_step(deployment_id, "cleaning up", "failed")
-
+            # Note: Cleanup (destroy) should be part of the workflow steps
+            # No automatic cleanup here - workflow defines all steps including destroy
+            
             if emergency_handler:
                 emergency_handler.stop_timeout_monitoring()
                 result['emergency_summary'] = self._get_emergency_summary(emergency_handler)
@@ -840,7 +927,7 @@ class E2ETestFramework:
 
             # Log completion
             status = "COMPLETED" if result['success'] else "FAILED"
-            self._log_deployment_step(deployment_id, status, f"duration: {result['duration']:.1f}s")
+            self._log_deployment_step(suite_name, status, f"duration: {result['duration']:.1f}s")
             
             # Clear current deployment from progress tracking
             with self._progress_lock:
@@ -1124,11 +1211,12 @@ class E2ETestFramework:
                 'error': str(e)
             })
 
-    def _cleanup_deployment(self, deploy_dir: Path, provider: str, log_file: Path, keep_artifacts: bool = False) -> Optional[Path]:
+    def _cleanup_deployment(self, deploy_dir: Path, provider: str, log_file: Path, keep_artifacts: bool = False, suite_name: Optional[str] = None) -> Optional[Path]:
         """Cleanup deployment resources."""
         retained_path: Optional[Path] = None
         if keep_artifacts and deploy_dir.exists():
-            retained_path = self.retained_root / deploy_dir.name
+            # Use suite name for retained directory if provided, otherwise deployment dir name\n            dir_name = suite_name if suite_name else deploy_dir.name
+            retained_path = self.retained_root / dir_name
             if retained_path.exists():
                 shutil.rmtree(retained_path)
             shutil.copytree(str(deploy_dir), str(retained_path))
@@ -1608,17 +1696,13 @@ class E2ETestFramework:
                     pass
 
     def _cleanup(self):
-        """Clean up temporary work directory."""
+        """Clean up resources on exit."""
         # Close file handler to prevent ResourceWarning
         if hasattr(self, 'file_handler'):
             self.file_handler.close()
         
-        if hasattr(self, 'work_dir') and self.work_dir and self.work_dir.exists():
-            try:
-                shutil.rmtree(self.work_dir)
-                self.logger.debug(f"Cleaned up temporary directory: {self.work_dir}")
-            except Exception as e:
-                self.logger.warning(f"Failed to clean up temporary directory {self.work_dir}: {e}")
+        # Note: work_dir is now under results_dir/deployments and should be retained
+        # Individual deployment cleanup is handled by _cleanup_deployment()
 
     def __enter__(self):
         """Context manager entry."""
@@ -1642,15 +1726,16 @@ def main():
     parser = argparse.ArgumentParser(description='Exasol E2E Test Framework')
     parser.add_argument('action', choices=['plan', 'run'], help='Action to perform')
     parser.add_argument('--config', required=True, help='Path to test configuration file')
-    parser.add_argument('--results-dir', default='tmp/tests/results', help='Path to results directory')
+    parser.add_argument('--results-dir', default=None, help='Path to results directory (default: auto-generated e2e-{timestamp})')
     parser.add_argument('--dry-run', action='store_true', help='Generate plan without executing')
     parser.add_argument('--parallel', type=int, default=0, help='Maximum parallel executions (0=auto)')
     parser.add_argument('--providers', help='Comma separated list of providers to include (e.g. aws,gcp)')
     parser.add_argument('--tests', help='Comma separated deployment IDs to execute')
+    parser.add_argument('--db-version', help='Database version to use (overrides config, e.g. 8.0.0-x86_64)')
 
     args = parser.parse_args()
 
-    framework = E2ETestFramework(args.config, Path(args.results_dir))
+    framework = E2ETestFramework(args.config, Path(args.results_dir) if args.results_dir else None, db_version=args.db_version)
 
     provider_filter = (
         {p.strip().lower() for p in args.providers.split(',') if p.strip()}

@@ -1,0 +1,23 @@
+{
+  "workflow_name": "basic",
+  "description": "Basic deploy and destroy workflow",
+  "steps": [
+    {
+      "step": "init"
+    },
+    {
+      "step": "deploy"
+    },
+    {
+      "step": "validate",
+      "description": "Validate deployment",
+      "checks": [
+        "cluster_status",
+        "ssh_connectivity"
+      ]
+    },
+    {
+      "step": "destroy"
+    }
+  ]
+}

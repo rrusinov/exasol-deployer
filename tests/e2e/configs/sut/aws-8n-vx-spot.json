@@ -1,0 +1,14 @@
+{
+  "sut_name": "aws-8n-vx-spot",
+  "description": "AWS 8-node cluster with VXLAN networking",
+  "provider": "aws",
+  "parameters": {
+    "cluster_size": 8,
+    "instance_type": "t3a.2xlarge",
+    "data_volumes_per_node": 3,
+    "data_volume_size": 200,
+    "root_volume_size": 100,
+    "enable_multicast_overlay": true,
+    "aws_spot_instance": true
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "sut_name": "azure-1n",
+  "description": "Azure single node configuration",
+  "provider": "azure",
+  "parameters": {
+    "cluster_size": 1,
+    "instance_type": "Standard_D4s_v3",
+    "data_volumes_per_node": 1,
+    "data_volume_size": 100,
+    "root_volume_size": 50
+  }
+}
