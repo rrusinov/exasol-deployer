@@ -21,6 +21,8 @@ resolve_script_dir() {
 
 # Script information
 readonly SCRIPT_VERSION="1.0.0"
+# Intentionally combine readonly+assignment to prevent set -e exit on command substitution failure
+# shellcheck disable=SC2155
 readonly SCRIPT_DIR="$(resolve_script_dir "${BASH_SOURCE[0]}")"
 
 # Source libraries

@@ -26,8 +26,9 @@ get_versions_config_path() {
 
 # List all available versions
 list_versions() {
-    local config_file
-    config_file=$(get_versions_config_path)
+    # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+    # shellcheck disable=SC2155
+    local config_file=$(get_versions_config_path)
 
     if [[ ! -f "$config_file" ]]; then
         die "Versions config file not found: $config_file"
@@ -52,11 +53,11 @@ check_download_target_availability() {
         fi
 
         if [[ -r "$path" ]]; then
-            echo "ok|$label file available: $path"
+            echo "ok|$label available"
             return 0
         fi
 
-        echo "missing|$label file not found: $path"
+        echo "missing|$label not found"
         return 1
     fi
 
@@ -66,27 +67,30 @@ check_download_target_availability() {
     fi
 
     if curl --head --silent --fail --location --max-time 10 "$url" >/dev/null 2>&1; then
-        echo "ok|$label reachable: $url"
+        echo "ok|$label available"
         return 0
     fi
 
-    echo "missing|$label not reachable: $url"
+    echo "missing|$label not reachable"
     return 1
 }
 
 list_versions_with_availability() {
-    local config_file
-    config_file=$(get_versions_config_path)
+    # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+    # shellcheck disable=SC2155
+    local config_file=$(get_versions_config_path)
 
     if [[ ! -f "$config_file" ]]; then
         die "Versions config file not found: $config_file"
     fi
 
-    local default_version
-    default_version=$(get_default_version)
+    # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+    # shellcheck disable=SC2155
+    local default_version=$(get_default_version)
 
-    local versions
-    versions=$(get_config_sections "$config_file" | grep -v "^default$")
+    # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+    # shellcheck disable=SC2155
+    local versions=$(get_config_sections "$config_file" | grep -v "^default$")
 
     if [[ -z "$versions" ]]; then
         log_info "  (no versions configured)"
@@ -96,11 +100,13 @@ list_versions_with_availability() {
     while IFS= read -r version; do
         [[ -z "$version" ]] && continue
 
-        local db_url c4_url
-        db_url=$(parse_config_file "$config_file" "$version" "DB_DOWNLOAD_URL")
-        c4_url=$(parse_config_file "$config_file" "$version" "C4_DOWNLOAD_URL")
-        local architecture
-        architecture=$(parse_config_file "$config_file" "$version" "ARCHITECTURE")
+        # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+        # shellcheck disable=SC2155
+        local db_url=$(parse_config_file "$config_file" "$version" "DB_DOWNLOAD_URL")
+        # shellcheck disable=SC2155
+        local c4_url=$(parse_config_file "$config_file" "$version" "C4_DOWNLOAD_URL")
+        # shellcheck disable=SC2155
+        local architecture=$(parse_config_file "$config_file" "$version" "ARCHITECTURE")
 
         local has_error=0
         local comments=()
@@ -110,8 +116,9 @@ list_versions_with_availability() {
             comments+=("Architecture not set")
         fi
 
-        local db_result db_status db_comment
-        db_result=$(check_download_target_availability "$db_url" "DB package")
+        # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+        # shellcheck disable=SC2155
+        local db_result=$(check_download_target_availability "$db_url" "DB package")
         db_status="${db_result%%|*}"
         db_comment="${db_result#*|}"
         if [[ "$db_status" != "ok" ]]; then
@@ -119,8 +126,9 @@ list_versions_with_availability() {
             comments+=("$db_comment")
         fi
 
-        local c4_result c4_status c4_comment
-        c4_result=$(check_download_target_availability "$c4_url" "c4 binary")
+        # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+        # shellcheck disable=SC2155
+        local c4_result=$(check_download_target_availability "$c4_url" "c4 binary")
         c4_status="${c4_result%%|*}"
         c4_comment="${c4_result#*|}"
         if [[ "$c4_status" != "ok" ]]; then
@@ -138,16 +146,15 @@ list_versions_with_availability() {
             suffix=" (default)"
         fi
 
-        local arch_display
-        arch_display="$architecture"
+        local arch_display="$architecture"
         if [[ -z "$arch_display" ]]; then
             arch_display="unknown"
         fi
 
         local comment_text=""
         if [[ ${#comments[@]} -gt 0 ]]; then
-            comment_text=$(IFS='; '; echo "${comments[*]}")
-            comment_text=" - $comment_text"
+            comment_text=$(printf ", %s" "${comments[@]}")
+            comment_text=" (${comment_text:2})"
         fi
 
         log_info "  $marker $version [$arch_display]$suffix$comment_text"
@@ -156,8 +163,9 @@ list_versions_with_availability() {
 
 # Get default version
 get_default_version() {
-    local config_file
-    config_file=$(get_versions_config_path)
+    # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+    # shellcheck disable=SC2155
+    local config_file=$(get_versions_config_path)
 
     parse_config_file "$config_file" "default" "VERSION"
 }
@@ -165,8 +173,9 @@ get_default_version() {
 # Check if version exists
 version_exists() {
     local version="$1"
-    local config_file
-    config_file=$(get_versions_config_path)
+    # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+    # shellcheck disable=SC2155
+    local config_file=$(get_versions_config_path)
 
     get_config_sections "$config_file" | grep -q "^${version}$"
 }
@@ -176,8 +185,9 @@ get_version_config() {
     local version="$1"
     local key="$2"
 
-    local config_file
-    config_file=$(get_versions_config_path)
+    # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+    # shellcheck disable=SC2155
+    local config_file=$(get_versions_config_path)
 
     if ! version_exists "$version"; then
         log_error "Version not found: $version"
@@ -255,8 +265,9 @@ get_instance_type_default() {
     local provider="$1"
     local architecture="$2"
 
-    local config_file
-    config_file=$(get_instance_types_config_path)
+    # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+    # shellcheck disable=SC2155
+    local config_file=$(get_instance_types_config_path)
 
     if [[ ! -f "$config_file" ]]; then
         log_error "Instance types config file not found: $config_file"
