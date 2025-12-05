@@ -49,7 +49,8 @@ Checksum Verification:::PROGRESS_MARKER: deploy:12|SECTION 5:.*Verify Checksums|
 C4 Diagnostic:::PROGRESS_MARKER: deploy:13|Verify C4 configuration diagnostic|c4 host diag
 Exasol Deployment:::PROGRESS_MARKER: deploy:14|Start Exasol database deployment|c4 host play
 Database Startup:::PROGRESS_MARKER: deploy:15|Wait for database to boot.*stage.*d|Wait for C4 deployment
-Deploy Complete:::PROGRESS_MARKER: deploy:16|cluster deployment completed|Exasol cluster deployment completed
+Security Validation:::PROGRESS_MARKER: deploy:16|Security_Validation|Fix Empty Passwords|shadow file security|PATCHING.*shadow
+Deploy Complete:::PROGRESS_MARKER: deploy:17|cluster deployment completed|Exasol cluster deployment completed
 EOF
 }
 

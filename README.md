@@ -583,6 +583,20 @@ Use `--wait-for` to wait until the deployment reaches a specific status, useful 
   - Status values: `database_ready`, `stopped`, `started`
   - Timeout formats: `15m`, `1h`, `60s`
 
+### `update-versions`
+
+Discover the latest Exasol database and C4 binaries, download them to compute checksums, and append a new entry to `versions.conf`.
+
+```bash
+./exasol update-versions
+```
+
+**How it works:**
+- Starts from the highest non-local version already in `versions.conf` and probes newer patch, minor, and major versions (patch +10, minor +5, major +3).
+- Applies the same probing window to the bundled C4 binary.
+- Picks the highest reachable DB/C4 pair, downloads both to `/var/tmp`, computes SHA256 checksums, and appends a single new version entry (including the architecture-aware DB version field).
+- Requires `curl` and `sha256sum` plus network access to the release URLs.
+
 ### `add-metrics`
 
 Copy calibrated metrics (progress line counts and durations) from a deployment back into the shared metrics repository. Useful when you've run with `PROGRESS_CALIBRATE=true` and want to persist improved estimates for future runs.

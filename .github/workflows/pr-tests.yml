@@ -30,6 +30,7 @@ jobs:
           - test_status
           - test_template_formatting
           - test_template_validation_common
+          - test_template_validation_ansible
           - test_template_validation_aws
           - test_template_validation_azure
           - test_template_validation_gcp

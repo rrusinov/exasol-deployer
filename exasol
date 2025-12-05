@@ -56,15 +56,16 @@ Usage:
   exasol [command] [flags]
 
 Available Commands:
-  init        Initialize a new deployment directory
-  deploy      Deploy using an existing deployment directory
-  start       Start a stopped database deployment
-  stop        Stop a running database deployment
-  destroy     Destroy an active deployment
-  status      Get the status of a deployment
-  health      Run connectivity and service health checks
-  version     Print the program version and exit
-  help        Show this help message
+  init             Initialize a new deployment directory
+  deploy           Deploy using an existing deployment directory
+  start            Start a stopped database deployment
+  stop             Stop a running database deployment
+  destroy          Destroy an active deployment
+  status           Get the status of a deployment
+  health           Run connectivity and service health checks
+  update-versions  Discover and append the latest DB/C4 release to versions.conf
+  version          Print the program version and exit
+  help             Show this help message
 
 Global Flags:
   --deployment-dir string   The directory to store deployment files (default ".")
@@ -235,6 +236,13 @@ main() {
             ;;
         version)
             show_version
+            ;;
+        update-versions)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_update_versions_help
+                exit 0
+            fi
+            cmd_update_versions "$@"
             ;;
         help|--help|-h)
             show_help

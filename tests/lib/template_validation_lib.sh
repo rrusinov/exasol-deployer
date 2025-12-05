@@ -106,6 +106,12 @@ template_validation_run() {
             test_terraform_symlinks
             test_symlinks_with_tofu
             ;;
+        ansible)
+            check_tool_availability
+            test_yaml_syntax_validation
+            test_ansible_playbook_validation
+            test_ansible_template_validation
+            ;;
         aws)
             check_tool_availability
             test_aws_template_validation

@@ -13,6 +13,44 @@ source "$LIB_DIR/versions.sh"
 echo "Testing versions.sh functions"
 echo "========================================="
 
+create_versions_fixture() {
+    local tmp
+    tmp=$(mktemp)
+    cat >"$tmp" <<'EOF'
+[exasol-2025.1.4]
+ARCHITECTURE=x86_64
+DB_VERSION=@exasol-2025.1.4
+DB_DOWNLOAD_URL=https://example.com/releases/exasol-2025.1.4.tar.gz
+DB_CHECKSUM=sha256:dummy-db
+C4_VERSION=4.28.4
+C4_DOWNLOAD_URL=https://example.com/releases/c4/4.28.4/c4
+C4_CHECKSUM=sha256:dummy-c4
+
+[default]
+VERSION=exasol-2025.1.4
+
+[default-local]
+VERSION=exasol-2025.1.4-local
+EOF
+    echo "$tmp"
+}
+
+with_versions_fixture() {
+    local fixture
+    fixture=$(create_versions_fixture)
+    local prev="${EXASOL_VERSIONS_CONFIG:-}"
+    EXASOL_VERSIONS_CONFIG="$fixture"
+    "$@"
+    local rc=$?
+    if [[ -n "$prev" ]]; then
+        EXASOL_VERSIONS_CONFIG="$prev"
+    else
+        unset EXASOL_VERSIONS_CONFIG
+    fi
+    rm -f "$fixture"
+    return $rc
+}
+
 # Test validate_version_format
 test_validate_version_format() {
     echo ""
@@ -64,7 +102,10 @@ test_version_exists() {
     echo ""
     echo "Test: version_exists"
 
-    # This test depends on actual versions.conf content
+    with_versions_fixture _test_version_exists_impl
+}
+
+_test_version_exists_impl() {
     if version_exists "exasol-2025.1.4"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -91,6 +132,10 @@ test_get_version_config() {
     echo ""
     echo "Test: get_version_config"
 
+    with_versions_fixture _test_get_version_config_impl
+}
+
+_test_get_version_config_impl() {
     local result
 
     result=$(get_version_config "exasol-2025.1.4" "ARCHITECTURE")
@@ -105,6 +150,10 @@ test_get_default_version() {
     echo ""
     echo "Test: get_default_version"
 
+    with_versions_fixture _test_get_default_version_impl
+}
+
+_test_get_default_version_impl() {
     local result
     result=$(get_default_version)
 
@@ -116,12 +165,15 @@ test_list_versions() {
     echo ""
     echo "Test: list_versions"
 
+    with_versions_fixture _test_list_versions_impl
+}
+
+_test_list_versions_impl() {
     local versions
     versions=$(list_versions)
 
     assert_contains "$versions" "exasol-2025.1.4" "Should list available version"
 }
-
 test_list_versions_with_architecture_output() {
     echo ""
     echo "Test: list_versions_with_availability includes architecture"
@@ -212,6 +264,124 @@ test_get_instance_type_default() {
     assert_equals "" "$result" "Should return empty for non-existent provider"
 }
 
+test_discover_latest_version() {
+    echo ""
+    echo "Test: discover_latest_version prefers highest reachable"
+
+    # Backup original function
+    local original_probe_version_url
+    original_probe_version_url=$(declare -f probe_version_url)
+
+    # Mock probe_version_url to succeed only for patch 6 and 7
+    probe_version_url() {
+        case "$1" in
+            *2025.1.6*|*2025.1.7*) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+
+    local result
+    result=$(discover_latest_version "exasol-2025.1.4" 2025 1 4 "https://example.com/exasol-2025.1.4.tar.gz" "db")
+    assert_equals "exasol-2025.1.7" "$result" "Should select highest reachable patch version"
+
+    # Restore original
+    eval "$original_probe_version_url"
+}
+
+test_discover_latest_version_for_c4() {
+    echo ""
+    echo "Test: discover_latest_version handles c4 numeric version format"
+
+    # Backup original function
+    local original_probe_version_url
+    original_probe_version_url=$(declare -f probe_version_url)
+
+    probe_version_url() {
+        case "$1" in
+            *4.28.5/c4) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+
+    local result
+    result=$(discover_latest_version "4.28.4" 4 28 4 "https://example.com/releases/c4/4.28.4/c4" "c4")
+    assert_equals "4.28.5" "$result" "Should increment c4 version without duplicating prefix"
+
+    eval "$original_probe_version_url"
+}
+
+test_build_url_for_version_rewrites_path_and_file() {
+    echo ""
+    echo "Test: build_url_for_version updates folder and filename"
+
+    local template="https://x-up.s3.eu-west-1.amazonaws.com/releases/exasol/linux/x86_64/2025.1.4/exasol-2025.1.4.tar.gz"
+    local expected="https://x-up.s3.eu-west-1.amazonaws.com/releases/exasol/linux/x86_64/2025.1.5/exasol-2025.1.5.tar.gz"
+    local result
+    result=$(build_url_for_version "$template" "exasol-2025.1.4" "exasol-2025.1.5")
+    assert_equals "$expected" "$result" "Should rewrite both path segment and filename to new version"
+}
+
+test_insert_entries_at_top_formats_cleanly() {
+    echo ""
+    echo "Test: insert_entries_at_top writes clean blocks and preserves defaults"
+
+    local tmp
+    tmp=$(mktemp)
+    cat >"$tmp" <<'EOF'
+# Header comment
+
+[exasol-2025.1.4]
+ARCHITECTURE=x86_64
+DB_VERSION=@exasol-2025.1.4
+DB_DOWNLOAD_URL=https://example.com/exasol-2025.1.4.tar.gz
+DB_CHECKSUM=sha256:db
+C4_VERSION=4.28.4
+C4_DOWNLOAD_URL=https://example.com/c4/4.28.4/c4
+C4_CHECKSUM=sha256:c4
+
+[default]
+VERSION=exasol-2025.1.4
+
+[default-local]
+VERSION=exasol-2025.1.4-local
+EOF
+
+    local new_entry
+    new_entry=$(build_version_entry "exasol-2025.1.8" "x86_64" "@exasol-2025.1.8" "https://example.com/exasol-2025.1.8.tar.gz" "sha-db-new" "4.29.0" "https://example.com/c4/4.29.0/c4" "sha-c4-new")
+    local local_entry
+    local_entry=$(build_version_entry "exasol-2025.1.8-local" "x86_64" "@exasol-2025.1.8" "file:///tmp/exasol-2025.1.8.tar.gz" "sha-db-new" "4.29.0" "file:///tmp/c4" "sha-c4-new")
+    local entries
+    entries="$new_entry"$'\n\n'"$local_entry"
+
+    insert_entries_at_top "$tmp" "$entries"
+    update_default_sections "$tmp" "exasol-2025.1.8" "exasol-2025.1.8-local"
+
+    # Assert order: header, blank, new entry, blank, local entry, blank, original first section...
+    local head
+    head=$(head -n 5 "$tmp")
+    assert_contains "$head" "[exasol-2025.1.8]" "New version should be first after header"
+
+    if grep -q '\\n' "$tmp"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} File should not contain literal \\n markers"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} File does not contain literal \\n markers"
+    fi
+
+    # Defaults updated
+    local def
+    def=$(awk '/^\[default\]/{flag=1;next}/^\[/{flag=0}flag' "$tmp" | tr -d '\r\n')
+    local def_local
+    def_local=$(awk '/^\[default-local\]/{flag=1;next}/^\[/{flag=0}flag' "$tmp" | tr -d '\r\n')
+    assert_equals "VERSION=exasol-2025.1.8" "$def" "default should point to new version"
+    assert_equals "VERSION=exasol-2025.1.8-local" "$def_local" "default-local should point to new local version"
+
+    rm -f "$tmp"
+}
+
 # Run all tests
 test_validate_version_format
 test_parse_version
@@ -221,6 +391,10 @@ test_get_default_version
 test_list_versions
 test_get_instance_types_config_path
 test_get_instance_type_default
+test_discover_latest_version
+test_discover_latest_version_for_c4
+test_build_url_for_version_rewrites_path_and_file
+test_insert_entries_at_top_formats_cleanly
 
 # Show summary
 test_summary
