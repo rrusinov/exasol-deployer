@@ -1,5 +1,5 @@
 {
-  "description": "Basic workflow with deploy, stop, start, and destroy",
+  "description": "Basic deploy and destroy workflow with simple validation",
   "steps": [
     {
       "step": "init"
@@ -26,35 +26,8 @@
       ]
     },
     {
-      "step": "stop_cluster"
-    },
-    {
-      "step": "validate",
-      "description": "Validate cluster stopped",
-      "checks": [
-        "cluster_status==stopped",
-        "health_status[*].ssh!=ok",
-        "health_status[*].cos_ssh!=ok",
-        "health_status[*].adminui!=ok",
-        "health_status[*].database!=ok"
-      ]
-    },
-    {
-      "step": "start_cluster"
-    },
-    {
-      "step": "validate",
-      "description": "Validate cluster started",
-      "checks": [
-        "cluster_status==database_ready",
-        "health_status[*].ssh==ok",
-        "health_status[*].cos_ssh==ok",
-        "health_status[*].adminui==ok",
-        "health_status[*].database==ok"
-      ]
-    },
-    {
       "step": "destroy"
+      
     },
     {
       "step": "validate",

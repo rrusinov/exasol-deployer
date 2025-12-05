@@ -33,10 +33,10 @@ EOF
     first_line=$(echo "$output" | head -n1)
     last_line=$(echo "$output" | tail -n1)
 
-    assert_contains "$first_line" "[01/18]" "First deploy step should start at 1"
+    assert_contains "$first_line" "[01/19]" "First deploy step should start at 1"
     assert_contains "$first_line" "Terraform Init" "Step 1 label should be Terraform Init"
 
-    assert_contains "$last_line" "[18/18]" "Last deploy step should reach 18"
+    assert_contains "$last_line" "[19/19]" "Last deploy step should reach 19"
     assert_contains "$last_line" "Deploy Complete" "Final label should be Deploy Complete"
 }
 
@@ -74,9 +74,9 @@ EOF
     second_line=$(echo "$output" | sed -n '2p')
     third_line=$(echo "$output" | sed -n '3p')
 
-    assert_contains "$second_line" "[02/18]" "Second line should show step 2 for network"
+    assert_contains "$second_line" "[02/19]" "Second line should show step 2 for network"
     assert_contains "$second_line" "Network Creation" "Second line should show Network Creation"
-    assert_contains "$third_line" "[04/18]" "Third line should advance to step 4 for volume"
+    assert_contains "$third_line" "[04/19]" "Third line should advance to step 4 for volume"
     assert_contains "$third_line" "Volume Provisioning" "Third line should show Volume Provisioning"
 }
 

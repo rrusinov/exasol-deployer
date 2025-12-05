@@ -59,11 +59,14 @@ test_valid_cloud_providers() {
     for provider in "${providers[@]}"; do
         local test_dir=$(setup_test_dir)
         local args=(--cloud-provider "$provider" --deployment-dir "$test_dir")
+        local cleanup_file=""
 
         if [[ "$provider" == "azure" ]]; then
-            local dummy_creds="$test_dir/azure.json"
+            local dummy_creds
+            dummy_creds=$(mktemp "${test_dir}_azure-creds-XXXXXX.json")
             echo '{"appId":"a","password":"p","tenant":"t"}' > "$dummy_creds"
             args+=(--azure-subscription "dummy-sub" --azure-credentials-file "$dummy_creds")
+            cleanup_file="$dummy_creds"
         elif [[ "$provider" == "gcp" ]]; then
             args+=(--gcp-project "dummy-project")
         elif [[ "$provider" == "hetzner" ]]; then
@@ -96,6 +99,10 @@ test_valid_cloud_providers() {
             echo "--- cmd_init output for provider $provider ---"
             echo "$output"
             echo "--------------------------------------------"
+        fi
+
+        if [[ -n "$cleanup_file" ]]; then
+            rm -f "$cleanup_file"
         fi
 
         cleanup_test_dir "$test_dir"
@@ -172,6 +179,27 @@ test_template_directory_selection() {
     cleanup_test_dir "$test_dir"
 }
 
+test_init_rejects_non_empty_deployment_dir() {
+    echo ""
+    echo "Test: Init rejects non-empty deployment directory"
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+    local target_dir="$test_dir/non_empty"
+
+    mkdir -p "$target_dir"
+    echo "existing" > "$target_dir/existing.txt"
+
+    local output
+    output=$(cmd_init --cloud-provider aws --deployment-dir "$target_dir" 2>&1)
+    local exit_code=$?
+
+    assert_failure "$exit_code" "Init should fail when deployment directory is not empty"
+    assert_contains "$output" "Deployment directory must be empty" "Error message should mention empty directory requirement"
+
+    cleanup_test_dir "$test_dir"
+}
+
 test_inventory_cloud_provider() {
     echo ""
     echo "Test: Inventory includes cloud provider"
@@ -200,7 +228,8 @@ test_credentials_file() {
     echo "Test: Credentials file includes cloud provider"
 
     local test_dir=$(setup_test_dir)
-    local creds_file="$test_dir/azure_credentials.json"
+    local creds_file
+    creds_file=$(mktemp "${test_dir}_azure-creds-XXXXXX.json")
 
     # Create dummy Azure credentials file for the test
     cat > "$creds_file" <<'EOF'
@@ -233,6 +262,7 @@ EOF
         echo -e "${RED}✗${NC} Should create .credentials.json"
     fi
 
+    rm -f "$creds_file"
     cleanup_test_dir "$test_dir"
 }
 
@@ -273,7 +303,8 @@ test_azure_credentials_file_usage() {
 
     local test_dir
     test_dir=$(setup_test_dir)
-    local creds_file="$test_dir/azure_credentials.json"
+    local creds_file
+    creds_file=$(mktemp "${test_dir}_azure-creds-XXXXXX.json")
     cat > "$creds_file" <<'EOF'
 {
   "appId": "app-id-123",
@@ -323,6 +354,7 @@ EOF
         echo -e "${RED}✗${NC} Should create variables.auto.tfvars for Azure"
     fi
 
+    rm -f "$creds_file"
     cleanup_test_dir "$test_dir"
 }
 
@@ -340,7 +372,8 @@ test_exasol_entrypoint_init_providers() {
         if [[ "$provider" == "libvirt" ]]; then
             init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" --libvirt-uri qemu:///system)
         elif [[ "$provider" == "azure" ]]; then
-            local dummy_creds="$test_dir/azure.json"
+            local dummy_creds
+            dummy_creds=$(mktemp "${test_dir}_azure-creds-XXXXXX.json")
             echo '{"appId":"a","password":"p","tenant":"t"}' > "$dummy_creds"
             init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-subscription "dummy-sub" --azure-credentials-file "$dummy_creds")
         elif [[ "$provider" == "gcp" ]]; then
@@ -371,6 +404,10 @@ test_exasol_entrypoint_init_providers() {
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_FAILED=$((TESTS_FAILED + 1))
             echo -e "${RED}✗${NC} exasol init should succeed for provider: $provider"
+        fi
+
+        if [[ "$provider" == "azure" ]]; then
+            rm -f "$dummy_creds"
         fi
 
         cleanup_test_dir "$test_dir"
@@ -435,7 +472,7 @@ test_data_volumes_per_node() {
         --adminui-password testpass \
         --cluster-size 1 \
         --data-volume-size 100 \
-        --db-version exasol-2025.1.4 \
+        --db-version exasol-2025.1.8 \
         --owner testuser
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then
@@ -632,7 +669,8 @@ test_digitalocean_arm64_guard() {
 
     local test_dir
     test_dir=$(setup_test_dir)
-    local versions_override="$test_dir/versions.conf"
+    local versions_override
+    versions_override=$(mktemp "${test_dir}_versions-XXXXXX.conf")
 
     cat > "$versions_override" <<'EOF'
 [exasol-2099.1.1-arm64]
@@ -663,6 +701,8 @@ EOF
     else
         unset EXASOL_VERSIONS_CONFIG
     fi
+
+    rm -f "$versions_override"
 
     assert_failure "$exit_code" "DigitalOcean arm64 init should fail"
     assert_contains "$output" "support only x86_64" "Error should mention architecture limitation"
@@ -939,6 +979,7 @@ test_cloud_provider_validation
 test_valid_cloud_providers
 test_aws_initialization
 test_template_directory_selection
+test_init_rejects_non_empty_deployment_dir
 test_inventory_cloud_provider
 test_credentials_file
 test_host_password_generation_and_override

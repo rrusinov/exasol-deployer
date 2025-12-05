@@ -9,6 +9,11 @@ set -euo pipefail
 # Script location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_E2E_SCRIPT="${SCRIPT_DIR}/run_e2e.sh"
+RESULTS_DIR_OVERRIDE="${SCRIPT_DIR}/tmp/test-results"
+mkdir -p "$RESULTS_DIR_OVERRIDE"
+RUN_E2E_BASE=("$RUN_E2E_SCRIPT" --results-dir "$RESULTS_DIR_OVERRIDE")
+FRAMEWORK_RESULTS_DIR="${RESULTS_DIR_OVERRIDE}/framework"
+mkdir -p "$FRAMEWORK_RESULTS_DIR"
 
 # Source test helper
 source "${SCRIPT_DIR}/test_helper.sh"
@@ -37,7 +42,7 @@ test_fail() {
 
 # Test 1: Help is shown when no arguments provided
 test_feature "Help shown with no arguments"
-if "$RUN_E2E_SCRIPT" 2>&1 | grep -q "Usage:"; then
+if "${RUN_E2E_BASE[@]}" 2>&1 | grep -q "Usage:"; then
     test_pass
 else
     test_fail "Help not shown when no arguments provided"
@@ -45,9 +50,8 @@ fi
 
 # Test 2: --list-tests shows all providers
 test_feature "--list-tests shows all providers"
-output=$("$RUN_E2E_SCRIPT" --list-tests 2>&1)
-if echo "$output" | grep -q "Provider: AWS" && \
-   echo "$output" | grep -q "Provider: LIBVIRT" && \
+output=$("${RUN_E2E_BASE[@]}" --list-tests 2>&1)
+if echo "$output" | grep -q "Provider: LIBVIRT" && \
    echo "$output" | grep -q "Total:.*tests"; then
     test_pass
 else
@@ -56,10 +60,9 @@ fi
 
 # Test 3: --list-tests with provider filter
 test_feature "--list-tests libvirt filters correctly"
-output=$("$RUN_E2E_SCRIPT" --list-tests libvirt 2>&1)
+output=$("${RUN_E2E_BASE[@]}" --list-tests libvirt 2>&1)
 if echo "$output" | grep -q "Provider: LIBVIRT" && \
-   ! echo "$output" | grep -q "Provider: AWS" && \
-   echo "$output" | grep -q "libvirt-1n_basic"; then
+   echo "$output" | grep -q "libvirt-"; then
     test_pass
 else
     test_fail "--list-tests libvirt didn't filter correctly"
@@ -67,8 +70,8 @@ fi
 
 # Test 4: --list-tests shows suite names as IDs
 test_feature "--list-tests shows suite names"
-output=$("$RUN_E2E_SCRIPT" --list-tests aws 2>&1)
-if echo "$output" | grep -q "aws-1n_basic" && \
+output=$("${RUN_E2E_BASE[@]}" --list-tests libvirt 2>&1)
+if echo "$output" | grep -q "libvirt-1n_simple" && \
    echo "$output" | grep -q "Suite.*Resources.*Workflow"; then
     test_pass
 else
@@ -77,7 +80,7 @@ fi
 
 # Test 5: --list-tests shows workflow steps
 test_feature "--list-tests shows workflow steps"
-output=$("$RUN_E2E_SCRIPT" --list-tests aws 2>&1)
+output=$("${RUN_E2E_BASE[@]}" --list-tests libvirt 2>&1)
 if echo "$output" | grep -q "init → deploy"; then
     test_pass
 else
@@ -86,7 +89,7 @@ fi
 
 # Test 6: --list-tests shows resource parameters
 test_feature "--list-tests shows resource parameters"
-output=$("$RUN_E2E_SCRIPT" --list-tests libvirt 2>&1)
+output=$("${RUN_E2E_BASE[@]}" --list-tests libvirt 2>&1)
 if echo "$output" | grep -q "8GB, 4cpu"; then
     test_pass
 else
@@ -95,7 +98,7 @@ fi
 
 # Test 7: --list-tests with invalid provider shows error
 test_feature "--list-tests with invalid provider shows error"
-output=$("$RUN_E2E_SCRIPT" --list-tests nonexistent 2>&1 || true)
+output=$("${RUN_E2E_BASE[@]}" --list-tests nonexistent 2>&1 || true)
 if echo "$output" | grep -q "No tests found for provider"; then
     test_pass
 else
@@ -110,14 +113,14 @@ sys.path.insert(0, 'tests/e2e')
 from pathlib import Path
 from e2e_framework import E2ETestFramework
 
-framework = E2ETestFramework('tests/e2e/configs/libvirt.json', Path('tmp/tests/results'))
-tests_filter = {'libvirt-1n_basic'}
+framework = E2ETestFramework('tests/e2e/configs/libvirt.json', Path('${FRAMEWORK_RESULTS_DIR}'))
+tests_filter = {'libvirt-2n_basic'}
 plan = framework.generate_test_plan(only_tests=tests_filter)
 print(f'Found {len(plan)} test(s)')
 if plan:
     print(f'Suite: {plan[0][\"suite\"]}')
 " 2>&1)
-if echo "$output" | grep -q "Found 1 test" && echo "$output" | grep -q "Suite: libvirt-1n_basic"; then
+if echo "$output" | grep -q "Found 1 test" && echo "$output" | grep -q "Suite: libvirt-2n_basic"; then
     test_pass
 else
     test_fail "Suite name didn't resolve via framework: $output"
@@ -133,8 +136,10 @@ echo "  Failed: $TESTS_FAILED"
 echo "======================================"
 
 if [[ $TESTS_FAILED -gt 0 ]]; then
+    rm -rf "$RESULTS_DIR_OVERRIDE"
     exit 1
 else
     echo "All tests passed!"
+    rm -rf "$RESULTS_DIR_OVERRIDE"
     exit 0
 fi

@@ -2,16 +2,15 @@
 
 This directory contains a deployment configuration for Exasol database.
 
-**Why bash and not Go/another compiled binary?**
-- Zero build toolchain required on the operator side; bash is ubiquitous on Linux/macOS runners and CI agents.
-- Tight integration with existing shell/Ansible/OpenTofu workflows (no cross-language shims needed).
-- Easier to vendor and tweak in-line with the Terraform/Ansible templates without rebuilding binaries.
-- Fast iteration for cloud releases; no cross-compilation or packaging pipeline to maintain for each platform.
-- Proven portability for the surrounding scripts (init/deploy/destroy/status) and test harness.
-
 ## Features
 
-- **Multi-Cloud Support**: Deploy on AWS, Azure, GCP, Hetzner Cloud, DigitalOcean, and local libvirt/KVM
+- **Multi-Cloud Support**:
+  - [AWS] Amazon Web Services
+  - [AZR] Microsoft Azure
+  - [GCP] Google Cloud Platform
+  - [HTZ] Hetzner Cloud
+  - [DO] DigitalOcean
+  - [LAB] libvirt/KVM (local or remote over SSH for Linux hosts)
 - **Multiple Database Versions**: Support for multiple Exasol database versions and architectures (x86_64, arm64)
 - **Cloud-Init Integration**: OS-agnostic user provisioning works across all Linux distributions
 - **Spot/Preemptible Instances**: Cost optimization with spot instances on AWS, Azure, and GCP
@@ -167,7 +166,7 @@ Install libvirt and KVM, then ensure your user is in the `libvirt` and `kvm` gro
 ./exasol init \
   --cloud-provider aws \
   --deployment-dir ./my-aws-deployment \
-  --db-version exasol-2025.1.4 \
+  --db-version exasol-2025.1.8 \
   --cluster-size 4 \
   --instance-type c7a.16xlarge \
   --data-volume-size 500 \
@@ -304,7 +303,7 @@ Output (JSON):
 ```json
 {
   "status": "database_ready",
-  "db_version": "exasol-2025.1.4",
+  "db_version": "exasol-2025.1.8",
   "architecture": "x86_64",
   "terraform_state_exists": true,
   "created_at": "2025-01-15T10:30:00Z",
@@ -390,7 +389,7 @@ Initialize a new deployment directory with configuration files.
 
 **Common Flags**
 - `--deployment-dir string`: Directory for deployment files (default: current directory).
-- `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., `exasol-2025.1.4`; x86_64 is implicit).
+- `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., `exasol-2025.1.8`; x86_64 is implicit).
 - `--list-versions`: List all available database versions (with availability and architecture) and exit.
 - `--list-providers`: List all supported cloud providers and exit.
 - `--cluster-size number`: Number of nodes (default: 1).
@@ -584,6 +583,20 @@ Use `--wait-for` to wait until the deployment reaches a specific status, useful 
   - Status values: `database_ready`, `stopped`, `started`
   - Timeout formats: `15m`, `1h`, `60s`
 
+### `update-versions`
+
+Discover the latest Exasol database and C4 binaries, download them to compute checksums, and append a new entry to `versions.conf`.
+
+```bash
+./exasol update-versions
+```
+
+**How it works:**
+- Starts from the highest non-local version already in `versions.conf` and probes newer patch, minor, and major versions (patch +10, minor +5, major +3).
+- Applies the same probing window to the bundled C4 binary.
+- Picks the highest reachable DB/C4 pair, downloads both to `/var/tmp`, computes SHA256 checksums, and appends a single new version entry (including the architecture-aware DB version field).
+- Requires `curl` and `sha256sum` plus network access to the release URLs.
+
 ### `add-metrics`
 
 Copy calibrated metrics (progress line counts and durations) from a deployment back into the shared metrics repository. Useful when you've run with `PROGRESS_CALIBRATE=true` and want to persist improved estimates for future runs.
@@ -624,7 +637,7 @@ Show help information.
 ## Configuration
 
 - **Cloud Provider**: Local libvirt/KVM deployment
-- **Database Version**: exasol-2025.1.4
+- **Database Version**: exasol-2025.1.8
 - **Architecture**: arm64
 - **Cluster Size**: 1 nodes
 - **Instance Type**: libvirt-custom
@@ -698,7 +711,7 @@ This is expected behavior for Hetzner, DigitalOcean, and libvirt. Follow the man
 - Check system logs: `journalctl -u exasol-overlay` and `journalctl -u c4_cloud_command`
 
 #### Overlay network issues
-- Ensure VXLAN port 4789 is allowed in firewall rules
+- VXLAN port 4789 is used internally for cluster communication between nodes (not required in firewall rules for external access)
 - Check overlay service status: `systemctl status exasol-overlay`
 - Verify bridge interface exists: `ip addr show vxlan-br0`
 
@@ -708,3 +721,41 @@ This is expected behavior for Hetzner, DigitalOcean, and libvirt. Follow the man
 - `variables.auto.tfvars` - Terraform variables
 - `.credentials.json` - Passwords (DB/AdminUI/host; keep secure)
 - `terraform.tfstate` - Terraform state (created after deployment)
+
+## Testing
+
+This project includes comprehensive test coverage:
+
+- **Unit Tests**: Shell script tests for core functionality
+  ```bash
+  # Run all tests
+  ./tests/run_tests.sh
+  
+  # Run specific test
+  ./tests/test_common.sh
+  ```
+
+- **E2E Tests**: End-to-end integration tests across cloud providers
+  - See [E2E Test Framework Documentation](docs/E2E-README.md) for details
+  - Resource-aware scheduling prevents local memory exhaustion
+  - Supports workflow-based testing with validation
+  ```bash
+  # Run E2E tests for libvirt
+  ./tests/run_e2e.sh --provider libvirt
+  
+  # List available tests
+  ./tests/run_e2e.sh --list-tests
+  ```
+
+## Project Notes
+
+**Why bash and not Go/another compiled binary?**
+- Zero build toolchain required on the operator side; bash is ubiquitous on Linux/macOS runners and CI agents.
+- Tight integration with existing shell/Ansible/OpenTofu workflows (no cross-language shims needed).
+- Easier to vendor and tweak in-line with the Terraform/Ansible templates without rebuilding binaries.
+- Fast iteration for cloud releases; no cross-compilation or packaging pipeline to maintain for each platform.
+- Proven portability for the surrounding scripts (init/deploy/destroy/status) and test harness.
+
+**Support & Community**
+- This is an open-source community project and is not officially supported by Exasol.
+- Contributions and community support are welcome via issues and pull requests.

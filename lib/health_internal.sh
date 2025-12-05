@@ -170,8 +170,14 @@ health_run_internal_checks() {
         failed_checks=()
         ssh_passed=0
         ssh_failed=0
+        cos_ssh_passed=0
+        cos_ssh_failed=0
         services_active=0
         services_failed=0
+        adminui_passed=0
+        adminui_failed=0
+        database_passed=0
+        database_failed=0
         cluster_ready="false"
         cluster_status=""
         declare -A state_public_ip_map=()
@@ -357,6 +363,16 @@ health_run_internal_checks() {
                 overall_issues=$((overall_issues + 1))
             fi
 
+            # Count COS SSH results (if COS SSH entry exists in ssh_config)
+            if grep -Eq "^Host[[:space:]]+${host_name}-cos" "$ssh_config_file" 2>/dev/null; then
+                if [[ "$cos_ssh_ok" == "true" ]]; then
+                    cos_ssh_passed=$((cos_ssh_passed + 1))
+                else
+                    cos_ssh_failed=$((cos_ssh_failed + 1))
+                    overall_issues=$((overall_issues + 1))
+                fi
+            fi
+
             # Count service results
             IFS=';' read -ra service_array <<< "$services"
             for service_status in "${service_array[@]}"; do
@@ -383,7 +399,17 @@ health_run_internal_checks() {
             fi
 
             # Count port issues
-            if [[ "$port_8443_ok" != "true" && -n "$public_ip" ]]; then
+            if [[ "$port_8443_ok" == "true" ]]; then
+                adminui_passed=$((adminui_passed + 1))
+            elif [[ -n "$public_ip" ]]; then
+                adminui_failed=$((adminui_failed + 1))
+                overall_issues=$((overall_issues + 1))
+            fi
+            
+            if [[ "$port_8563_ok" == "true" ]]; then
+                database_passed=$((database_passed + 1))
+            elif [[ -n "$public_ip" ]]; then
+                database_failed=$((database_failed + 1))
                 overall_issues=$((overall_issues + 1))
             fi
             if [[ "$port_8563_ok" != "true" && -n "$public_ip" ]]; then

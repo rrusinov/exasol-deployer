@@ -16,6 +16,270 @@ if str(TESTS_DIR) not in sys.path:
 from e2e_framework import E2ETestFramework, ResourceQuotaMonitor, NotificationManager, HTMLReportGenerator
 
 
+class TestVersionFallback(unittest.TestCase):
+    """Test cases for database version fallback mechanism."""
+
+    def setUp(self):
+        """Set up test environment."""
+        username = getpass.getuser()
+        test_id = str(uuid.uuid4())[:8]
+        self.temp_dir = Path(tempfile.mkdtemp(prefix=f"exasol_test_{username}_{test_id}_"))
+        
+        # Create minimal config
+        self.config = {
+            'test_suites': {
+                'test_suite': {
+                    'provider': 'libvirt',
+                    'parameters': {'cluster_size': 1},
+                    'workflow': []
+                }
+            }
+        }
+        
+        self.config_file = self.temp_dir / 'test_config.json'
+        with open(self.config_file, 'w') as f:
+            json.dump(self.config, f)
+
+    def tearDown(self):
+        """Clean up test environment."""
+        shutil.rmtree(self.temp_dir)
+
+    def test_resolve_db_version_cli_priority(self):
+        """Test that CLI db_version has highest priority."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create framework with CLI db_version
+        framework = E2ETestFramework(str(self.config_file), results_dir, db_version='exasol-2025.1.8')
+        
+        # Test resolution with suite version that would normally be used
+        resolved = framework._resolve_db_version('exasol-2025.2.0')
+        
+        # CLI version should take priority
+        self.assertEqual(resolved, 'exasol-2025.1.8')
+
+    def test_resolve_db_version_suite_single_string(self):
+        """Test that single string suite version is used when no CLI override."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir, db_version=None)
+        
+        resolved = framework._resolve_db_version('exasol-2025.1.8')
+        
+        self.assertEqual(resolved, 'exasol-2025.1.8')
+
+    def test_resolve_db_version_none_returns_none(self):
+        """Test that None is returned when no version specified."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir, db_version=None)
+        
+        resolved = framework._resolve_db_version(None)
+        
+        self.assertIsNone(resolved)
+
+    def test_resolve_db_version_fallback_list_first_exists(self):
+        """Test fallback list uses first existing version."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir, db_version=None)
+        
+        # Mock _check_version_exists to simulate versions
+        def mock_check(version):
+            # Simulate that default-local exists
+            return version == 'default-local'
+        
+        # Mock _resolve_version_alias to control resolution
+        def mock_resolve(version):
+            if version == 'default-local':
+                return 'exasol-2025.1.8-local'
+            return version
+        
+        original_check = framework._check_version_exists
+        original_resolve = framework._resolve_version_alias
+        framework._check_version_exists = mock_check
+        framework._resolve_version_alias = mock_resolve
+        
+        try:
+            # Test with fallback list where first exists
+            resolved = framework._resolve_db_version(['default-local', 'default'])
+            
+            # Should use first existing version and resolve it
+            self.assertEqual(resolved, 'exasol-2025.1.8-local')
+        finally:
+            framework._check_version_exists = original_check
+            framework._resolve_version_alias = original_resolve
+
+    def test_resolve_db_version_fallback_list_second_exists(self):
+        """Test fallback list uses second version when first doesn't exist."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir, db_version=None)
+        
+        # Mock _check_version_exists to simulate versions
+        def mock_check(version):
+            # Simulate that only 'default' exists
+            return version == 'default'
+        
+        original_check = framework._check_version_exists
+        framework._check_version_exists = mock_check
+        
+        try:
+            # Test with fallback list where first doesn't exist but second does
+            resolved = framework._resolve_db_version(['default-local', 'default'])
+            
+            # Should use second version (default)
+            self.assertEqual(resolved, 'default')
+        finally:
+            framework._check_version_exists = original_check
+
+    def test_resolve_db_version_fallback_list_none_exist(self):
+        """Test fallback list uses last version when none exist."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir, db_version=None)
+        
+        # Mock _check_version_exists to simulate no versions exist
+        def mock_check(version):
+            return False
+        
+        original_check = framework._check_version_exists
+        framework._check_version_exists = mock_check
+        
+        try:
+            # Test with fallback list where none exist
+            # Should use last version as fallback
+            resolved = framework._resolve_db_version(['default-local', 'default', 'exasol-2025.1.8'])
+            
+            # Should use last version as fallback
+            self.assertEqual(resolved, 'exasol-2025.1.8')
+        finally:
+            framework._check_version_exists = original_check
+
+    def test_resolve_db_version_alias_resolution(self):
+        """Test that aliases are resolved to actual version names."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir, db_version=None)
+        
+        # Mock _resolve_version_alias to simulate resolution
+        def mock_resolve(version):
+            if version == 'default-local':
+                return 'exasol-2025.1.8-local'
+            return version
+        
+        original_resolve = framework._resolve_version_alias
+        framework._resolve_version_alias = mock_resolve
+        
+        try:
+            resolved = framework._resolve_db_version('default-local')
+            
+            # Should resolve alias to actual version
+            self.assertEqual(resolved, 'exasol-2025.1.8-local')
+        finally:
+            framework._resolve_version_alias = original_resolve
+
+    def test_resolve_db_version_fallback_with_alias_resolution(self):
+        """Test that fallback list works with alias resolution."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir, db_version=None)
+        
+        # Mock _check_version_exists to simulate default-local missing
+        def mock_check(version):
+            return version == 'default'
+        
+        # Mock _resolve_version_alias to simulate resolution
+        def mock_resolve(version):
+            if version == 'default':
+                return 'exasol-2025.1.8'
+            elif version == 'default-local':
+                return 'exasol-2025.1.8-local'
+            return version
+        
+        original_check = framework._check_version_exists
+        original_resolve = framework._resolve_version_alias
+        framework._check_version_exists = mock_check
+        framework._resolve_version_alias = mock_resolve
+        
+        try:
+            # Test fallback: default-local doesn't exist, fallback to default
+            resolved = framework._resolve_db_version(['default-local', 'default'])
+            
+            # Should fallback to 'default' and resolve it
+            self.assertEqual(resolved, 'exasol-2025.1.8')
+        finally:
+            framework._check_version_exists = original_check
+            framework._resolve_version_alias = original_resolve
+
+    def test_resolve_version_alias_default_local(self):
+        """Test _resolve_version_alias specifically for default-local."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir, db_version=None)
+        
+        # Test with non-alias version
+        resolved = framework._resolve_version_alias('exasol-2025.1.8')
+        self.assertEqual(resolved, 'exasol-2025.1.8')
+        
+        # Test with default-local alias (will try to resolve via CLI)
+        # This is tested elsewhere with mocking, here we just verify it returns something
+        resolved = framework._resolve_version_alias('default-local')
+        self.assertIsNotNone(resolved)
+
+    def test_check_version_exists_with_real_cli(self):
+        """Test _check_version_exists calls exasol init --list-versions."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir, db_version=None)
+        
+        # This test will actually call the CLI if available
+        # We test the return value is boolean
+        result = framework._check_version_exists('default-local')
+        self.assertIsInstance(result, bool)
+
+    def test_db_version_propagated_to_test_case(self):
+        """Test that db_version from suite config is propagated to test case."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Add db_version to suite config
+        config_with_version = {
+            'test_suites': {
+                'test_suite': {
+                    'provider': 'libvirt',
+                    'parameters': {'cluster_size': 1},
+                    'workflow': [],
+                    'db_version': ['default-local', 'default']
+                }
+            }
+        }
+        
+        config_file = self.temp_dir / 'config_with_version.json'
+        with open(config_file, 'w') as f:
+            json.dump(config_with_version, f)
+        
+        framework = E2ETestFramework(str(config_file), results_dir, db_version=None)
+        
+        # Generate test plan
+        test_plan = framework.generate_test_plan(dry_run=True)
+        
+        # Check that db_version is in test case
+        self.assertGreater(len(test_plan), 0)
+        test_case = test_plan[0]
+        self.assertIn('db_version', test_case)
+        self.assertEqual(test_case['db_version'], ['default-local', 'default'])
+
+
 class TestE2EFramework(unittest.TestCase):
 
     def setUp(self):
@@ -121,8 +385,9 @@ class TestE2EFrameworkLogging(unittest.TestCase):
                 'test_suite': {
                     'provider': 'aws',
                     'parameters': {
-                        'cluster_size': [1]
-                    }
+                        'cluster_size': 1
+                    },
+                    'workflow': []
                 }
             }
         }

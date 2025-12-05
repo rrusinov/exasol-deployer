@@ -30,6 +30,7 @@ jobs:
           - test_status
           - test_template_formatting
           - test_template_validation_common
+          - test_template_validation_ansible
           - test_template_validation_aws
           - test_template_validation_azure
           - test_template_validation_gcp
@@ -40,6 +41,8 @@ jobs:
           - test_documentation
           - test_help_options
           - test_e2e_framework
+          - test_e2e_config
+          - test_run_e2e
 
     steps:
       - name: Checkout code
@@ -113,7 +116,7 @@ jobs:
 
       - name: Test init command
         run: |
-          ./exasol init --cloud-provider aws --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.4
+          ./exasol init --cloud-provider aws --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.8
 
       - name: Verify deployment structure
         run: |

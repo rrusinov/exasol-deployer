@@ -1,12 +1,11 @@
 {
-  "sut_name": "azure-4n",
   "description": "Azure 4-node cluster configuration",
   "provider": "azure",
   "parameters": {
     "cluster_size": 4,
     "instance_type": "Standard_D8s_v3",
     "data_volumes_per_node": 2,
-    "data_volume_size": 200,
-    "root_volume_size": 100
+    "data_volume_size": 20,
+    "root_volume_size": 50
   }
 }

@@ -28,7 +28,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Set, Tuple, Callable
+from typing import Dict, List, Any, Optional, Set, Tuple, Callable, Union
 
 # Try to import SSH validator for live system validation
 try:
@@ -44,6 +44,16 @@ try:
 except ImportError:
     EMERGENCY_TOOLING_AVAILABLE = False
     EmergencyHandler = ResourceTracker = ResourceInfo = None
+
+try:
+    from config_schema import (
+        validate_workflow_step,
+        validate_validation_check,
+        validate_sut_parameters
+    )
+    CONFIG_VALIDATION_AVAILABLE = True
+except ImportError:
+    CONFIG_VALIDATION_AVAILABLE = False
 
 
 class NotificationManager:
@@ -188,7 +198,8 @@ class HTMLReportGenerator:
             status = 'PASS' if result.get('success') else 'FAIL'
             row_class = 'pass' if result.get('success') else 'fail'
             error = html.escape(result.get('error') or '')
-            suite_name = html.escape(result.get('suite_name', result.get('suite', result.get('deployment_id', 'n/a'))))
+            suite_name = html.escape(result.get('suite', result.get('deployment_id', 'n/a')))
+            db_version = html.escape(result.get('db_version', 'default'))
             
             # Build workflow steps display
             steps_html = []
@@ -209,7 +220,8 @@ class HTMLReportGenerator:
             # Build parameters display
             params = result.get('parameters', {})
             params_items = [f"{k}={v}" for k, v in params.items()]
-            params_display = html.escape(', '.join(params_items[:5]))  # Show first 5 params
+            params_display_short = html.escape(', '.join(params_items[:5]))  # Show first 5 in table
+            params_display_full = html.escape(', '.join(params_items)) if params_items else 'N/A'  # Show all in details
             
             # Description from SUT
             sut_desc = html.escape(result.get('sut_description') or '')
@@ -218,12 +230,15 @@ class HTMLReportGenerator:
                 f"<tr class='{row_class}'>"
                 f"<td><strong>{suite_name}</strong><br/><small>{sut_desc}</small></td>"
                 f"<td>{html.escape(result.get('provider') or '')}</td>"
-                f"<td><small>{params_display}</small></td>"
+                f"<td>{db_version}</td>"
+                f"<td><small>{params_display_short}</small></td>"
                 f"<td>{result.get('duration', 0):.1f}s</td>"
                 f"<td>{status}</td>"
                 f"<td>{error}</td>"
                 "</tr>"
-                f"<tr class='{row_class}-details'><td colspan='6'><details><summary>Steps</summary>{steps_display}</details></td></tr>"
+                f"<tr class='{row_class}-details'><td colspan='7'><details><summary>Steps & Config</summary>"
+                f"<div class='config-section'><strong>Parameters:</strong> {params_display_full}</div>"
+                f"{steps_display}</details></td></tr>"
             )
         rows_html = '\n'.join(rows)
         html_content = f"""<!DOCTYPE html>
@@ -247,6 +262,7 @@ summary {{ cursor: pointer; font-weight: bold; padding: 0.5rem; background: #f0f
 .step-pending {{ border-left-color: #faad14; }}
 .summary-box {{ background: #f0f0f0; padding: 1rem; border-radius: 5px; margin-bottom: 1rem; }}
 .summary-box h2 {{ margin-top: 0; }}
+.config-section {{ background: #f9f9f9; padding: 0.5rem; margin: 0.3rem 0; border-radius: 3px; }}
 </style>
 </head>
 <body>
@@ -254,13 +270,15 @@ summary {{ cursor: pointer; font-weight: bold; padding: 0.5rem; background: #f0f
 <div class="summary-box">
 <h2>Summary</h2>
 <p><strong>Execution:</strong> {summary.get('execution_dir', 'N/A')}</p>
+<p><strong>Database Version:</strong> {summary.get('db_version', 'default')} | 
+   <strong>Provider:</strong> {', '.join(summary.get('provider')) if isinstance(summary.get('provider'), list) else summary.get('provider', 'N/A')}</p>
 <p><strong>Total tests:</strong> {summary.get('total_tests', 0)} | 
    <strong>Passed:</strong> {summary.get('passed', 0)} | 
    <strong>Failed:</strong> {summary.get('failed', 0)} | 
    <strong>Total time:</strong> {summary.get('total_time', 0):.1f}s</p>
 </div>
 <table>
-<thead><tr><th>Suite</th><th>Provider</th><th>Parameters</th><th>Duration</th><th>Status</th><th>Error</th></tr></thead>
+<thead><tr><th>Suite</th><th>Provider</th><th>DB Version</th><th>Parameters</th><th>Duration</th><th>Status</th><th>Error</th></tr></thead>
 <tbody>
 {rows_html}
 </tbody>
@@ -278,9 +296,10 @@ summary {{ cursor: pointer; font-weight: bold; padding: 0.5rem; background: #f0f
 class E2ETestFramework:
     """Main E2E test framework class."""
 
-    def __init__(self, config_path: str, results_dir: Optional[Path] = None, db_version: Optional[str] = None):
+    def __init__(self, config_path: str, results_dir: Optional[Path] = None, db_version: Optional[str] = None, stop_on_error: bool = False):
         self.config_path = Path(config_path)
         self.db_version = db_version  # Optional database version override
+        self.stop_on_error = stop_on_error  # Stop execution on first test failure
         
         # Create execution-timestamp directory: ./tmp/tests/e2e-YYYYMMDD-HHMMSS/
         self.execution_timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -308,6 +327,10 @@ class E2ETestFramework:
         # Setup logging
         self._setup_logging()
         self.config = self._load_config()
+        
+        # Validate configuration
+        self._validate_configuration()
+        
         self.live_mode = bool(self.config.get('live_mode', False))
         self.enable_live_validation = bool(self.config.get('enable_live_validation', True))
         resource_limits = self.config.get('resource_limits', {})
@@ -322,6 +345,115 @@ class E2ETestFramework:
         
         # Register cleanup function to be called on exit
         atexit.register(self._cleanup)
+
+    def _resolve_db_version(self, suite_db_version: Optional[Union[str, List[str]]]) -> Optional[str]:
+        """Resolve database version with fallback support.
+        
+        Priority:
+        1. CLI argument (self.db_version)
+        2. SUT config db_version (can be a list with fallbacks)
+        3. None (uses exasol CLI default)
+        
+        If suite_db_version is a list, check each version in order and use the first that exists.
+        
+        Special handling for 'default-local' alias:
+        - If 'default-local' exists, extract the actual version name from the output
+        """
+        # CLI argument has highest priority (but still needs alias resolution)
+        if self.db_version:
+            return self._resolve_version_alias(self.db_version)
+        
+        # No SUT config db_version specified
+        if not suite_db_version:
+            return None
+        
+        # Single version string
+        if isinstance(suite_db_version, str):
+            return self._resolve_version_alias(suite_db_version)
+        
+        # List of versions with fallback
+        if isinstance(suite_db_version, list):
+            # Check each version in order using exasol CLI
+            for version in suite_db_version:
+                if self._check_version_exists(version):
+                    resolved = self._resolve_version_alias(version)
+                    self.logger.info(f"Using database version: {resolved}")
+                    return resolved
+            
+            # If no version found, use the last one as fallback
+            fallback = self._resolve_version_alias(suite_db_version[-1])
+            self.logger.warning(f"None of the versions {suite_db_version} found, using last: {fallback}")
+            return fallback
+        
+        return None
+    
+    def _resolve_version_alias(self, version: str) -> str:
+        """Resolve version aliases like 'default-local' to actual version names.
+        
+        If version is 'default-local', extract the actual version from the
+        --list-versions output by finding the line with (default-local) marker.
+        """
+        if version != 'default-local':
+            return version
+        
+        try:
+            result = subprocess.run(
+                ['./exasol', 'init', '--list-versions'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=self.repo_root
+            )
+            if result.returncode == 0:
+                output = result.stdout + result.stderr
+                # Look for line with (default-local) marker
+                # Format: "[INFO]   [+] exasol-2025.1.8-local [x86_64] (default-local)"
+                for line in output.split('\n'):
+                    if '(default-local)' in line:
+                        # Extract version name
+                        import re
+                        # Remove ANSI color codes
+                        clean_line = re.sub(r'\x1b\[[0-9;]+m', '', line)
+                        # Look for pattern: [+] or [x] followed by version name
+                        match = re.search(r'\[([\+x])\]\s+(\S+)', clean_line)
+                        if match:
+                            actual_version = match.group(2)
+                            self.logger.debug(f"Resolved 'default-local' to '{actual_version}'")
+                            return actual_version
+        except Exception as e:
+            self.logger.debug(f"Failed to resolve default-local alias: {e}")
+        
+        # Fallback: return as-is
+        return version
+    
+    def _check_version_exists(self, version: str) -> bool:
+        """Check if a database version exists using exasol CLI.
+        
+        Also handles special aliases like 'default-local' by looking for
+        the (default-local) marker in the output.
+        """
+        try:
+            result = subprocess.run(
+                ['./exasol', 'init', '--list-versions'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=self.repo_root
+            )
+            if result.returncode == 0:
+                output = result.stdout + result.stderr
+                
+                # Special handling for 'default-local' alias
+                # Look for "(default-local)" marker in the output
+                if version == 'default-local':
+                    return '(default-local)' in output
+                
+                # For regular versions, check if version name appears in output
+                return version in output
+        except Exception as e:
+            self.logger.debug(f"Failed to check version {version}: {e}")
+        
+        return False
 
     def _setup_logging(self):
         """Setup logging configuration."""
@@ -360,11 +492,28 @@ class E2ETestFramework:
         # Add file handler to this logger
         self.logger.addHandler(self.file_handler)
         
+        # Create a custom stdout handler that respects progress rendering
+        class ProgressAwareHandler(logging.StreamHandler):
+            """StreamHandler that clears progress line before logging"""
+            def __init__(self, progress_lock, stream=None):
+                super().__init__(stream)
+                self.progress_lock = progress_lock
+                
+            def emit(self, record):
+                try:
+                    with self.progress_lock:
+                        # Clear current line before logging
+                        self.stream.write('\r\033[K')
+                        super().emit(record)
+                        self.stream.flush()
+                except Exception:
+                    self.handleError(record)
+        
         # Also add to root logger if no handlers exist yet (for stdout)
         root_logger = logging.getLogger()
         if not root_logger.handlers:
-            # Add stdout handler to root logger
-            stdout_handler = logging.StreamHandler(sys.stdout)
+            # Add custom stdout handler to root logger
+            stdout_handler = ProgressAwareHandler(self._progress_lock, sys.stdout)
             stdout_handler.setFormatter(formatter)
             stdout_handler.setLevel(logging.INFO)
             root_logger.addHandler(stdout_handler)
@@ -431,15 +580,66 @@ class E2ETestFramework:
                 'test_type': 'workflow',
                 'description': f"{sut_config.get('description', sut_name)} + {workflow_config.get('description', workflow_name)}",
                 'parameters': sut_config.get('parameters', {}),
-                'workflow': workflow_config.get('steps', [])
+                'workflow': workflow_config.get('steps', []),
+                'db_version': sut_config.get('db_version')  # Pass through db_version from SUT config
             }
         
         # Return config in the format expected by generate_test_plan
         return {
             'provider': provider,
             'description': provider_config.get('description', ''),
+            'max_concurrent_nodes': provider_config.get('max_concurrent_nodes', 0),
             'test_suites': merged_suites  # This is the correct key
         }
+
+    def _validate_configuration(self):
+        """Validate all test suite configurations for correctness."""
+        if not CONFIG_VALIDATION_AVAILABLE:
+            self.logger.warning("Configuration validation module not available, skipping validation")
+            return
+        
+        all_errors = []
+        
+        for suite_name, suite_config in self.config.get('test_suites', {}).items():
+            suite_errors = []
+            provider = suite_config.get('provider', 'unknown')
+            
+            # Validate parameters
+            if 'parameters' in suite_config:
+                param_errors = validate_sut_parameters(suite_config['parameters'], provider)
+                if param_errors:
+                    suite_errors.append(f"Parameter validation errors:")
+                    suite_errors.extend([f"  - {err}" for err in param_errors])
+            
+            # Validate workflow steps
+            workflow = suite_config.get('workflow', [])
+            for step_idx, step in enumerate(workflow):
+                step_errors = validate_workflow_step(step, provider)
+                if step_errors:
+                    suite_errors.append(f"Step {step_idx + 1} ({step.get('step', 'unknown')}) validation errors:")
+                    suite_errors.extend([f"  - {err}" for err in step_errors])
+                
+                # Validate validation checks within validate steps
+                if step.get('step') == 'validate' and 'checks' in step:
+                    for check_idx, check in enumerate(step['checks']):
+                        check_errors = validate_validation_check(check)
+                        if check_errors:
+                            suite_errors.append(f"Step {step_idx + 1}, check {check_idx + 1} ('{check}') validation errors:")
+                            suite_errors.extend([f"  - {err}" for err in check_errors])
+            
+            if suite_errors:
+                all_errors.append(f"\nSuite '{suite_name}':")
+                all_errors.extend(suite_errors)
+        
+        if all_errors:
+            error_msg = "\n" + "="*80 + "\n"
+            error_msg += "CONFIGURATION VALIDATION FAILED\n"
+            error_msg += "="*80 + "\n"
+            error_msg += "\n".join(all_errors)
+            error_msg += "\n" + "="*80 + "\n"
+            self.logger.error(error_msg)
+            print(error_msg, file=sys.stderr)
+            raise ValueError("Configuration validation failed. Please fix the errors above.")
 
     def _validate_config_keys(self, config: Dict[str, Any]):
         """Validate configuration for misspelled keys."""
@@ -449,6 +649,7 @@ class E2ETestFramework:
             'description',
             'sut',
             'workflow',
+            'max_concurrent_nodes',
             'parameters',
             'combinations',
             'cluster_size',
@@ -463,7 +664,6 @@ class E2ETestFramework:
             'checks',
             'target_node',
             'method',
-            'custom_command',
             'allow_failures',
             'retry',
             'max_attempts',
@@ -549,7 +749,8 @@ class E2ETestFramework:
             
             # Each suite has a single set of parameters (no combinations)
             parameters = suite_config.get('parameters', {})
-            deployment_id = self._build_deployment_id(suite_name, suite_config['provider'], parameters)
+            # Use suite name directly as deployment ID (simple and readable)
+            deployment_id = suite_name
             # Match by suite name or deployment ID
             if only_tests and suite_name not in only_tests and deployment_id not in only_tests:
                 continue
@@ -561,7 +762,9 @@ class E2ETestFramework:
                 'parameters': parameters.copy(),
                 'deployment_id': deployment_id,
                 'config_path': str(self.config_path),
-                'workflow': suite_config.get('workflow', [])
+                'workflow': suite_config.get('workflow', []),
+                'sut_description': suite_config.get('sut_description', ''),
+                'db_version': suite_config.get('db_version')
             }
             if self._provider_supports_spot(suite_config['provider']):
                 test_case['parameters'].setdefault('enable_spot_instances', True)
@@ -575,7 +778,17 @@ class E2ETestFramework:
         return test_plan
 
     def run_tests(self, test_plan: List[Dict[str, Any]], max_parallel: int = 1) -> List[Dict[str, Any]]:
-        """Execute tests in parallel."""
+        """Execute tests with resource-aware scheduling.
+        
+        Args:
+            test_plan: List of test cases to execute
+            max_parallel: CLI override for parallelism (0 = use config limit)
+        
+        Resource-aware scheduling:
+        - Uses max_concurrent_nodes from provider config to limit total nodes in use
+        - Schedules tests based on cluster_size to optimize resource usage
+        - Example: max_concurrent_nodes=4 allows 1x4n OR 1x3n+1x1n OR 2x2n OR 4x1n
+        """
         results = []
         start_time = time.time()
 
@@ -586,11 +799,25 @@ class E2ETestFramework:
         # Print execution directory info
         print(f"Results will be saved to: {self.results_dir.absolute()}")
         
+        # Determine effective parallelism
+        config_max_nodes = self.config.get('max_concurrent_nodes', 0)
+        
         if max_parallel <= 0:
-            max_parallel = max(1, len(test_plan))
+            # Use config limit or unlimited
+            if config_max_nodes > 0:
+                # Resource-aware scheduling enabled
+                effective_parallel = len(test_plan)  # Allow scheduling all tests
+                self.logger.info(f"Using resource-aware scheduling: max {config_max_nodes} concurrent nodes")
+            else:
+                # No limit configured, run all in parallel
+                effective_parallel = max(1, len(test_plan))
+        else:
+            # CLI override: use traditional max_parallel approach
+            effective_parallel = max_parallel
+            config_max_nodes = 0  # Disable resource-aware scheduling
 
         try:
-            self.resource_plan_metrics = self.quota_monitor.evaluate_plan(test_plan, max_parallel)
+            self.resource_plan_metrics = self.quota_monitor.evaluate_plan(test_plan, effective_parallel)
         except ValueError as limit_error:
             self.logger.error(f"Resource quota limit exceeded: {limit_error}")
             raise
@@ -599,10 +826,27 @@ class E2ETestFramework:
         with self._progress_lock:
             self._total_tests = len(test_plan)
         
-        self.logger.info(f"Starting test execution with {len(test_plan)} tests, max_parallel={max_parallel}")
+        self.logger.info(f"Starting test execution with {len(test_plan)} tests, max_parallel={effective_parallel}")
         self._render_progress(0, len(test_plan))
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as executor:
+        # Use resource-aware executor if node limit is configured
+        if config_max_nodes > 0:
+            results = self._run_tests_with_resource_scheduling(test_plan, config_max_nodes)
+        else:
+            results = self._run_tests_with_thread_pool(test_plan, effective_parallel)
+
+        total_time = time.time() - start_time
+        print()  # newline after progress bar
+        self._save_results(results, total_time)
+        self._print_summary(results, total_time)
+
+        return results
+
+    def _run_tests_with_thread_pool(self, test_plan: List[Dict[str, Any]], max_workers: int) -> List[Dict[str, Any]]:
+        """Execute tests using traditional thread pool with fixed max_workers."""
+        results = []
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_test = {executor.submit(self._run_single_test, test): test for test in test_plan}
             completed = 0
             for future in concurrent.futures.as_completed(future_to_test):
@@ -611,6 +855,30 @@ class E2ETestFramework:
                 self.notification_manager.record_result(result)
                 completed += 1
                 status = 'PASS' if result['success'] else 'FAIL'
+                
+                # If test failed, try to clean up deployment to free resources
+                if not result['success']:
+                    self.logger.warning(f"Test {result['deployment_id']} FAILED - attempting cleanup")
+                    deploy_dir = Path(result.get('deployment_dir', ''))
+                    if deploy_dir.exists():
+                        try:
+                            self._cleanup_failed_deployment(deploy_dir, result['deployment_id'])
+                            self.logger.info(f"Cleanup completed for {result['deployment_id']}")
+                        except Exception as cleanup_err:
+                            self.logger.error(f"Cleanup failed for {result['deployment_id']}: {cleanup_err}")
+                    
+                    # Stop execution if --stop-on-error is set
+                    if self.stop_on_error:
+                        self.logger.error("Stopping execution due to test failure (--stop-on-error)")
+                        # Cancel remaining futures
+                        for remaining_future in future_to_test:
+                            if not remaining_future.done():
+                                remaining_test = future_to_test[remaining_future]
+                                self.logger.info(f"Waiting for running test: {remaining_test['deployment_id']}")
+                        # Let running tests complete, but don't start new ones
+                        # Future iterations will be skipped as we break after this
+                        break
+                
                 self.logger.info(f"Completed: {result['deployment_id']} - {status} ({result['duration']:.1f}s)")
                 
                 # Update completed count and clear current deployment
@@ -618,15 +886,140 @@ class E2ETestFramework:
                     self._completed_tests = completed
                     self._current_deployment = None
                     self._current_step = None
-                
+                    
                 self._render_progress(completed, len(test_plan))
-
-        total_time = time.time() - start_time
-        print()  # newline after progress bar
-        self._save_results(results, total_time)
-        self._print_summary(results, total_time)
-
+        
         return results
+
+    def _run_tests_with_resource_scheduling(self, test_plan: List[Dict[str, Any]], max_nodes: int) -> List[Dict[str, Any]]:
+        """Execute tests with resource-aware scheduling based on cluster sizes.
+        
+        Schedules tests to keep total nodes in use <= max_nodes.
+        Example: max_nodes=4 allows running 1x4n OR 1x3n+1x1n OR 2x2n simultaneously.
+        """
+        results = []
+        pending_tests = list(test_plan)  # Copy to avoid modifying original
+        running_futures = {}  # {future: (test, nodes_used)}
+        nodes_in_use = 0
+        completed = 0
+        
+        # Sort tests by cluster size (largest first) for better packing
+        pending_tests.sort(key=lambda t: t['parameters'].get('cluster_size', 1), reverse=True)
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(test_plan)) as executor:
+            while pending_tests or running_futures:
+                # Try to start new tests that fit in available resources
+                while pending_tests:
+                    test = pending_tests[0]
+                    cluster_size = test['parameters'].get('cluster_size', 1)
+                    
+                    if nodes_in_use + cluster_size <= max_nodes:
+                        # We have capacity, start this test
+                        pending_tests.pop(0)
+                        future = executor.submit(self._run_single_test, test)
+                        running_futures[future] = (test, cluster_size)
+                        nodes_in_use += cluster_size
+                        self.logger.info(
+                            f"Started {test['deployment_id']} ({cluster_size} nodes), "
+                            f"using {nodes_in_use}/{max_nodes} nodes"
+                        )
+                    else:
+                        # Not enough capacity, wait for a test to complete
+                        break
+                
+                if not running_futures:
+                    # All tests scheduled and completed
+                    break
+                
+                # Wait for at least one test to complete
+                done, _ = concurrent.futures.wait(
+                    running_futures.keys(),
+                    return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                
+                for future in done:
+                    test, cluster_size = running_futures.pop(future)
+                    nodes_in_use -= cluster_size
+                    
+                    result = future.result()
+                    results.append(result)
+                    self.notification_manager.record_result(result)
+                    completed += 1
+                    
+                    status = 'PASS' if result['success'] else 'FAIL'
+                    
+                    # If test failed, try to clean up deployment to free resources
+                    if not result['success']:
+                        self.logger.warning(f"Test {result['deployment_id']} FAILED - attempting cleanup")
+                        deploy_dir = Path(result.get('deployment_dir', ''))
+                        if deploy_dir.exists():
+                            try:
+                                self._cleanup_failed_deployment(deploy_dir, result['deployment_id'])
+                                self.logger.info(f"Cleanup completed for {result['deployment_id']}")
+                            except Exception as cleanup_err:
+                                self.logger.error(f"Cleanup failed for {result['deployment_id']}: {cleanup_err}")
+                        
+                        # Stop execution if --stop-on-error is set
+                        if self.stop_on_error:
+                            self.logger.error("Stopping execution due to test failure (--stop-on-error)")
+                            # Cancel all pending tests
+                            pending_tests.clear()
+                            # Wait for running tests to complete
+                            for remaining_future in running_futures.keys():
+                                remaining_test, remaining_size = running_futures[remaining_future]
+                                self.logger.info(f"Waiting for running test: {remaining_test['deployment_id']}")
+                            # Let the loop finish running tests naturally
+                    
+                    self.logger.info(
+                        f"Completed: {result['deployment_id']} - {status} ({result['duration']:.1f}s), "
+                        f"freed {cluster_size} nodes, now using {nodes_in_use}/{max_nodes}"
+                    )
+                    
+                    # Update progress
+                    with self._progress_lock:
+                        self._completed_tests = completed
+                        self._current_deployment = None
+                        self._current_step = None
+                    
+                    self._render_progress(completed, len(test_plan))
+        
+        return results
+
+    def _cleanup_failed_deployment(self, deploy_dir: Path, deployment_id: str):
+        """Clean up a failed deployment to free resources.
+        
+        Attempts to destroy the infrastructure and remove deployment directory.
+        This prevents resource leaks when tests fail.
+        """
+        self.logger.info(f"Cleaning up failed deployment: {deployment_id}")
+        
+        # Try to run destroy command
+        destroy_cmd = [
+            './exasol', 'destroy',
+            '--deployment-dir', str(deploy_dir),
+            '--auto-approve'
+        ]
+        
+        try:
+            result = subprocess.run(
+                destroy_cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minute timeout
+                cwd=self.repo_root
+            )
+            
+            if result.returncode != 0:
+                self.logger.warning(
+                    f"Destroy command returned {result.returncode}, "
+                    f"resources may not be fully cleaned up"
+                )
+                # Continue anyway - partial cleanup is better than none
+        
+        except subprocess.TimeoutExpired:
+            self.logger.error(f"Destroy command timed out for {deployment_id}")
+        except Exception as e:
+            self.logger.error(f"Destroy command failed for {deployment_id}: {e}")
 
     def _render_progress(self, completed: int, total: int, current_deployment: Optional[str] = None, current_step: Optional[str] = None):
         """Render an enhanced progress bar with deployment and step information."""
@@ -703,9 +1096,14 @@ class E2ETestFramework:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         results_file = self.results_dir / "results.json"
 
+        # Extract unique providers from results
+        providers = sorted(set(r.get('provider', 'unknown') for r in results))
+        
         summary = {
             'timestamp': timestamp,
             'execution_dir': str(self.results_dir),
+            'db_version': self.db_version or 'default',
+            'provider': providers[0] if len(providers) == 1 else providers,
             'total_tests': len(results),
             'passed': sum(1 for r in results if r['success']),
             'failed': sum(1 for r in results if not r['success']),
@@ -788,10 +1186,10 @@ class E2ETestFramework:
         result = {
             'deployment_id': deployment_id,  # Keep for backward compatibility
             'suite': suite_name,
-            'suite_name': suite_name,
             'provider': provider,
             'test_type': 'workflow',
             'run_number': run_number,
+            'db_version': self.db_version or 'default',
             'success': False,
             'duration': 0,
             'error': None,
@@ -842,13 +1240,17 @@ class E2ETestFramework:
                         step_name
                     )
 
+            # Resolve database version with fallback support
+            suite_db_version = test_case.get('db_version')
+            resolved_db_version = self._resolve_db_version(suite_db_version)
+
             # Create workflow executor
             executor = WorkflowExecutor(
                 deploy_dir=deploy_dir,
                 provider=provider,
                 logger=self.logger,
                 log_callback=log_callback,
-                db_version=self.db_version
+                db_version=resolved_db_version
             )
 
             # Execute workflow
@@ -1729,13 +2131,23 @@ def main():
     parser.add_argument('--results-dir', default=None, help='Path to results directory (default: auto-generated e2e-{timestamp})')
     parser.add_argument('--dry-run', action='store_true', help='Generate plan without executing')
     parser.add_argument('--parallel', type=int, default=0, help='Maximum parallel executions (0=auto)')
+    parser.add_argument('--stop-on-error', action='store_true', help='Stop execution on first test failure (for debugging)')
     parser.add_argument('--providers', help='Comma separated list of providers to include (e.g. aws,gcp)')
     parser.add_argument('--tests', help='Comma separated deployment IDs to execute')
     parser.add_argument('--db-version', help='Database version to use (overrides config, e.g. 8.0.0-x86_64)')
 
     args = parser.parse_args()
 
-    framework = E2ETestFramework(args.config, Path(args.results_dir) if args.results_dir else None, db_version=args.db_version)
+    try:
+        framework = E2ETestFramework(
+            args.config,
+            Path(args.results_dir) if args.results_dir else None,
+            db_version=args.db_version,
+            stop_on_error=args.stop_on_error
+        )
+    except ValueError as e:
+        # Configuration validation failed - error already printed to stderr
+        sys.exit(1)
 
     provider_filter = (
         {p.strip().lower() for p in args.providers.split(',') if p.strip()}

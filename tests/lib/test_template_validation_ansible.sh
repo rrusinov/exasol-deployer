@@ -125,7 +125,8 @@ test_common_template_inclusion() {
             fi
         elif [[ "$provider" == "azure" ]]; then
             # Create dummy Azure credentials for template validation
-            local creds_file="$test_dir/azure_test_creds.json"
+            local creds_file
+            creds_file=$(mktemp "/tmp/azure_test_creds-XXXXXX.json")
             cat > "$creds_file" << 'EOF'
 {
   "appId": "test-app-id",
@@ -137,6 +138,7 @@ EOF
             if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-credentials-file "$creds_file"; then
                 echo "Warning: cmd_init failed for $provider (azure), continuing test..."
             fi
+            rm -f "$creds_file"
         elif [[ "$provider" == "gcp" ]]; then
             if ! cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --gcp-project dummy-project; then
                 echo "Warning: cmd_init failed for $provider (gcp), continuing test..."
@@ -214,7 +216,8 @@ test_terraform_symlinks() {
             cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --libvirt-uri qemu:///system 2>/dev/null
         elif [[ "$provider" == "azure" ]]; then
             # Create dummy Azure credentials for template validation
-            local creds_file="$test_dir/azure_test_creds.json"
+            local creds_file
+            creds_file=$(mktemp "/tmp/azure_test_creds-XXXXXX.json")
             cat > "$creds_file" << 'EOF'
 {
   "appId": "test-app-id",
@@ -224,6 +227,7 @@ test_terraform_symlinks() {
 }
 EOF
             cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --azure-credentials-file "$creds_file" 2>/dev/null
+            rm -f "$creds_file"
         elif [[ "$provider" == "gcp" ]]; then
             cmd_init --cloud-provider "$provider" --deployment-dir "$test_dir" --gcp-project dummy-project 2>/dev/null
         elif [[ "$provider" == "hetzner" ]]; then

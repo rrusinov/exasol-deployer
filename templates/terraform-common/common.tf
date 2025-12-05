@@ -7,6 +7,12 @@
 # Random ID for unique resource naming
 # ==============================================================================
 
+variable "ssh_proxy_jump" {
+  description = "Optional SSH jump host (ProxyJump) used to reach cluster nodes."
+  type        = string
+  default     = ""
+}
+
 resource "random_id" "instance" {
   byte_length = 8
 }
@@ -112,6 +118,9 @@ Host n${idx + 11}
     ConnectionAttempts 5
     ServerAliveInterval 60
     ServerAliveCountMax 3
+%{if trimspace(var.ssh_proxy_jump) != ""~}
+    ProxyJump ${trimspace(var.ssh_proxy_jump)}
+%{endif~}
 
 Host n${idx + 11}-cos
     HostName ${ip}
@@ -125,6 +134,9 @@ Host n${idx + 11}-cos
     ConnectionAttempts 5
     ServerAliveInterval 60
     ServerAliveCountMax 3
+%{if trimspace(var.ssh_proxy_jump) != ""~}
+    ProxyJump ${trimspace(var.ssh_proxy_jump)}
+%{endif~}
 
 %{endfor~}
   EOF
@@ -147,6 +159,7 @@ resource "local_file" "ansible_inventory" {
     cloud_provider = local.provider_code
     ssh_key        = local_file.exasol_private_key_pem.filename
     overlay_data   = try(local.overlay_data, {})
+    ssh_proxy_jump = var.ssh_proxy_jump
   })
   filename        = "${path.module}/inventory.ini"
   file_permission = "0644"
