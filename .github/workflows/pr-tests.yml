@@ -116,7 +116,7 @@ jobs:
 
       - name: Test init command
         run: |
-          ./exasol init --cloud-provider aws --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.4
+          ./exasol init --cloud-provider aws --deployment-dir /tmp/test-deploy --db-version exasol-2025.1.8
 
       - name: Verify deployment structure
         run: |
