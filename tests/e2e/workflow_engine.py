@@ -177,29 +177,35 @@ class ValidationRegistry:
     def _run_exasol_health(self) -> Dict[str, Any]:
         """Run exasol health command and return parsed JSON"""
         result = self._run_exasol_command('health', '--output-format', 'json')
-        if result.returncode != 0:
-            self.logger.error(f"Health check failed: {result.stderr}")
-            # Return a structure indicating all health checks failed
-            # This handles the case where deployment doesn't exist yet (after init)
-            # or has been destroyed (after destroy)
-            return {
-                'status': 'unavailable',
-                'checks': {
-                    'ssh': {'passed': 0, 'failed': 0},
-                    'services': {'active': 0, 'failed': 0},
-                    'adminui': {'passed': 0, 'failed': 0},
-                    'database': {'passed': 0, 'failed': 0},
-                    'cos_ssh': {'passed': 0, 'failed': 0}
-                },
-                'issues_count': 0,
-                'issues': []
-            }
         
+        # Try to parse JSON output first, even if command failed
+        # Health command returns exit code 1 when issues are detected,
+        # but still outputs valid JSON with actual check results
         try:
-            return json.loads(result.stdout)
+            health_data = json.loads(result.stdout)
+            return health_data
         except json.JSONDecodeError as e:
-            self.logger.error(f"Failed to parse health JSON: {e}")
-            return {}
+            # If JSON parsing failed, check if it's because deployment doesn't exist
+            if result.returncode != 0:
+                self.logger.error(f"Health check failed: {result.stderr}")
+                # Return a structure indicating all health checks unavailable
+                # This handles the case where deployment doesn't exist yet (after init)
+                # or has been destroyed (after destroy)
+                return {
+                    'status': 'unavailable',
+                    'checks': {
+                        'ssh': {'passed': 0, 'failed': 0},
+                        'services': {'active': 0, 'failed': 0},
+                        'adminui': {'passed': 0, 'failed': 0},
+                        'database': {'passed': 0, 'failed': 0},
+                        'cos_ssh': {'passed': 0, 'failed': 0}
+                    },
+                    'issues_count': 0,
+                    'issues': []
+                }
+            else:
+                self.logger.error(f"Failed to parse health JSON: {e}")
+                return {}
 
     def _create_cluster_status_check(self, check_name: str) -> ValidationCheck:
         """Create a dynamic cluster status check
@@ -501,8 +507,8 @@ class WorkflowExecutor:
             step_result = self._execute_step(step, params)
             results.append(step_result)
 
-            # Stop workflow if step failed and no retry
-            if step_result.status == StepStatus.FAILED and not step.retry:
+            # Stop workflow if step failed
+            if step_result.status == StepStatus.FAILED:
                 self.logger.error(f"Step failed: {step.description} - {step.error}")
                 break
 

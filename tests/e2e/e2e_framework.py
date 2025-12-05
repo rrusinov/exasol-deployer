@@ -296,9 +296,10 @@ summary {{ cursor: pointer; font-weight: bold; padding: 0.5rem; background: #f0f
 class E2ETestFramework:
     """Main E2E test framework class."""
 
-    def __init__(self, config_path: str, results_dir: Optional[Path] = None, db_version: Optional[str] = None):
+    def __init__(self, config_path: str, results_dir: Optional[Path] = None, db_version: Optional[str] = None, stop_on_error: bool = False):
         self.config_path = Path(config_path)
         self.db_version = db_version  # Optional database version override
+        self.stop_on_error = stop_on_error  # Stop execution on first test failure
         
         # Create execution-timestamp directory: ./tmp/tests/e2e-YYYYMMDD-HHMMSS/
         self.execution_timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -854,6 +855,30 @@ class E2ETestFramework:
                 self.notification_manager.record_result(result)
                 completed += 1
                 status = 'PASS' if result['success'] else 'FAIL'
+                
+                # If test failed, try to clean up deployment to free resources
+                if not result['success']:
+                    self.logger.warning(f"Test {result['deployment_id']} FAILED - attempting cleanup")
+                    deploy_dir = Path(result.get('deployment_dir', ''))
+                    if deploy_dir.exists():
+                        try:
+                            self._cleanup_failed_deployment(deploy_dir, result['deployment_id'])
+                            self.logger.info(f"Cleanup completed for {result['deployment_id']}")
+                        except Exception as cleanup_err:
+                            self.logger.error(f"Cleanup failed for {result['deployment_id']}: {cleanup_err}")
+                    
+                    # Stop execution if --stop-on-error is set
+                    if self.stop_on_error:
+                        self.logger.error("Stopping execution due to test failure (--stop-on-error)")
+                        # Cancel remaining futures
+                        for remaining_future in future_to_test:
+                            if not remaining_future.done():
+                                remaining_test = future_to_test[remaining_future]
+                                self.logger.info(f"Waiting for running test: {remaining_test['deployment_id']}")
+                        # Let running tests complete, but don't start new ones
+                        # Future iterations will be skipped as we break after this
+                        break
+                
                 self.logger.info(f"Completed: {result['deployment_id']} - {status} ({result['duration']:.1f}s)")
                 
                 # Update completed count and clear current deployment
@@ -922,6 +947,29 @@ class E2ETestFramework:
                     completed += 1
                     
                     status = 'PASS' if result['success'] else 'FAIL'
+                    
+                    # If test failed, try to clean up deployment to free resources
+                    if not result['success']:
+                        self.logger.warning(f"Test {result['deployment_id']} FAILED - attempting cleanup")
+                        deploy_dir = Path(result.get('deployment_dir', ''))
+                        if deploy_dir.exists():
+                            try:
+                                self._cleanup_failed_deployment(deploy_dir, result['deployment_id'])
+                                self.logger.info(f"Cleanup completed for {result['deployment_id']}")
+                            except Exception as cleanup_err:
+                                self.logger.error(f"Cleanup failed for {result['deployment_id']}: {cleanup_err}")
+                        
+                        # Stop execution if --stop-on-error is set
+                        if self.stop_on_error:
+                            self.logger.error("Stopping execution due to test failure (--stop-on-error)")
+                            # Cancel all pending tests
+                            pending_tests.clear()
+                            # Wait for running tests to complete
+                            for remaining_future in running_futures.keys():
+                                remaining_test, remaining_size = running_futures[remaining_future]
+                                self.logger.info(f"Waiting for running test: {remaining_test['deployment_id']}")
+                            # Let the loop finish running tests naturally
+                    
                     self.logger.info(
                         f"Completed: {result['deployment_id']} - {status} ({result['duration']:.1f}s), "
                         f"freed {cluster_size} nodes, now using {nodes_in_use}/{max_nodes}"
@@ -936,6 +984,42 @@ class E2ETestFramework:
                     self._render_progress(completed, len(test_plan))
         
         return results
+
+    def _cleanup_failed_deployment(self, deploy_dir: Path, deployment_id: str):
+        """Clean up a failed deployment to free resources.
+        
+        Attempts to destroy the infrastructure and remove deployment directory.
+        This prevents resource leaks when tests fail.
+        """
+        self.logger.info(f"Cleaning up failed deployment: {deployment_id}")
+        
+        # Try to run destroy command
+        destroy_cmd = [
+            './exasol', 'destroy',
+            '--deployment-dir', str(deploy_dir),
+            '--auto-approve'
+        ]
+        
+        try:
+            result = subprocess.run(
+                destroy_cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minute timeout
+                cwd=self.repo_root
+            )
+            
+            if result.returncode != 0:
+                self.logger.warning(
+                    f"Destroy command returned {result.returncode}, "
+                    f"resources may not be fully cleaned up"
+                )
+                # Continue anyway - partial cleanup is better than none
+        
+        except subprocess.TimeoutExpired:
+            self.logger.error(f"Destroy command timed out for {deployment_id}")
+        except Exception as e:
+            self.logger.error(f"Destroy command failed for {deployment_id}: {e}")
 
     def _render_progress(self, completed: int, total: int, current_deployment: Optional[str] = None, current_step: Optional[str] = None):
         """Render an enhanced progress bar with deployment and step information."""
@@ -2047,6 +2131,7 @@ def main():
     parser.add_argument('--results-dir', default=None, help='Path to results directory (default: auto-generated e2e-{timestamp})')
     parser.add_argument('--dry-run', action='store_true', help='Generate plan without executing')
     parser.add_argument('--parallel', type=int, default=0, help='Maximum parallel executions (0=auto)')
+    parser.add_argument('--stop-on-error', action='store_true', help='Stop execution on first test failure (for debugging)')
     parser.add_argument('--providers', help='Comma separated list of providers to include (e.g. aws,gcp)')
     parser.add_argument('--tests', help='Comma separated deployment IDs to execute')
     parser.add_argument('--db-version', help='Database version to use (overrides config, e.g. 8.0.0-x86_64)')
@@ -2054,7 +2139,12 @@ def main():
     args = parser.parse_args()
 
     try:
-        framework = E2ETestFramework(args.config, Path(args.results_dir) if args.results_dir else None, db_version=args.db_version)
+        framework = E2ETestFramework(
+            args.config,
+            Path(args.results_dir) if args.results_dir else None,
+            db_version=args.db_version,
+            stop_on_error=args.stop_on_error
+        )
     except ValueError as e:
         # Configuration validation failed - error already printed to stderr
         sys.exit(1)

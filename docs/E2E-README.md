@@ -632,6 +632,36 @@ The following step types are supported (in typical lifecycle order):
 | `restart_node` | `step`, `target_node` | `description`, `method` | Restart specific node |
 | `destroy` | `step` | `description` | Destroy cluster and cleanup |
 
+### Workflow Execution Behavior
+
+**Important:** Workflows abort immediately when any step fails. Subsequent steps are **not executed**.
+
+For example, if a workflow has these steps:
+```json
+["init", "deploy", "validate", "stop_cluster", "validate", "start_cluster", "destroy"]
+```
+
+And the first `validate` step fails, then `stop_cluster`, the second `validate`, `start_cluster`, and `destroy` steps are **skipped**.
+
+**Automatic Cleanup:**
+- When a workflow step fails, the E2E framework **automatically destroys** the deployment
+- This frees resources for subsequent tests
+- Use `--stop-on-error` flag to **preserve** failed deployments for debugging (disables automatic cleanup)
+
+**Retry Configuration:**
+The `retry` field in validation steps applies **only to individual validation checks**, not to workflow continuation:
+```json
+{
+  "step": "validate",
+  "checks": ["health_status[*].ssh==ok"],
+  "retry": {
+    "max_attempts": 5,
+    "delay_seconds": 30
+  }
+}
+```
+This will retry the SSH health check up to 5 times with 30s delays, but if all attempts fail, the workflow stops and no further steps execute.
+
 ### Basic Structure
 
 ```json

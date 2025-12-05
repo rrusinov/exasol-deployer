@@ -40,6 +40,8 @@ jobs:
           - test_documentation
           - test_help_options
           - test_e2e_framework
+          - test_e2e_config
+          - test_run_e2e
 
     steps:
       - name: Checkout code

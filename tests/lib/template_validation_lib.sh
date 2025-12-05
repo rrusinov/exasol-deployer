@@ -37,6 +37,13 @@ tofu_init_strict() {
         return 2
     fi
 
+    if grep -qi "cannot set privileged capabilities" "$tmp"; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        echo -e "${YELLOW}⊘${NC} ${label}: tofu init skipped (capabilities not permitted in sandbox)"
+        rm -f "$tmp"
+        return 2
+    fi
+
     # Offline or registry unavailable: treat as skipped so suites can pass in restricted environments
     if grep -qi "Failed to resolve provider packages" "$tmp" && grep -qi "registry.opentofu.org" "$tmp"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
