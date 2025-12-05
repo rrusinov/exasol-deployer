@@ -43,12 +43,27 @@
     },
     {
       "step": "validate",
-      "description": "Wait for node recovery (3 min timeout)",
+      "description": "Wait for COS SSH recovery after reboot",
       "checks": [
-        "cluster_status==database_ready",
         "health_status[*].ssh==ok",
         "health_status[*].cos_ssh==ok",
-        "health_status[*].adminui==ok",
+        "health_status[*].adminui==ok"
+      ],
+      "retry": {
+        "max_attempts": 18,
+        "delay_seconds": 10
+      }
+    },
+    {
+      "step": "custom_command",
+      "description": "Start database manually via COS SSH",
+      "command": "ssh -F $deployment_dir/ssh_config n11-cos 'confd_client db_start db_name: Exasol'"
+    },
+    {
+      "step": "validate",
+      "description": "Wait for database to become ready",
+      "checks": [
+        "cluster_status==database_ready",
         "health_status[*].database==ok"
       ],
       "retry": {
@@ -64,7 +79,8 @@
       "description": "Validate cluster stopped",
       "checks": [
         "cluster_status==stopped",
-        "health_status[*].ssh==ok",
+        "health_status[*].ssh!=ok",
+        "health_status[*].cos_ssh!=ok",
         "health_status[*].adminui!=ok",
         "health_status[*].database!=ok"
       ]
@@ -80,7 +96,8 @@
         "health_status[*].ssh!=ok",
         "health_status[*].cos_ssh!=ok",
         "health_status[*].adminui!=ok",
-        "health_status[*].database!=ok"      ]
+        "health_status[*].database!=ok"      
+      ]
     }
   ]
 }

@@ -69,6 +69,13 @@ WORKFLOW_STEPS = {
         optional_fields=['description', 'method'],
         supported_providers=set()  # All providers support method='ssh'
     ),
+    'custom_command': WorkflowStepSchema(
+        name='custom_command',
+        description='Execute a custom shell command with variable substitution',
+        required_fields=['step', 'command'],
+        optional_fields=['description'],
+        supported_providers=set()  # All providers
+    ),
     'destroy': WorkflowStepSchema(
         name='destroy',
         description='Destroy cluster',

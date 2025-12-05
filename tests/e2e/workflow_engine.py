@@ -187,7 +187,9 @@ class ValidationRegistry:
         except json.JSONDecodeError as e:
             # If JSON parsing failed, check if it's because deployment doesn't exist
             if result.returncode != 0:
-                self.logger.error(f"Health check failed: {result.stderr}")
+                # Only log error once with debug level to avoid spam
+                # The actual validation check will fail with a proper error message
+                self.logger.debug(f"Health check command failed: {result.stderr.strip()}")
                 # Return a structure indicating all health checks unavailable
                 # This handles the case where deployment doesn't exist yet (after init)
                 # or has been destroyed (after destroy)
@@ -549,6 +551,8 @@ class WorkflowExecutor:
                 self._execute_start_cluster(step)
             elif step.step_type == 'restart_node':
                 self._execute_restart_node(step)
+            elif step.step_type == 'custom_command':
+                self._execute_custom_command(step)
             elif step.step_type == 'destroy':
                 self._execute_destroy(step)
             else:
@@ -765,3 +769,46 @@ class WorkflowExecutor:
             # SSH connection may drop during reboot, so non-zero exit is expected
             step.result = {'method': 'ssh', 'node': step.target_node,
                           'command': ' '.join(ssh_cmd)}
+
+    def _execute_custom_command(self, step: WorkflowStep):
+        """Execute a custom shell command with variable substitution
+        
+        Supported variables:
+        - $deployment_dir: Path to the deployment directory
+        - $provider: Cloud provider name
+        """
+        if not step.command:
+            raise ValueError("command is required for custom_command step")
+        
+        # Substitute variables
+        command = step.command
+        command = command.replace('$deployment_dir', str(self.deploy_dir))
+        command = command.replace('$provider', self.provider)
+        
+        self.log_callback(f"Executing custom command: {command}")
+        
+        # Execute command using shell to support piping and redirection
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=self.deploy_dir.parent  # Execute from parent of deployment dir
+        )
+        
+        # Log output
+        if result.stdout:
+            self.log_callback(f"STDOUT: {result.stdout}")
+        if result.stderr:
+            self.log_callback(f"STDERR: {result.stderr}")
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"Custom command failed with exit code {result.returncode}: {result.stderr}")
+        
+        step.result = {
+            'command': command,
+            'stdout': result.stdout,
+            'stderr': result.stderr,
+            'returncode': result.returncode
+        }

@@ -62,8 +62,9 @@ test_azure_template_validation() {
     local test_dir
     test_dir=$(setup_test_dir)
 
-    # Create dummy Azure credentials for template validation
-    local creds_file="$test_dir/azure_test_creds.json"
+    # Create dummy Azure credentials for template validation (outside deploy dir)
+    local creds_file
+    creds_file=$(mktemp "/tmp/azure_test_creds-XXXXXX.json")
     cat > "$creds_file" << 'EOF'
 {
   "appId": "test-app-id",
@@ -78,6 +79,7 @@ EOF
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_FAILED=$((TESTS_FAILED + 1))
         echo -e "${RED}✗${NC} Templates directory not created"
+        rm -f "$creds_file"
         cleanup_test_dir "$test_dir"
         return
     fi
@@ -87,6 +89,7 @@ EOF
     if ! tofu_init_strict "Azure"; then
         rc=$?
         cd - >/dev/null || exit 1
+        rm -f "$creds_file"
         cleanup_test_dir "$test_dir"
         [[ $rc -eq 2 ]] && return 0
         return
@@ -103,6 +106,7 @@ EOF
     fi
 
     cd - >/dev/null
+    rm -f "$creds_file"
     cleanup_test_dir "$test_dir"
 }
 
@@ -120,8 +124,9 @@ test_gcp_template_validation() {
     local test_dir
     test_dir=$(setup_test_dir)
 
-    # Create dummy GCP credentials for template validation
-    local creds_file="$test_dir/gcp_test_creds.json"
+    # Create dummy GCP credentials for template validation (outside deploy dir)
+    local creds_file
+    creds_file=$(mktemp "/tmp/gcp_test_creds-XXXXXX.json")
     cat > "$creds_file" << 'EOF'
 {
   "type": "service_account",
@@ -143,6 +148,7 @@ EOF
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_FAILED=$((TESTS_FAILED + 1))
         echo -e "${RED}✗${NC} Templates directory not created"
+        rm -f "$creds_file"
         cleanup_test_dir "$test_dir"
         return
     fi
@@ -152,6 +158,7 @@ EOF
     if ! tofu_init_strict "GCP"; then
         rc=$?
         cd - >/dev/null || exit 1
+        rm -f "$creds_file"
         cleanup_test_dir "$test_dir"
         [[ $rc -eq 2 ]] && return 0
         return
@@ -168,6 +175,7 @@ EOF
     fi
 
     cd - >/dev/null
+    rm -f "$creds_file"
     cleanup_test_dir "$test_dir"
 }
 

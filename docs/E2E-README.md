@@ -630,6 +630,7 @@ The following step types are supported (in typical lifecycle order):
 | `stop_cluster` | `step` | `description` | Stop entire cluster |
 | `start_cluster` | `step` | `description` | Start entire cluster |
 | `restart_node` | `step`, `target_node` | `description`, `method` | Restart specific node |
+| `custom_command` | `step`, `command` | `description` | Execute custom shell command |
 | `destroy` | `step` | `description` | Destroy cluster and cleanup |
 
 ### Workflow Execution Behavior
@@ -758,7 +759,35 @@ Restart a specific node via SSH. Use `description` for node-specific operations.
 **Supported Methods:**
 - `ssh`: Reboot via SSH `sudo reboot` command - **works for all providers**
 
-#### 7. `destroy` - Destroy Cluster
+#### 7. `custom_command` - Execute Custom Shell Command
+Execute a custom shell command with variable substitution support.
+
+```json
+{
+  "step": "custom_command",
+  "description": "Start database manually via COS SSH",
+  "command": "ssh -F $deployment_dir/ssh_config n11-cos 'confd_client db_start db_name: Exasol'"
+}
+```
+
+**Supported Variables:**
+- `$deployment_dir`: Path to the deployment directory
+- `$provider`: Cloud provider name
+
+**Features:**
+- Executes arbitrary shell commands
+- Variable substitution in command string
+- Supports pipes, redirects, and complex shell syntax
+- Command output logged to test suite log
+- Command failure causes workflow to abort
+
+**Use Cases:**
+- Manual database operations (start, stop, backup)
+- Custom health checks or diagnostics
+- Provider-specific operations
+- Testing edge cases and recovery scenarios
+
+#### 8. `destroy` - Destroy Cluster
 Destroy the cluster and clean up all cloud resources.
 
 ```json
