@@ -525,11 +525,19 @@ cmd_init() {
         log_info "Using default version: $db_version"
     fi
 
-    # Validate version
+    # Validate version format (accepts aliases like "default" or "default-local")
     if ! validate_version_format "$db_version"; then
         die "Invalid version format"
     fi
 
+    # Resolve alias to actual version if needed
+    local original_version="$db_version"
+    db_version=$(resolve_version_alias "$db_version")
+    if [[ "$db_version" != "$original_version" ]]; then
+        log_info "Resolved version alias '$original_version' to: $db_version"
+    fi
+
+    # Check if resolved version exists
     if ! version_exists "$db_version"; then
         log_error "Version not found: $db_version"
         log_info "Available versions:"

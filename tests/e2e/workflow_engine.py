@@ -180,7 +180,21 @@ class ValidationRegistry:
         result = self._run_exasol_command('health', '--output-format', 'json')
         if result.returncode != 0:
             self.logger.error(f"Health check failed: {result.stderr}")
-            return {}
+            # Return a structure indicating all health checks failed
+            # This handles the case where deployment doesn't exist yet (after init)
+            # or has been destroyed (after destroy)
+            return {
+                'status': 'unavailable',
+                'checks': {
+                    'ssh': {'passed': 0, 'failed': 0},
+                    'services': {'active': 0, 'failed': 0},
+                    'adminui': {'passed': 0, 'failed': 0},
+                    'database': {'passed': 0, 'failed': 0},
+                    'cos_ssh': {'passed': 0, 'failed': 0}
+                },
+                'issues_count': 0,
+                'issues': []
+            }
         
         try:
             return json.loads(result.stdout)
@@ -212,17 +226,6 @@ class ValidationRegistry:
         
         def check_func(context: Dict[str, Any]) -> bool:
             state = self._read_state()
-            
-            # Special case: 'destroyed' means the state file should not exist
-            if expected == 'destroyed':
-                if operator == "==":
-                    # Check that state file doesn't exist or has no status
-                    return len(state) == 0 or state.get('status', '') == ''
-                else:  # !=
-                    # Check that state file exists and has a status
-                    return len(state) > 0 and state.get('status', '') != ''
-            
-            # Normal status comparison
             actual = state.get('status', '')
             
             if operator == "==":

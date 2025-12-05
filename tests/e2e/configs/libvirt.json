@@ -7,12 +7,12 @@
       "workflow": "workflow/simple.json"
     },
     {
-      "sut": "sut/libvirt-2n-vx.json",
+      "sut": "sut/libvirt-2n.json",
       "workflow": "workflow/basic.json"
     },
     {
-      "sut": "sut/libvirt-3n.json",
-      "workflow": "workflow/enhanced.json"
+      "sut": "sut/libvirt-3n-vx.json",
+      "workflow": "workflow/node-reboot.json"
     }
   ]
 }

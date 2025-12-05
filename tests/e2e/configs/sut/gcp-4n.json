@@ -1,5 +1,4 @@
 {
-  "sut_name": "gcp-4n",
   "description": "GCP 4-node cluster configuration",
   "provider": "gcp",
   "parameters": {

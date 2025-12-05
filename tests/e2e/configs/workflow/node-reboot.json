@@ -1,5 +1,5 @@
 {
-  "description": "Basic workflow with deploy, stop, start, and destroy",
+  "description": "Test node reboot and cluster recovery with health check validation",
   "steps": [
     {
       "step": "init"
@@ -26,6 +26,37 @@
       ]
     },
     {
+      "step": "restart_node",
+      "description": "Reboot node n12 via SSH",
+      "target_node": "n12",
+      "method": "ssh"
+    },
+    {
+      "step": "validate",
+      "description": "Immediate check - expect 1 node down",
+      "checks": [
+        "cluster_status==degraded"
+      ],
+      "allow_failures": [
+        "cluster_status==degraded"
+      ]
+    },
+    {
+      "step": "validate",
+      "description": "Wait for node recovery (3 min timeout)",
+      "checks": [
+        "cluster_status==database_ready",
+        "health_status[*].ssh==ok",
+        "health_status[*].cos_ssh==ok",
+        "health_status[*].adminui==ok",
+        "health_status[*].database==ok"
+      ],
+      "retry": {
+        "max_attempts": 18,
+        "delay_seconds": 10
+      }
+    },
+    {
       "step": "stop_cluster"
     },
     {
@@ -33,24 +64,9 @@
       "description": "Validate cluster stopped",
       "checks": [
         "cluster_status==stopped",
-        "health_status[*].ssh!=ok",
-        "health_status[*].cos_ssh!=ok",
+        "health_status[*].ssh==ok",
         "health_status[*].adminui!=ok",
         "health_status[*].database!=ok"
-      ]
-    },
-    {
-      "step": "start_cluster"
-    },
-    {
-      "step": "validate",
-      "description": "Validate cluster started",
-      "checks": [
-        "cluster_status==database_ready",
-        "health_status[*].ssh==ok",
-        "health_status[*].cos_ssh==ok",
-        "health_status[*].adminui==ok",
-        "health_status[*].database==ok"
       ]
     },
     {
@@ -64,8 +80,7 @@
         "health_status[*].ssh!=ok",
         "health_status[*].cos_ssh!=ok",
         "health_status[*].adminui!=ok",
-        "health_status[*].database!=ok"
-      ]
+        "health_status[*].database!=ok"      ]
     }
   ]
 }

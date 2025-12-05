@@ -1,5 +1,4 @@
 {
-  "sut_name": "aws-4n",
   "description": "AWS 4-node cluster configuration",
   "provider": "aws",
   "parameters": {

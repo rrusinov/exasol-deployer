@@ -1,7 +1,7 @@
 {
-  "sut_name": "libvirt-2n-vx",
   "description": "Libvirt dual node configuration with VXLAN enabled",
   "provider": "libvirt",
+  "db_version": ["default-local", "default"],
   "parameters": {
     "cluster_size": 2,
     "libvirt_memory": 4,

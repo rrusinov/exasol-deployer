@@ -1,5 +1,4 @@
 {
-  "sut_name": "azure-1n",
   "description": "Azure single node configuration",
   "provider": "azure",
   "parameters": {

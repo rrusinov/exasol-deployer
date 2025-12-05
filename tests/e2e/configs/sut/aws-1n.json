@@ -1,5 +1,4 @@
 {
-  "sut_name": "aws-1n",
   "description": "AWS single node configuration",
   "provider": "aws",
   "parameters": {

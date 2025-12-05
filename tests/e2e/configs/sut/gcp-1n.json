@@ -1,5 +1,4 @@
 {
-  "sut_name": "gcp-1n",
   "description": "GCP single node configuration",
   "provider": "gcp",
   "parameters": {

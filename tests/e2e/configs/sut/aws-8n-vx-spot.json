@@ -1,5 +1,4 @@
 {
-  "sut_name": "aws-8n-vx-spot",
   "description": "AWS 8-node cluster with VXLAN networking",
   "provider": "aws",
   "parameters": {

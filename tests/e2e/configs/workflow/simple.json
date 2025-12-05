@@ -1,5 +1,4 @@
 {
-  "workflow_name": "simple",
   "description": "Basic deploy and destroy workflow with simple validation",
   "steps": [
     {
@@ -34,7 +33,11 @@
       "step": "validate",
       "description": "Validate destruction",
       "checks": [
-        "cluster_status==destroyed"
+        "cluster_status==destroyed",
+        "health_status[*].ssh!=ok",
+        "health_status[*].cos_ssh!=ok",
+        "health_status[*].adminui!=ok",
+        "health_status[*].database!=ok"
       ]
     }
   ]

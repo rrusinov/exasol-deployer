@@ -34,7 +34,7 @@ list_versions() {
         die "Versions config file not found: $config_file"
     fi
 
-    get_config_sections "$config_file" | grep -v "^default$"
+    get_config_sections "$config_file" | grep -v "^default"
 }
 
 check_download_target_availability() {
@@ -87,10 +87,14 @@ list_versions_with_availability() {
     # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
     # shellcheck disable=SC2155
     local default_version=$(get_default_version)
+    
+    # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+    # shellcheck disable=SC2155
+    local default_local_version=$(parse_config_file "$config_file" "default-local" "VERSION")
 
     # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
     # shellcheck disable=SC2155
-    local versions=$(get_config_sections "$config_file" | grep -v "^default$")
+    local versions=$(get_config_sections "$config_file" | grep -v "^default")
 
     if [[ -z "$versions" ]]; then
         log_info "  (no versions configured)"
@@ -144,6 +148,8 @@ list_versions_with_availability() {
         local suffix=""
         if [[ "$version" == "$default_version" ]]; then
             suffix=" (default)"
+        elif [[ -n "$default_local_version" && "$version" == "$default_local_version" ]]; then
+            suffix=" (default-local)"
         fi
 
         local arch_display="$architecture"
@@ -168,6 +174,32 @@ get_default_version() {
     local config_file=$(get_versions_config_path)
 
     parse_config_file "$config_file" "default" "VERSION"
+}
+
+# Resolve version alias to actual version name
+resolve_version_alias() {
+    local version="$1"
+    
+    # If version starts with "default", resolve it
+    if [[ "$version" =~ ^default ]]; then
+        # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+        # shellcheck disable=SC2155
+        local config_file=$(get_versions_config_path)
+        
+        # Check if this alias exists in config
+        if get_config_sections "$config_file" | grep -q "^${version}$"; then
+            # Get the actual version from the alias section
+            local resolved
+            resolved=$(parse_config_file "$config_file" "$version" "VERSION")
+            if [[ -n "$resolved" ]]; then
+                echo "$resolved"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Not an alias or couldn't resolve, return as-is
+    echo "$version"
 }
 
 # Check if version exists
@@ -200,6 +232,11 @@ get_version_config() {
 # Validate version format
 validate_version_format() {
     local version="$1"
+
+    # Allow alias formats (default, default-local, default-arm64, etc.)
+    if [[ "$version" =~ ^default(-[a-z0-9]+)?$ ]]; then
+        return 0
+    fi
 
     # Expected formats:
     # - name-X.Y.Z (e.g., exasol-2025.1.4) - default x86_64

@@ -28,7 +28,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Set, Tuple, Callable
+from typing import Dict, List, Any, Optional, Set, Tuple, Callable, Union
 
 # Try to import SSH validator for live system validation
 try:
@@ -345,6 +345,115 @@ class E2ETestFramework:
         # Register cleanup function to be called on exit
         atexit.register(self._cleanup)
 
+    def _resolve_db_version(self, suite_db_version: Optional[Union[str, List[str]]]) -> Optional[str]:
+        """Resolve database version with fallback support.
+        
+        Priority:
+        1. CLI argument (self.db_version)
+        2. SUT config db_version (can be a list with fallbacks)
+        3. None (uses exasol CLI default)
+        
+        If suite_db_version is a list, check each version in order and use the first that exists.
+        
+        Special handling for 'default-local' alias:
+        - If 'default-local' exists, extract the actual version name from the output
+        """
+        # CLI argument has highest priority (but still needs alias resolution)
+        if self.db_version:
+            return self._resolve_version_alias(self.db_version)
+        
+        # No SUT config db_version specified
+        if not suite_db_version:
+            return None
+        
+        # Single version string
+        if isinstance(suite_db_version, str):
+            return self._resolve_version_alias(suite_db_version)
+        
+        # List of versions with fallback
+        if isinstance(suite_db_version, list):
+            # Check each version in order using exasol CLI
+            for version in suite_db_version:
+                if self._check_version_exists(version):
+                    resolved = self._resolve_version_alias(version)
+                    self.logger.info(f"Using database version: {resolved}")
+                    return resolved
+            
+            # If no version found, use the last one as fallback
+            fallback = self._resolve_version_alias(suite_db_version[-1])
+            self.logger.warning(f"None of the versions {suite_db_version} found, using last: {fallback}")
+            return fallback
+        
+        return None
+    
+    def _resolve_version_alias(self, version: str) -> str:
+        """Resolve version aliases like 'default-local' to actual version names.
+        
+        If version is 'default-local', extract the actual version from the
+        --list-versions output by finding the line with (default-local) marker.
+        """
+        if version != 'default-local':
+            return version
+        
+        try:
+            result = subprocess.run(
+                ['./exasol', 'init', '--list-versions'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=self.repo_root
+            )
+            if result.returncode == 0:
+                output = result.stdout + result.stderr
+                # Look for line with (default-local) marker
+                # Format: "[INFO]   [+] exasol-2025.1.4-local [x86_64] (default-local)"
+                for line in output.split('\n'):
+                    if '(default-local)' in line:
+                        # Extract version name
+                        import re
+                        # Remove ANSI color codes
+                        clean_line = re.sub(r'\x1b\[[0-9;]+m', '', line)
+                        # Look for pattern: [+] or [x] followed by version name
+                        match = re.search(r'\[([\+x])\]\s+(\S+)', clean_line)
+                        if match:
+                            actual_version = match.group(2)
+                            self.logger.debug(f"Resolved 'default-local' to '{actual_version}'")
+                            return actual_version
+        except Exception as e:
+            self.logger.debug(f"Failed to resolve default-local alias: {e}")
+        
+        # Fallback: return as-is
+        return version
+    
+    def _check_version_exists(self, version: str) -> bool:
+        """Check if a database version exists using exasol CLI.
+        
+        Also handles special aliases like 'default-local' by looking for
+        the (default-local) marker in the output.
+        """
+        try:
+            result = subprocess.run(
+                ['./exasol', 'init', '--list-versions'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=self.repo_root
+            )
+            if result.returncode == 0:
+                output = result.stdout + result.stderr
+                
+                # Special handling for 'default-local' alias
+                # Look for "(default-local)" marker in the output
+                if version == 'default-local':
+                    return '(default-local)' in output
+                
+                # For regular versions, check if version name appears in output
+                return version in output
+        except Exception as e:
+            self.logger.debug(f"Failed to check version {version}: {e}")
+        
+        return False
+
     def _setup_logging(self):
         """Setup logging configuration."""
         # Ensure results directory exists before creating log file
@@ -382,11 +491,28 @@ class E2ETestFramework:
         # Add file handler to this logger
         self.logger.addHandler(self.file_handler)
         
+        # Create a custom stdout handler that respects progress rendering
+        class ProgressAwareHandler(logging.StreamHandler):
+            """StreamHandler that clears progress line before logging"""
+            def __init__(self, progress_lock, stream=None):
+                super().__init__(stream)
+                self.progress_lock = progress_lock
+                
+            def emit(self, record):
+                try:
+                    with self.progress_lock:
+                        # Clear current line before logging
+                        self.stream.write('\r\033[K')
+                        super().emit(record)
+                        self.stream.flush()
+                except Exception:
+                    self.handleError(record)
+        
         # Also add to root logger if no handlers exist yet (for stdout)
         root_logger = logging.getLogger()
         if not root_logger.handlers:
-            # Add stdout handler to root logger
-            stdout_handler = logging.StreamHandler(sys.stdout)
+            # Add custom stdout handler to root logger
+            stdout_handler = ProgressAwareHandler(self._progress_lock, sys.stdout)
             stdout_handler.setFormatter(formatter)
             stdout_handler.setLevel(logging.INFO)
             root_logger.addHandler(stdout_handler)
@@ -453,7 +579,8 @@ class E2ETestFramework:
                 'test_type': 'workflow',
                 'description': f"{sut_config.get('description', sut_name)} + {workflow_config.get('description', workflow_name)}",
                 'parameters': sut_config.get('parameters', {}),
-                'workflow': workflow_config.get('steps', [])
+                'workflow': workflow_config.get('steps', []),
+                'db_version': sut_config.get('db_version')  # Pass through db_version from SUT config
             }
         
         # Return config in the format expected by generate_test_plan
@@ -633,7 +760,9 @@ class E2ETestFramework:
                 'parameters': parameters.copy(),
                 'deployment_id': deployment_id,
                 'config_path': str(self.config_path),
-                'workflow': suite_config.get('workflow', [])
+                'workflow': suite_config.get('workflow', []),
+                'sut_description': suite_config.get('sut_description', ''),
+                'db_version': suite_config.get('db_version')
             }
             if self._provider_supports_spot(suite_config['provider']):
                 test_case['parameters'].setdefault('enable_spot_instances', True)
@@ -919,13 +1048,17 @@ class E2ETestFramework:
                         step_name
                     )
 
+            # Resolve database version with fallback support
+            suite_db_version = test_case.get('db_version')
+            resolved_db_version = self._resolve_db_version(suite_db_version)
+
             # Create workflow executor
             executor = WorkflowExecutor(
                 deploy_dir=deploy_dir,
                 provider=provider,
                 logger=self.logger,
                 log_callback=log_callback,
-                db_version=self.db_version
+                db_version=resolved_db_version
             )
 
             # Execute workflow

@@ -9,6 +9,9 @@ fi
 
 set -euo pipefail
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 usage() {
     cat <<'EOF'
 Usage: tests/run_e2e.sh [options]
@@ -100,7 +103,7 @@ if [[ -n "$RESULTS_DIR" ]]; then
 fi
 
 discover_configs() {
-    find tests/e2e/configs -maxdepth 1 -type f -name '*.json' | sort
+    find "$SCRIPT_DIR/e2e/configs" -maxdepth 1 -type f -name '*.json' | sort
 }
 
 run_framework() {
@@ -116,7 +119,7 @@ run_framework() {
     fi
     
     # Run the framework without capturing output so progress bar is visible
-    python3 tests/e2e/e2e_framework.py run \
+    python3 "$SCRIPT_DIR/e2e/e2e_framework.py" run \
         --config "$config_file" \
         "${results_dir_args[@]}" \
         --parallel "$PARALLEL" \
@@ -131,7 +134,7 @@ run_framework() {
 
 print_failures() {
     local results_file="$1"
-    python3 tests/e2e/e2e_shell_helpers.py print_failures "$results_file"
+    python3 "$SCRIPT_DIR/e2e/e2e_shell_helpers.py" print_failures "$results_file"
 }
 
 tail_failed_logs() {
@@ -141,21 +144,21 @@ tail_failed_logs() {
     if [[ "$failures_json" == "[]" ]]; then
         return 0
     fi
-    python3 tests/e2e/e2e_shell_helpers.py tail_failed_logs "$failures_json"
+    python3 "$SCRIPT_DIR/e2e/e2e_shell_helpers.py" tail_failed_logs "$failures_json"
 }
 
 list_tests_for_configs() {
     local results_dir="$1"
     local provider_filter="$2"
     shift 2
-    python3 tests/e2e/e2e_shell_helpers.py list_tests "$results_dir" "$provider_filter" "$@"
+    python3 "$SCRIPT_DIR/e2e/e2e_shell_helpers.py" list_tests "$results_dir" "$provider_filter" "$@"
 }
 
 resolve_selected_tests() {
     local results_dir="$1"
     local ids="$2"
     shift 2
-    python3 tests/e2e/e2e_shell_helpers.py resolve_tests "$results_dir" "$ids" "$@"
+    python3 "$SCRIPT_DIR/e2e/e2e_shell_helpers.py" resolve_tests "$results_dir" "$ids" "$@"
 }
 
 overall_status=0
@@ -236,7 +239,7 @@ elif [[ -n "$RERUN_EXEC_DIR" ]]; then
     fi
 
     # Extract config path and provider for the specified suite
-    suite_info="$(python3 tests/e2e/e2e_shell_helpers.py get_suite_info "$results_file" "$RERUN_SUITE")" || {
+    suite_info="$(python3 "$SCRIPT_DIR/e2e/e2e_shell_helpers.py" get_suite_info "$results_file" "$RERUN_SUITE")" || {
         echo "Error: Suite '$RERUN_SUITE' not found in $results_file" >&2
         exit 1
     }
