@@ -147,7 +147,7 @@ Multi-node cluster with specific configuration:
   --digitalocean-token "$DIGITALOCEAN_TOKEN" \
   --deployment-dir ./prod-cluster \
   --digitalocean-region nyc3 \
-  --db-version exasol-2025.1.4 \
+  --db-version exasol-2025.1.8 \
   --cluster-size 4 \
   --instance-type c-8 \
   --data-volume-size 500 \
@@ -371,7 +371,7 @@ Expected output:
 ```json
 {
   "status": "database_ready",
-  "db_version": "exasol-2025.1.4",
+  "db_version": "exasol-2025.1.8",
   "architecture": "x86_64",
   "terraform_state_exists": true,
   "created_at": "2025-01-15T10:30:00Z",

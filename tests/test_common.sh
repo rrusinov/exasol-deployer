@@ -215,7 +215,7 @@ test_generate_info_files() {
     cat > "$test_dir/.exasol.json" << 'EOF'
 {
   "status": "initialized",
-  "db_version": "exasol-2025.1.4",
+  "db_version": "exasol-2025.1.8",
   "architecture": "x86_64",
   "cloud_provider": "aws"
 }

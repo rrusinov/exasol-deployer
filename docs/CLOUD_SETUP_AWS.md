@@ -163,7 +163,7 @@ Multi-node cluster with specific configuration:
 ./exasol init \
   --cloud-provider aws \
   --deployment-dir ./prod-cluster \
-  --db-version exasol-2025.1.4 \
+  --db-version exasol-2025.1.8 \
   --cluster-size 4 \
   --instance-type c7a.16xlarge \
   --data-volume-size 1000 \
@@ -345,7 +345,7 @@ Expected output:
 ```json
 {
   "status": "database_ready",
-  "db_version": "exasol-2025.1.4",
+  "db_version": "exasol-2025.1.8",
   "architecture": "x86_64",
   "terraform_state_exists": true,
   "created_at": "2025-01-15T10:30:00Z",

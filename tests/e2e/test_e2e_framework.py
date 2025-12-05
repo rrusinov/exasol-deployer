@@ -50,13 +50,13 @@ class TestVersionFallback(unittest.TestCase):
         results_dir.mkdir(parents=True, exist_ok=True)
         
         # Create framework with CLI db_version
-        framework = E2ETestFramework(str(self.config_file), results_dir, db_version='exasol-2025.1.4')
+        framework = E2ETestFramework(str(self.config_file), results_dir, db_version='exasol-2025.1.8')
         
         # Test resolution with suite version that would normally be used
         resolved = framework._resolve_db_version('exasol-2025.2.0')
         
         # CLI version should take priority
-        self.assertEqual(resolved, 'exasol-2025.1.4')
+        self.assertEqual(resolved, 'exasol-2025.1.8')
 
     def test_resolve_db_version_suite_single_string(self):
         """Test that single string suite version is used when no CLI override."""
@@ -65,9 +65,9 @@ class TestVersionFallback(unittest.TestCase):
         
         framework = E2ETestFramework(str(self.config_file), results_dir, db_version=None)
         
-        resolved = framework._resolve_db_version('exasol-2025.1.4')
+        resolved = framework._resolve_db_version('exasol-2025.1.8')
         
-        self.assertEqual(resolved, 'exasol-2025.1.4')
+        self.assertEqual(resolved, 'exasol-2025.1.8')
 
     def test_resolve_db_version_none_returns_none(self):
         """Test that None is returned when no version specified."""
@@ -95,7 +95,7 @@ class TestVersionFallback(unittest.TestCase):
         # Mock _resolve_version_alias to control resolution
         def mock_resolve(version):
             if version == 'default-local':
-                return 'exasol-2025.1.4-local'
+                return 'exasol-2025.1.8-local'
             return version
         
         original_check = framework._check_version_exists
@@ -108,7 +108,7 @@ class TestVersionFallback(unittest.TestCase):
             resolved = framework._resolve_db_version(['default-local', 'default'])
             
             # Should use first existing version and resolve it
-            self.assertEqual(resolved, 'exasol-2025.1.4-local')
+            self.assertEqual(resolved, 'exasol-2025.1.8-local')
         finally:
             framework._check_version_exists = original_check
             framework._resolve_version_alias = original_resolve
@@ -154,10 +154,10 @@ class TestVersionFallback(unittest.TestCase):
         try:
             # Test with fallback list where none exist
             # Should use last version as fallback
-            resolved = framework._resolve_db_version(['default-local', 'default', 'exasol-2025.1.4'])
+            resolved = framework._resolve_db_version(['default-local', 'default', 'exasol-2025.1.8'])
             
             # Should use last version as fallback
-            self.assertEqual(resolved, 'exasol-2025.1.4')
+            self.assertEqual(resolved, 'exasol-2025.1.8')
         finally:
             framework._check_version_exists = original_check
 
@@ -171,7 +171,7 @@ class TestVersionFallback(unittest.TestCase):
         # Mock _resolve_version_alias to simulate resolution
         def mock_resolve(version):
             if version == 'default-local':
-                return 'exasol-2025.1.4-local'
+                return 'exasol-2025.1.8-local'
             return version
         
         original_resolve = framework._resolve_version_alias
@@ -181,7 +181,7 @@ class TestVersionFallback(unittest.TestCase):
             resolved = framework._resolve_db_version('default-local')
             
             # Should resolve alias to actual version
-            self.assertEqual(resolved, 'exasol-2025.1.4-local')
+            self.assertEqual(resolved, 'exasol-2025.1.8-local')
         finally:
             framework._resolve_version_alias = original_resolve
 
@@ -199,9 +199,9 @@ class TestVersionFallback(unittest.TestCase):
         # Mock _resolve_version_alias to simulate resolution
         def mock_resolve(version):
             if version == 'default':
-                return 'exasol-2025.1.4'
+                return 'exasol-2025.1.8'
             elif version == 'default-local':
-                return 'exasol-2025.1.4-local'
+                return 'exasol-2025.1.8-local'
             return version
         
         original_check = framework._check_version_exists
@@ -214,7 +214,7 @@ class TestVersionFallback(unittest.TestCase):
             resolved = framework._resolve_db_version(['default-local', 'default'])
             
             # Should fallback to 'default' and resolve it
-            self.assertEqual(resolved, 'exasol-2025.1.4')
+            self.assertEqual(resolved, 'exasol-2025.1.8')
         finally:
             framework._check_version_exists = original_check
             framework._resolve_version_alias = original_resolve
@@ -227,8 +227,8 @@ class TestVersionFallback(unittest.TestCase):
         framework = E2ETestFramework(str(self.config_file), results_dir, db_version=None)
         
         # Test with non-alias version
-        resolved = framework._resolve_version_alias('exasol-2025.1.4')
-        self.assertEqual(resolved, 'exasol-2025.1.4')
+        resolved = framework._resolve_version_alias('exasol-2025.1.8')
+        self.assertEqual(resolved, 'exasol-2025.1.8')
         
         # Test with default-local alias (will try to resolve via CLI)
         # This is tested elsewhere with mocking, here we just verify it returns something

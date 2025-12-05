@@ -472,7 +472,7 @@ test_data_volumes_per_node() {
         --adminui-password testpass \
         --cluster-size 1 \
         --data-volume-size 100 \
-        --db-version exasol-2025.1.4 \
+        --db-version exasol-2025.1.8 \
         --owner testuser
 
     if [[ -f "$test_dir/variables.auto.tfvars" ]]; then

@@ -86,7 +86,7 @@ setup_mock_deployment_dir() {
     echo "n11 ansible_host=127.0.0.1" >> "$dir/inventory.ini"
     echo "Host n11" > "$dir/ssh_config"
 
-    state_init "$dir" "exasol-2025.1.4" "x86_64" "$provider"
+    state_init "$dir" "exasol-2025.1.8" "x86_64" "$provider"
     state_set_status "$dir" "$status"
     echo "$dir"
 }

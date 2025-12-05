@@ -166,7 +166,7 @@ Install libvirt and KVM, then ensure your user is in the `libvirt` and `kvm` gro
 ./exasol init \
   --cloud-provider aws \
   --deployment-dir ./my-aws-deployment \
-  --db-version exasol-2025.1.4 \
+  --db-version exasol-2025.1.8 \
   --cluster-size 4 \
   --instance-type c7a.16xlarge \
   --data-volume-size 500 \
@@ -303,7 +303,7 @@ Output (JSON):
 ```json
 {
   "status": "database_ready",
-  "db_version": "exasol-2025.1.4",
+  "db_version": "exasol-2025.1.8",
   "architecture": "x86_64",
   "terraform_state_exists": true,
   "created_at": "2025-01-15T10:30:00Z",
@@ -389,7 +389,7 @@ Initialize a new deployment directory with configuration files.
 
 **Common Flags**
 - `--deployment-dir string`: Directory for deployment files (default: current directory).
-- `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., `exasol-2025.1.4`; x86_64 is implicit).
+- `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., `exasol-2025.1.8`; x86_64 is implicit).
 - `--list-versions`: List all available database versions (with availability and architecture) and exit.
 - `--list-providers`: List all supported cloud providers and exit.
 - `--cluster-size number`: Number of nodes (default: 1).
@@ -637,7 +637,7 @@ Show help information.
 ## Configuration
 
 - **Cloud Provider**: Local libvirt/KVM deployment
-- **Database Version**: exasol-2025.1.4
+- **Database Version**: exasol-2025.1.8
 - **Architecture**: arm64
 - **Cluster Size**: 1 nodes
 - **Instance Type**: libvirt-custom

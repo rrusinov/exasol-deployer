@@ -407,7 +407,7 @@ class E2ETestFramework:
             if result.returncode == 0:
                 output = result.stdout + result.stderr
                 # Look for line with (default-local) marker
-                # Format: "[INFO]   [+] exasol-2025.1.4-local [x86_64] (default-local)"
+                # Format: "[INFO]   [+] exasol-2025.1.8-local [x86_64] (default-local)"
                 for line in output.split('\n'):
                     if '(default-local)' in line:
                         # Extract version name

@@ -21,7 +21,7 @@ test_state_init() {
     local test_dir
     test_dir=$(setup_test_dir)
 
-    state_init "$test_dir" "exasol-2025.1.4" "x86_64"
+    state_init "$test_dir" "exasol-2025.1.8" "x86_64"
     assert_success $? "Should initialize state successfully"
 
     assert_file_exists "$test_dir/.exasol.json" "Should create state file"
@@ -33,7 +33,7 @@ test_state_init() {
 
     local version
     version=$(state_read "$test_dir" "db_version")
-    assert_equals "exasol-2025.1.4" "$version" "Should store db_version"
+    assert_equals "exasol-2025.1.8" "$version" "Should store db_version"
 
     local arch
     arch=$(state_read "$test_dir" "architecture")
@@ -60,7 +60,7 @@ test_is_deployment_directory() {
         echo -e "${RED}✗${NC} Should return false for non-deployment directory"
     fi
 
-    state_init "$test_dir" "exasol-2025.1.4" "x86_64"
+    state_init "$test_dir" "exasol-2025.1.8" "x86_64"
 
     if is_deployment_directory "$test_dir"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
@@ -81,7 +81,7 @@ test_state_set_status() {
     echo "Test: state_set_status"
 
     local test_dir=$(setup_test_dir)
-    state_init "$test_dir" "exasol-2025.1.4" "x86_64"
+    state_init "$test_dir" "exasol-2025.1.8" "x86_64"
 
     state_set_status "$test_dir" "deploy_in_progress"
     local status=$(state_read "$test_dir" "status")
@@ -149,7 +149,7 @@ test_stale_lock_cleanup() {
 
     local test_dir
     test_dir=$(setup_test_dir)
-    state_init "$test_dir" "exasol-2025.1.4" "x86_64"
+    state_init "$test_dir" "exasol-2025.1.8" "x86_64"
     state_set_status "$test_dir" "database_ready"
 
     local pid_max
@@ -247,7 +247,7 @@ test_status_command_integration() {
     echo "Test: status command integration consistency"
 
     local test_dir=$(setup_test_dir)
-    state_init "$test_dir" "exasol-2025.1.4" "x86_64"
+    state_init "$test_dir" "exasol-2025.1.8" "x86_64"
 
     # Test that get_deployment_status returns expected values
     local status=$(get_deployment_status "$test_dir")
@@ -450,7 +450,7 @@ test_complete_deployment_lifecycle() {
     echo "Test: complete deployment lifecycle workflow"
 
     local test_dir=$(setup_test_dir)
-    state_init "$test_dir" "exasol-2025.1.4" "x86_64"
+    state_init "$test_dir" "exasol-2025.1.8" "x86_64"
 
     # 1. Start: initialized → deploy → database_ready
     local status=$(state_get_status "$test_dir")
@@ -514,7 +514,7 @@ test_failure_and_retry_scenarios() {
     echo "Test: failure and retry scenarios"
 
     local test_dir=$(setup_test_dir)
-    state_init "$test_dir" "exasol-2025.1.4" "x86_64"
+    state_init "$test_dir" "exasol-2025.1.8" "x86_64"
 
     # Scenario 1: Start fails, retry succeeds
     state_set_status "$test_dir" "$STATE_STOPPED"
@@ -573,7 +573,7 @@ test_invalid_operation_sequences() {
     echo "Test: invalid operation sequences"
 
     local test_dir=$(setup_test_dir)
-    state_init "$test_dir" "exasol-2025.1.4" "x86_64"
+    state_init "$test_dir" "exasol-2025.1.8" "x86_64"
 
     # Cannot start from initialized (never deployed)
     if ! validate_start_transition "$STATE_INITIALIZED"; then

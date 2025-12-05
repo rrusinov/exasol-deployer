@@ -17,20 +17,20 @@ create_versions_fixture() {
     local tmp
     tmp=$(mktemp)
     cat >"$tmp" <<'EOF'
-[exasol-2025.1.4]
+[exasol-2025.1.8]
 ARCHITECTURE=x86_64
-DB_VERSION=@exasol-2025.1.4
-DB_DOWNLOAD_URL=https://example.com/releases/exasol-2025.1.4.tar.gz
+DB_VERSION=@exasol-2025.1.8
+DB_DOWNLOAD_URL=https://example.com/releases/exasol-2025.1.8.tar.gz
 DB_CHECKSUM=sha256:dummy-db
-C4_VERSION=4.28.4
-C4_DOWNLOAD_URL=https://example.com/releases/c4/4.28.4/c4
+C4_VERSION=4.29.0
+C4_DOWNLOAD_URL=https://example.com/releases/c4/4.29.0/c4
 C4_CHECKSUM=sha256:dummy-c4
 
 [default]
-VERSION=exasol-2025.1.4
+VERSION=exasol-2025.1.8
 
 [default-local]
-VERSION=exasol-2025.1.4-local
+VERSION=exasol-2025.1.8-local
 EOF
     echo "$tmp"
 }
@@ -57,17 +57,17 @@ test_validate_version_format() {
     echo "Test: validate_version_format"
 
     # Valid formats
-    validate_version_format "exasol-2025.1.4" 2>/dev/null
-    assert_success $? "Should accept valid version format: exasol-2025.1.4"
+    validate_version_format "exasol-2025.1.8" 2>/dev/null
+    assert_success $? "Should accept valid version format: exasol-2025.1.8"
 
-    validate_version_format "exasol-2025.1.4-arm64" 2>/dev/null
-    assert_success $? "Should accept valid ARM64 version format: exasol-2025.1.4-arm64"
+    validate_version_format "exasol-2025.1.8-arm64" 2>/dev/null
+    assert_success $? "Should accept valid ARM64 version format: exasol-2025.1.8-arm64"
 
-    validate_version_format "exasol-2025.1.4-local" 2>/dev/null
-    assert_success $? "Should accept valid local version format: exasol-2025.1.4-local"
+    validate_version_format "exasol-2025.1.8-local" 2>/dev/null
+    assert_success $? "Should accept valid local version format: exasol-2025.1.8-local"
 
-    validate_version_format "exasol-2025.1.4-arm64-local" 2>/dev/null
-    assert_success $? "Should accept valid ARM64 local version format: exasol-2025.1.4-arm64-local"
+    validate_version_format "exasol-2025.1.8-arm64-local" 2>/dev/null
+    assert_success $? "Should accept valid ARM64 local version format: exasol-2025.1.8-arm64-local"
 
     # Invalid formats
     validate_version_format "8.0.0" 2>/dev/null
@@ -76,7 +76,7 @@ test_validate_version_format() {
     validate_version_format "8.0-x86_64" 2>/dev/null
     assert_failure $? "Should reject invalid version number"
 
-    validate_version_format "exasol-2025.1.4-x86_64" 2>/dev/null
+    validate_version_format "exasol-2025.1.8-x86_64" 2>/dev/null
     assert_failure $? "Should reject explicit x86_64 suffix (should be implicit)"
 }
 
@@ -90,11 +90,11 @@ test_parse_version() {
     local result
 
     # These tests check current behavior - update if parse_version logic changes
-    result=$(parse_version "exasol-2025.1.4" "db_version")
+    result=$(parse_version "exasol-2025.1.8" "db_version")
     assert_equals "exasol" "$result" "Should extract first component as db_version"
 
-    result=$(parse_version "exasol-2025.1.4" "architecture")
-    assert_equals "2025.1.4" "$result" "Should extract second component"
+    result=$(parse_version "exasol-2025.1.8" "architecture")
+    assert_equals "2025.1.8" "$result" "Should extract second component"
 }
 
 # Test version_exists (using actual versions.conf)
@@ -106,7 +106,7 @@ test_version_exists() {
 }
 
 _test_version_exists_impl() {
-    if version_exists "exasol-2025.1.4"; then
+    if version_exists "exasol-2025.1.8"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "${GREEN}✓${NC} Should find existing version in versions.conf"
@@ -138,11 +138,11 @@ test_get_version_config() {
 _test_get_version_config_impl() {
     local result
 
-    result=$(get_version_config "exasol-2025.1.4" "ARCHITECTURE")
+    result=$(get_version_config "exasol-2025.1.8" "ARCHITECTURE")
     assert_equals "x86_64" "$result" "Should get architecture from version config"
 
-    result=$(get_version_config "exasol-2025.1.4" "C4_VERSION")
-    assert_equals "4.28.4" "$result" "Should get C4 version from config"
+    result=$(get_version_config "exasol-2025.1.8" "C4_VERSION")
+    assert_equals "4.29.0" "$result" "Should get C4 version from config"
 }
 
 # Test get_default_version
@@ -157,7 +157,7 @@ _test_get_default_version_impl() {
     local result
     result=$(get_default_version)
 
-    assert_equals "exasol-2025.1.4" "$result" "Should return default version from config"
+    assert_equals "exasol-2025.1.8" "$result" "Should return default version from config"
 }
 
 # Test list_versions
@@ -172,7 +172,7 @@ _test_list_versions_impl() {
     local versions
     versions=$(list_versions)
 
-    assert_contains "$versions" "exasol-2025.1.4" "Should list available version"
+    assert_contains "$versions" "exasol-2025.1.8" "Should list available version"
 }
 test_list_versions_with_architecture_output() {
     echo ""
@@ -281,7 +281,7 @@ test_discover_latest_version() {
     }
 
     local result
-    result=$(discover_latest_version "exasol-2025.1.4" 2025 1 4 "https://example.com/exasol-2025.1.4.tar.gz" "db")
+    result=$(discover_latest_version "exasol-2025.1.8" 2025 1 4 "https://example.com/exasol-2025.1.8.tar.gz" "db")
     assert_equals "exasol-2025.1.7" "$result" "Should select highest reachable patch version"
 
     # Restore original
@@ -304,7 +304,7 @@ test_discover_latest_version_for_c4() {
     }
 
     local result
-    result=$(discover_latest_version "4.28.4" 4 28 4 "https://example.com/releases/c4/4.28.4/c4" "c4")
+    result=$(discover_latest_version "4.29.0" 4 28 4 "https://example.com/releases/c4/4.29.0/c4" "c4")
     assert_equals "4.28.5" "$result" "Should increment c4 version without duplicating prefix"
 
     eval "$original_probe_version_url"
@@ -314,10 +314,10 @@ test_build_url_for_version_rewrites_path_and_file() {
     echo ""
     echo "Test: build_url_for_version updates folder and filename"
 
-    local template="https://x-up.s3.eu-west-1.amazonaws.com/releases/exasol/linux/x86_64/2025.1.4/exasol-2025.1.4.tar.gz"
+    local template="https://x-up.s3.eu-west-1.amazonaws.com/releases/exasol/linux/x86_64/2025.1.8/exasol-2025.1.8.tar.gz"
     local expected="https://x-up.s3.eu-west-1.amazonaws.com/releases/exasol/linux/x86_64/2025.1.5/exasol-2025.1.5.tar.gz"
     local result
-    result=$(build_url_for_version "$template" "exasol-2025.1.4" "exasol-2025.1.5")
+    result=$(build_url_for_version "$template" "exasol-2025.1.8" "exasol-2025.1.5")
     assert_equals "$expected" "$result" "Should rewrite both path segment and filename to new version"
 }
 
@@ -330,20 +330,20 @@ test_insert_entries_at_top_formats_cleanly() {
     cat >"$tmp" <<'EOF'
 # Header comment
 
-[exasol-2025.1.4]
+[exasol-2025.1.8]
 ARCHITECTURE=x86_64
-DB_VERSION=@exasol-2025.1.4
-DB_DOWNLOAD_URL=https://example.com/exasol-2025.1.4.tar.gz
+DB_VERSION=@exasol-2025.1.8
+DB_DOWNLOAD_URL=https://example.com/exasol-2025.1.8.tar.gz
 DB_CHECKSUM=sha256:db
-C4_VERSION=4.28.4
-C4_DOWNLOAD_URL=https://example.com/c4/4.28.4/c4
+C4_VERSION=4.29.0
+C4_DOWNLOAD_URL=https://example.com/c4/4.29.0/c4
 C4_CHECKSUM=sha256:c4
 
 [default]
-VERSION=exasol-2025.1.4
+VERSION=exasol-2025.1.8
 
 [default-local]
-VERSION=exasol-2025.1.4-local
+VERSION=exasol-2025.1.8-local
 EOF
 
     local new_entry

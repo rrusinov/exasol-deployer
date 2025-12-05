@@ -349,7 +349,7 @@ discover_latest_version() {
     local best_minor="$start_minor"
     local best_patch="$start_patch"
 
-    # Split base_version into prefix + numeric core + suffix (e.g., exasol- + 2025.1.4 + -arm64)
+    # Split base_version into prefix + numeric core + suffix (e.g., exasol- + 2025.1.8 + -arm64)
     local base_prefix=""
     local base_core=""
     local base_suffix=""
@@ -635,18 +635,18 @@ validate_version_format() {
     fi
 
     # Expected formats:
-    # - name-X.Y.Z (e.g., exasol-2025.1.4) - default x86_64
-    # - name-X.Y.Z-arm64 (e.g., exasol-2025.1.4-arm64) - ARM64 variant
-    # - name-X.Y.Z-local (e.g., exasol-2025.1.4-local) - local variant
-    # - name-X.Y.Z-arm64-local (e.g., exasol-2025.1.4-arm64-local) - local ARM64
+    # - name-X.Y.Z (e.g., exasol-2025.1.8) - default x86_64
+    # - name-X.Y.Z-arm64 (e.g., exasol-2025.1.8-arm64) - ARM64 variant
+    # - name-X.Y.Z-local (e.g., exasol-2025.1.8-local) - local variant
+    # - name-X.Y.Z-arm64-local (e.g., exasol-2025.1.8-arm64-local) - local ARM64
     if [[ ! "$version" =~ ^[a-z]+-[0-9]+\.[0-9]+\.[0-9]+(-arm64)?(-local)?$ ]]; then
         log_error "Invalid version format: $version"
         log_error "Expected format: name-X.Y.Z[-arm64][-local]"
         log_error "Examples:"
-        log_error "  - exasol-2025.1.4 (x86_64, default)"
-        log_error "  - exasol-2025.1.4-arm64 (ARM64 variant)"
-        log_error "  - exasol-2025.1.4-local (local x86_64 variant)"
-        log_error "  - exasol-2025.1.4-arm64-local (local ARM64 variant)"
+        log_error "  - exasol-2025.1.8 (x86_64, default)"
+        log_error "  - exasol-2025.1.8-arm64 (ARM64 variant)"
+        log_error "  - exasol-2025.1.8-local (local x86_64 variant)"
+        log_error "  - exasol-2025.1.8-arm64-local (local ARM64 variant)"
         log_error ""
         log_error "Available versions:"
         local available_versions

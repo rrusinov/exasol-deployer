@@ -59,7 +59,7 @@ Results are stored in `./tmp/tests/e2e-YYYYMMDD-HHMMSS/` with auto-generated exe
 ./tests/run_e2e.sh --provider libvirt --stop-on-error
 
 # Specify database version
-./tests/run_e2e.sh --db-version exasol-2025.1.4
+./tests/run_e2e.sh --db-version exasol-2025.1.8
 
 # Re-run specific suite from execution directory
 ./tests/run_e2e.sh --rerun ./tmp/tests/e2e-20251203-120000 aws-1n_basic
