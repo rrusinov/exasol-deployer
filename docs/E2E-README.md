@@ -18,25 +18,29 @@ A comprehensive end-to-end testing framework for Exasol deployments across multi
 
 ```
 tests/e2e/
-├── e2e_framework.py           # Main framework (uses workflow engine)
-├── workflow_engine.py         # Workflow execution engine
-├── configs/                   # Test configuration files
-│   ├── aws.json              # AWS provider test suite
-│   ├── azure.json            # Azure provider test suite
-│   ├── gcp.json              # GCP provider test suite
-│   ├── libvirt.json          # Libvirt provider test suite
-│   ├── sut/                  # System Under Test definitions
-│   │   ├── aws-1n.json       # AWS single node
-│   │   ├── aws-4n.json       # AWS 4-node cluster
-│   │   ├── aws-8n-vx-spot.json # AWS 8-node with VXLAN & spot
-│   │   ├── azure-1n.json     # Azure configurations
-│   │   ├── gcp-1n.json       # GCP configurations
-│   │   └── libvirt-3n.json   # Libvirt configurations
-│   └── workflow/             # Test workflow definitions
-│       ├── simple.json       # Basic deploy/destroy
-│       ├── basic.json        # Deploy/stop/start/destroy
-│       └── node-reboot.json  # Node reboot recovery test
-└── E2E-README.md             # This file
+├── e2e_framework.py              # Main framework (uses workflow engine)
+├── workflow_engine.py            # Workflow execution engine
+├── configs/                      # Test configuration files
+│   ├── aws.jso   n               # AWS provider test suite
+│   ├── azure.json                # Azure provider test suite
+│   ├── gcp.jso   n               # GCP provider test suite
+│   ├── hetzner.json              # Hetzner provider test suite
+│   ├── digitalocean.json         # DigitalOcean provider test suite
+│   ├── libvirt.json              # Libvirt provider test suite
+│   ├── sut/                      # System Under Test definitions
+│   │   ├── aws-1n.json           # AWS single node
+│   │   ├── aws-4n.json           # AWS 4-node cluster
+│   │   ├── aws-8n-vx-spot.json   # AWS 8-node with VXLAN & spot
+│   │   ├── azure-1n.json         # Azure configurations
+│   │   ├── gcp-1n.json           # GCP configurations
+│   │   ├── hetzner-1n.json       # Hetzner configurations
+│   │   ├── digitalocean-1n.json  # DigitalOcean configurations
+│   │   └── libvirt-3n.json       # Libvirt configurations
+│   └── workflow/                 # Test workflow definitions
+│       ├── simple.json           # Basic deploy/destroy
+│       ├── basic.json            # Deploy/stop/start/destroy
+│       └── node-reboot.json      # Node reboot recovery test
+└── E2E-README.md                 # This file
 ```
 
 Results are stored in `./tmp/tests/e2e-YYYYMMDD-HHMMSS/` with auto-generated execution timestamps.

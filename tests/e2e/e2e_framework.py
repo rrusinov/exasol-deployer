@@ -728,11 +728,6 @@ class E2ETestFramework:
         self.generated_ids.add(final_name)
         return final_name
 
-    def _provider_supports_spot(self, provider: str) -> bool:
-        """Return True if the provider supports spot/preemptible instances."""
-        normalized = provider.lower()
-        return normalized in {'aws', 'azure', 'gcp'}
-
     def generate_test_plan(
         self,
         dry_run: bool = False,
@@ -766,8 +761,6 @@ class E2ETestFramework:
                 'sut_description': suite_config.get('sut_description', ''),
                 'db_version': suite_config.get('db_version')
             }
-            if self._provider_supports_spot(suite_config['provider']):
-                test_case['parameters'].setdefault('enable_spot_instances', True)
             test_plan.append(test_case)
 
         if dry_run:

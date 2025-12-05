@@ -20,6 +20,7 @@ This directory contains a deployment configuration for Exasol database.
 - **Automated Configuration**: Ansible playbooks for complete cluster setup
 - **Credential Management**: Secure password generation and storage for database, AdminUI, and host OS access
 - **Dynamic Configuration**: All Terraform variables generated from command-line parameters and version configurations
+- **Permission Analysis**: Static permission analysis for cloud provider templates to help configure cloud accounts
 
 ## Prerequisites
 
@@ -142,6 +143,22 @@ Install libvirt and KVM, then ensure your user is in the `libvirt` and `kvm` gro
 
 # List available database versions (shows availability and architecture)
 ./exasol init --list-versions
+```
+
+### 1.5 Check Required Permissions (Optional)
+
+Before deploying, you can check the required cloud permissions:
+
+```bash
+# Show required permissions for a cloud provider
+./exasol init --cloud-provider aws --show-permissions
+```
+
+If permissions are not available, generate them (only needed when templates change):
+
+```bash
+# Generate permissions tables for all providers
+./build/generate_permissions.sh
 ```
 
 **For detailed cloud provider setup, see:**

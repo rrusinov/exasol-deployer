@@ -178,6 +178,7 @@ Common Flags:
   --owner <tag>                  Owner tag for resources (default: "exasol-deployer")
   --allowed-cidr <cidr>          CIDR allowed to access cluster (default: "0.0.0.0/0")
   --enable-multicast-overlay     Enable VXLAN overlay network for multicast support (enabled by default for Hetzner, GCP)
+  --show-permissions             Show required permissions for the specified cloud provider
   -h, --help                     Show help
 
 AWS-Specific Flags:
@@ -260,7 +261,7 @@ cmd_init() {
     local owner="exasol-deployer"
     local allowed_cidr="0.0.0.0/0"
     local enable_multicast_overlay=false
-
+    local show_permissions=false
 
     # AWS-specific variables
     local aws_region=""
@@ -457,6 +458,10 @@ cmd_init() {
                 enable_multicast_overlay=true
                 shift
                 ;;
+            --show-permissions)
+                show_permissions=true
+                shift
+                ;;
             --list-versions)
                 log_info "Available database versions (\"[+]\" reachable, \"[x]\" missing):"
                 list_versions_with_availability
@@ -491,6 +496,26 @@ cmd_init() {
                 ;;
         esac
     done
+
+    # Handle show permissions
+    if [[ "$show_permissions" == "true" ]]; then
+        if [[ -z "$cloud_provider" ]]; then
+            log_error "--show-permissions requires --cloud-provider"
+            return 1
+        fi
+        # Try JSON format first, then TXT (for HCL)
+        permissions_file="$LIB_DIR/permissions/$cloud_provider.json"
+        if [[ ! -f "$permissions_file" ]]; then
+            permissions_file="$LIB_DIR/permissions/$cloud_provider.txt"
+        fi
+        if [[ -f "$permissions_file" ]]; then
+            cat "$permissions_file"
+        else
+            log_error "Permissions file not found for $cloud_provider. Run build/generate_permissions.sh first."
+            return 1
+        fi
+        return 0
+    fi
 
     # Validate cloud provider
     if [[ -z "$cloud_provider" ]]; then

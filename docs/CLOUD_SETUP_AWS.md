@@ -11,6 +11,22 @@ This guide provides detailed instructions for setting up AWS credentials and dep
 
 **Note**: AWS CLI is **not required**. OpenTofu reads credentials directly from `~/.aws/credentials` and `~/.aws/config`.
 
+## Required Permissions
+
+You can check the exact IAM permissions required for deploying Exasol on AWS:
+
+```bash
+./exasol init --cloud-provider aws --show-permissions
+```
+
+This will display the complete IAM policy in JSON format. You can use this to create a custom IAM policy with the minimum required permissions instead of using the broad policies mentioned below.
+
+If the permissions file is not available, generate it first:
+
+```bash
+./build/generate_permissions.sh
+```
+
 ## Step 1: Create AWS Account
 
 If you don't have an AWS account:
@@ -37,6 +53,7 @@ For security, create a dedicated IAM user for Exasol deployments instead of usin
    - Attach these policies:
      - `AmazonEC2FullAccess` (for instances and networking)
      - `AmazonVPCFullAccess` (for VPC, subnets, security groups)
+   - **Or create a custom policy** with the minimum permissions from `--show-permissions`
    - Click "Next: Tags"
 
 5. **Add Tags** (optional):

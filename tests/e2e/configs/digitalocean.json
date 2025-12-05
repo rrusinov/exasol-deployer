@@ -1,0 +1,15 @@
+{
+  "provider": "digitalocean",
+  "description": "DigitalOcean E2E test configurations combining different SUTs and workflows",
+  "max_concurrent_nodes": 4,
+  "test_suites": [
+    {
+      "sut": "sut/digitalocean-1n.json",
+      "workflow": "workflow/simple.json"
+    },
+    {
+      "sut": "sut/digitalocean-4n.json",
+      "workflow": "workflow/node-reboot.json"
+    }
+  ]
+}

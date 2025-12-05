@@ -2,7 +2,7 @@
   "description": "Azure 4-node cluster configuration",
   "provider": "azure",
   "parameters": {
-    "cluster_size": 4,
+    "cluster_size": 3,
     "instance_type": "Standard_D8s_v3",
     "data_volumes_per_node": 2,
     "data_volume_size": 20,

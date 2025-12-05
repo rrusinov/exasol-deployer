@@ -39,6 +39,7 @@ EOF
 
 RESULTS_DIR=""
 PROVIDER_FILTER=""
+PROVIDER_SPECIFIED=0
 PARALLEL=0
 STOP_ON_ERROR=0
 DB_VERSION=""
@@ -50,10 +51,21 @@ RUN_TEST_IDS=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --provider)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: Missing value for --provider" >&2
+                usage
+                exit 1
+            fi
             PROVIDER_FILTER="$2"
+            PROVIDER_SPECIFIED=1
             shift 2
             ;;
         --parallel)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: Missing value for --parallel" >&2
+                usage
+                exit 1
+            fi
             PARALLEL="$2"
             shift 2
             ;;
@@ -62,14 +74,29 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --db-version)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: Missing value for --db-version" >&2
+                usage
+                exit 1
+            fi
             DB_VERSION="$2"
             shift 2
             ;;
         --results-dir)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: Missing value for --results-dir" >&2
+                usage
+                exit 1
+            fi
             RESULTS_DIR="$2"
             shift 2
             ;;
         --rerun)
+            if [[ $# -lt 3 ]]; then
+                echo "Error: Missing value(s) for --rerun <exec-dir> <suite>" >&2
+                usage
+                exit 1
+            fi
             RERUN_EXEC_DIR="$2"
             RERUN_SUITE="$3"
             shift 3
@@ -88,6 +115,11 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --run-tests|--run-test)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: Missing value for --run-tests" >&2
+                usage
+                exit 1
+            fi
             RUN_TEST_IDS="$2"
             shift 2
             ;;
@@ -102,6 +134,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Normalize provider filter
+if [[ -n "$PROVIDER_FILTER" && "${PROVIDER_FILTER,,}" == "all" ]]; then
+    PROVIDER_FILTER=""
+fi
 
 # Only create results directory if explicitly provided
 if [[ -n "$RESULTS_DIR" ]]; then
@@ -175,7 +212,7 @@ resolve_selected_tests() {
 overall_status=0
 
 # Check if no arguments provided - show help and exit
-if [[ "$LIST_TESTS" -eq 0 && -z "$RUN_TEST_IDS" && -z "$RERUN_EXEC_DIR" && -z "$PROVIDER_FILTER" ]]; then
+if [[ "$LIST_TESTS" -eq 0 && -z "$RUN_TEST_IDS" && -z "$RERUN_EXEC_DIR" && -z "$PROVIDER_FILTER" && "$PROVIDER_SPECIFIED" -eq 0 ]]; then
     usage
     exit 0
 fi
@@ -275,23 +312,100 @@ else
         exit 1
     fi
     provider_args=()
+    filtered_configs=("${configs[@]}")
     if [[ -n "$PROVIDER_FILTER" ]]; then
         provider_args=(--providers "$PROVIDER_FILTER")
-    fi
-
-    for cfg in "${configs[@]}"; do
-        echo "Running e2e tests for config: $cfg"
-        run_framework "$cfg" "${provider_args[@]}"
-        
-        # Check results in the execution directory
-        if [[ -n "$RESULTS_DIR" && -f "$RESULTS_DIR/results.json" ]]; then
-            failures="$(print_failures "$RESULTS_DIR/results.json")"
-            if [[ "$failures" != "[]" ]]; then
-                overall_status=1
-                tail_failed_logs "$RESULTS_DIR/results.json" || true
-            fi
+        IFS=',' read -ra provider_list <<< "$PROVIDER_FILTER"
+        filtered_configs=()
+        for cfg in "${configs[@]}"; do
+            cfg_provider=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('provider', ''))" "$cfg")
+            for p in "${provider_list[@]}"; do
+                if [[ "$cfg_provider" == "$p" ]]; then
+                    filtered_configs+=("$cfg")
+                    break
+                fi
+            done
+        done
+        if [[ ${#filtered_configs[@]} -eq 0 ]]; then
+            echo "No e2e configuration files match provider filter: $PROVIDER_FILTER" >&2
+            exit 1
         fi
-    done
+    fi
+    # Parallel execution across provider configs (if safe)
+    if [[ -n "$RESULTS_DIR" ]]; then
+        # Sequential when sharing a results dir to avoid collisions
+        for cfg in "${filtered_configs[@]}"; do
+            echo "Running e2e tests for config: $cfg"
+            run_framework "$cfg" "${provider_args[@]}"
+            
+            if [[ -f "$RESULTS_DIR/results.json" ]]; then
+                failures="$(print_failures "$RESULTS_DIR/results.json")"
+                if [[ "$failures" != "[]" ]]; then
+                    overall_status=1
+                    tail_failed_logs "$RESULTS_DIR/results.json" || true
+                fi
+            fi
+        done
+    else
+        # Default: parallel across configs with isolated results directories
+        parallel_root="./tmp/tests/e2e-$(date +%Y%m%d-%H%M%S)"
+        mkdir -p "$parallel_root"
+        declare -A cfg_pids=()
+        declare -A cfg_results=()
+
+        # Determine parallelism limit (all configs)
+        effective_parallel=${#filtered_configs[@]}
+        current_jobs=0
+
+        for cfg in "${filtered_configs[@]}"; do
+            cfg_name="$(basename "$cfg" .json)"
+            cfg_results_dir="${parallel_root}/${cfg_name}"
+            mkdir -p "$cfg_results_dir"
+
+            while [[ $current_jobs -ge $effective_parallel ]]; do
+                wait -n
+                current_jobs=$((current_jobs - 1))
+            done
+
+            (
+                RESULTS_DIR="$cfg_results_dir"
+                run_framework "$cfg" "${provider_args[@]}" --results-dir "$cfg_results_dir"
+            ) >"$cfg_results_dir/run.log" 2>&1 &
+
+            pid=$!
+            cfg_pids["$pid"]="$cfg"
+            cfg_results["$pid"]="$cfg_results_dir"
+            current_jobs=$((current_jobs + 1))
+            echo "Started $cfg (pid $pid), results: $cfg_results_dir"
+        done
+
+        # Wait for jobs and aggregate status
+        for pid in "${!cfg_pids[@]}"; do
+            cfg="${cfg_pids[$pid]}"
+            cfg_results_dir="${cfg_results[$pid]}"
+            if wait "$pid"; then
+                status=0
+            else
+                status=1
+            fi
+
+            results_file="$cfg_results_dir/results.json"
+            if [[ -f "$results_file" ]]; then
+                failures="$(print_failures "$results_file")"
+                if [[ "$failures" != "[]" ]]; then
+                    status=1
+                    tail_failed_logs "$results_file" || true
+                fi
+            fi
+
+            if [[ $status -ne 0 ]]; then
+                overall_status=1
+                echo "Config failed: $cfg (results: $cfg_results_dir)"
+            else
+                echo "Config succeeded: $cfg (results: $cfg_results_dir)"
+            fi
+        done
+    fi
 fi
 
 exit "$overall_status"
