@@ -587,6 +587,7 @@ class E2ETestFramework:
         return {
             'provider': provider,
             'description': provider_config.get('description', ''),
+            'max_concurrent_nodes': provider_config.get('max_concurrent_nodes', 0),
             'test_suites': merged_suites  # This is the correct key
         }
 
@@ -647,6 +648,7 @@ class E2ETestFramework:
             'description',
             'sut',
             'workflow',
+            'max_concurrent_nodes',
             'parameters',
             'combinations',
             'cluster_size',
@@ -661,7 +663,6 @@ class E2ETestFramework:
             'checks',
             'target_node',
             'method',
-            'custom_command',
             'allow_failures',
             'retry',
             'max_attempts',
@@ -776,7 +777,17 @@ class E2ETestFramework:
         return test_plan
 
     def run_tests(self, test_plan: List[Dict[str, Any]], max_parallel: int = 1) -> List[Dict[str, Any]]:
-        """Execute tests in parallel."""
+        """Execute tests with resource-aware scheduling.
+        
+        Args:
+            test_plan: List of test cases to execute
+            max_parallel: CLI override for parallelism (0 = use config limit)
+        
+        Resource-aware scheduling:
+        - Uses max_concurrent_nodes from provider config to limit total nodes in use
+        - Schedules tests based on cluster_size to optimize resource usage
+        - Example: max_concurrent_nodes=4 allows 1x4n OR 1x3n+1x1n OR 2x2n OR 4x1n
+        """
         results = []
         start_time = time.time()
 
@@ -787,11 +798,25 @@ class E2ETestFramework:
         # Print execution directory info
         print(f"Results will be saved to: {self.results_dir.absolute()}")
         
+        # Determine effective parallelism
+        config_max_nodes = self.config.get('max_concurrent_nodes', 0)
+        
         if max_parallel <= 0:
-            max_parallel = max(1, len(test_plan))
+            # Use config limit or unlimited
+            if config_max_nodes > 0:
+                # Resource-aware scheduling enabled
+                effective_parallel = len(test_plan)  # Allow scheduling all tests
+                self.logger.info(f"Using resource-aware scheduling: max {config_max_nodes} concurrent nodes")
+            else:
+                # No limit configured, run all in parallel
+                effective_parallel = max(1, len(test_plan))
+        else:
+            # CLI override: use traditional max_parallel approach
+            effective_parallel = max_parallel
+            config_max_nodes = 0  # Disable resource-aware scheduling
 
         try:
-            self.resource_plan_metrics = self.quota_monitor.evaluate_plan(test_plan, max_parallel)
+            self.resource_plan_metrics = self.quota_monitor.evaluate_plan(test_plan, effective_parallel)
         except ValueError as limit_error:
             self.logger.error(f"Resource quota limit exceeded: {limit_error}")
             raise
@@ -800,10 +825,27 @@ class E2ETestFramework:
         with self._progress_lock:
             self._total_tests = len(test_plan)
         
-        self.logger.info(f"Starting test execution with {len(test_plan)} tests, max_parallel={max_parallel}")
+        self.logger.info(f"Starting test execution with {len(test_plan)} tests, max_parallel={effective_parallel}")
         self._render_progress(0, len(test_plan))
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as executor:
+        # Use resource-aware executor if node limit is configured
+        if config_max_nodes > 0:
+            results = self._run_tests_with_resource_scheduling(test_plan, config_max_nodes)
+        else:
+            results = self._run_tests_with_thread_pool(test_plan, effective_parallel)
+
+        total_time = time.time() - start_time
+        print()  # newline after progress bar
+        self._save_results(results, total_time)
+        self._print_summary(results, total_time)
+
+        return results
+
+    def _run_tests_with_thread_pool(self, test_plan: List[Dict[str, Any]], max_workers: int) -> List[Dict[str, Any]]:
+        """Execute tests using traditional thread pool with fixed max_workers."""
+        results = []
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_test = {executor.submit(self._run_single_test, test): test for test in test_plan}
             completed = 0
             for future in concurrent.futures.as_completed(future_to_test):
@@ -819,14 +861,80 @@ class E2ETestFramework:
                     self._completed_tests = completed
                     self._current_deployment = None
                     self._current_step = None
-                
+                    
                 self._render_progress(completed, len(test_plan))
+        
+        return results
 
-        total_time = time.time() - start_time
-        print()  # newline after progress bar
-        self._save_results(results, total_time)
-        self._print_summary(results, total_time)
-
+    def _run_tests_with_resource_scheduling(self, test_plan: List[Dict[str, Any]], max_nodes: int) -> List[Dict[str, Any]]:
+        """Execute tests with resource-aware scheduling based on cluster sizes.
+        
+        Schedules tests to keep total nodes in use <= max_nodes.
+        Example: max_nodes=4 allows running 1x4n OR 1x3n+1x1n OR 2x2n simultaneously.
+        """
+        results = []
+        pending_tests = list(test_plan)  # Copy to avoid modifying original
+        running_futures = {}  # {future: (test, nodes_used)}
+        nodes_in_use = 0
+        completed = 0
+        
+        # Sort tests by cluster size (largest first) for better packing
+        pending_tests.sort(key=lambda t: t['parameters'].get('cluster_size', 1), reverse=True)
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(test_plan)) as executor:
+            while pending_tests or running_futures:
+                # Try to start new tests that fit in available resources
+                while pending_tests:
+                    test = pending_tests[0]
+                    cluster_size = test['parameters'].get('cluster_size', 1)
+                    
+                    if nodes_in_use + cluster_size <= max_nodes:
+                        # We have capacity, start this test
+                        pending_tests.pop(0)
+                        future = executor.submit(self._run_single_test, test)
+                        running_futures[future] = (test, cluster_size)
+                        nodes_in_use += cluster_size
+                        self.logger.info(
+                            f"Started {test['deployment_id']} ({cluster_size} nodes), "
+                            f"using {nodes_in_use}/{max_nodes} nodes"
+                        )
+                    else:
+                        # Not enough capacity, wait for a test to complete
+                        break
+                
+                if not running_futures:
+                    # All tests scheduled and completed
+                    break
+                
+                # Wait for at least one test to complete
+                done, _ = concurrent.futures.wait(
+                    running_futures.keys(),
+                    return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                
+                for future in done:
+                    test, cluster_size = running_futures.pop(future)
+                    nodes_in_use -= cluster_size
+                    
+                    result = future.result()
+                    results.append(result)
+                    self.notification_manager.record_result(result)
+                    completed += 1
+                    
+                    status = 'PASS' if result['success'] else 'FAIL'
+                    self.logger.info(
+                        f"Completed: {result['deployment_id']} - {status} ({result['duration']:.1f}s), "
+                        f"freed {cluster_size} nodes, now using {nodes_in_use}/{max_nodes}"
+                    )
+                    
+                    # Update progress
+                    with self._progress_lock:
+                        self._completed_tests = completed
+                        self._current_deployment = None
+                        self._current_step = None
+                    
+                    self._render_progress(completed, len(test_plan))
+        
         return results
 
     def _render_progress(self, completed: int, total: int, current_deployment: Optional[str] = None, current_step: Optional[str] = None):

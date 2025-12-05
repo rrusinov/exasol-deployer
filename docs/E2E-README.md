@@ -10,7 +10,7 @@ A comprehensive end-to-end testing framework for Exasol deployments across multi
 - **Parallel Execution**: Run multiple test deployments concurrently with configurable limits
 - **Multi-Provider Support**: Test across AWS, Azure, GCP, and Libvirt
 - **Comprehensive Validation**: Automated checks for deployment success and configuration correctness
-- **Failsafety Testing**: Node crash simulation, stop/start operations, and recovery validation
+- **Failsafety Testing**: Cluster stop/start operations, node reboot, and recovery validation
 - **Complete Logging**: All workflow step commands and output captured in suite-specific logs
 - **Result Reporting**: Detailed JSON and HTML reports with step-by-step validation information
 
@@ -33,9 +33,9 @@ tests/e2e/
 │   │   ├── gcp-1n.json       # GCP configurations
 │   │   └── libvirt-3n.json   # Libvirt configurations
 │   └── workflow/             # Test workflow definitions
-│       ├── basic.json        # Basic deploy/destroy
-│       ├── enhanced.json     # Deploy/stop/start
-│       └── failsafety.json   # Comprehensive failsafety tests
+│       ├── simple.json       # Basic deploy/destroy
+│       ├── basic.json        # Deploy/stop/start/destroy
+│       └── node-reboot.json  # Node reboot recovery test
 └── E2E-README.md             # This file
 ```
 
@@ -55,6 +55,9 @@ Results are stored in `./tmp/tests/e2e-YYYYMMDD-HHMMSS/` with auto-generated exe
 # Run tests with parallelism
 ./tests/run_e2e.sh --provider libvirt --parallel 2
 
+# Stop on first failure (for debugging)
+./tests/run_e2e.sh --provider libvirt --stop-on-error
+
 # Specify database version
 ./tests/run_e2e.sh --db-version exasol-2025.1.4
 
@@ -62,7 +65,7 @@ Results are stored in `./tmp/tests/e2e-YYYYMMDD-HHMMSS/` with auto-generated exe
 ./tests/run_e2e.sh --rerun ./tmp/tests/e2e-20251203-120000 aws-1n_basic
 
 # Run specific test by suite name
-./tests/run_e2e.sh --run-tests libvirt-3n_failsafety
+./tests/run_e2e.sh --run-tests libvirt-3n_basic
 ```
 
 ### Programmatic Usage
@@ -92,6 +95,7 @@ Provider-level configs reference pairs of SUT and workflow definitions:
 {
   "provider": "aws",
   "description": "AWS E2E test configurations",
+  "max_concurrent_nodes": 10,
   "test_suites": [
     {
       "sut": "sut/aws-1n.json",
@@ -99,11 +103,14 @@ Provider-level configs reference pairs of SUT and workflow definitions:
     },
     {
       "sut": "sut/aws-4n.json",
-      "workflow": "workflow/enhanced.json"
+      "workflow": "workflow/basic.json"
     }
   ]
 }
 ```
+
+**Optional Fields:**
+- `max_concurrent_nodes`: Maximum total nodes that can run simultaneously across all tests. The scheduler will intelligently pack tests based on their `cluster_size` to stay within this limit. For example, with `max_concurrent_nodes: 4`, you could run: 1x4-node OR 1x3-node+1x1-node OR 2x2-node OR 4x1-node tests simultaneously. This prevents resource exhaustion on local systems (libvirt) and respects cloud provider quotas.
 
 #### SUT (System Under Test) Configuration
 
@@ -148,7 +155,7 @@ Defines the test scenario steps. The name is automatically derived from the file
 }
 ```
 
-**Note:** The `workflow_name` field is **not needed** - the workflow name is derived from the filename (e.g., `enhanced.json` → `enhanced`). The suite name combines both: `{sut-name}_{workflow-name}` (e.g., `aws-4n_enhanced`).
+**Note:** The `workflow_name` field is **not needed** - the workflow name is derived from the filename (e.g., `basic.json` → `basic`). The suite name combines both: `{sut-name}_{workflow-name}` (e.g., `aws-4n_basic`).
 
 ### Benefits of Modular Structure
 
@@ -400,14 +407,14 @@ To rerun a specific suite from a previous execution:
 
 ```bash
 # Format: --rerun <execution-dir> <suite-name>
-./tests/run_e2e.sh --rerun ./tmp/tests/e2e-20251203-120000 aws-4n_enhanced
+./tests/run_e2e.sh --rerun ./tmp/tests/e2e-20251203-120000 aws-4n_basic
 ```
 
 The rerun will:
 - Use the same execution directory
 - Append results to existing results.json
-- Create new log file with run number (e.g., aws-4n_enhanced-run2.log)
-- Create new deployment directory with run number (e.g., deployments/aws-4n_enhanced-run2/)
+- Create new log file with run number (e.g., aws-4n_basic-run2.log)
+- Create new deployment directory with run number (e.g., deployments/aws-4n_basic-run2/)
 - Update the HTML report with latest results
 
 ## Requirements
@@ -491,51 +498,73 @@ python3 -m unittest test_config_validation -v
 
 ## Overview
 
-The workflow-based testing framework extends the basic E2E test infrastructure to support complex, multi-step test scenarios including failsafety testing, start/stop operations, node-specific actions, and custom verification steps.
+The workflow-based testing framework extends the basic E2E test infrastructure to support complex, multi-step test scenarios including cluster stop/start operations, node reboot testing, and validation.
 
 ## Key Features
 
 - **Sequential Workflow Execution**: Define test scenarios as a sequence of steps
-- **Node-Specific Operations**: Target individual nodes for operations (stop, start, restart, crash)
+- **Node-Specific Operations**: Target individual nodes for restart operations
 - **Custom Validation**: Per-step validation with retry logic and failure handling
-- **Crash Simulation**: Simulate hard crashes and test recovery (AWS/Azure/GCP only)
-- **External Commands**: Execute custom verification commands
 - **Rich Reporting**: Detailed step-by-step results with timing and validation data
 
-## Provider-Specific Limitations
+## Resource Management
 
-The workflow engine enforces provider-specific limitations on power control operations:
+The framework includes intelligent resource management to prevent overcommitment:
 
-### Power Control Support by Provider
+### Automatic Cleanup on Failure
 
-| Provider | Cluster Stop/Start | Node Stop/Start | Node Crash (SSH) | Node Crash (API) | Node Reboot (SSH) |
-|----------|-------------------|-----------------|------------------|------------------|-------------------|
-| **AWS** | ✅ Yes | 🚧 Planned | ✅ Yes | 🚧 Planned | ✅ Yes |
-| **Azure** | ✅ Yes | 🚧 Planned | ✅ Yes | 🚧 Planned | ✅ Yes |
-| **GCP** | ✅ Yes | 🚧 Planned | ✅ Yes | 🚧 Planned | ✅ Yes |
-| **DigitalOcean** | ⚠️ Manual | ❌ No | ✅ Yes | ❌ No | ✅ Yes |
-| **Hetzner** | ⚠️ Manual | ❌ No | ✅ Yes | ❌ No | ✅ Yes |
-| **libvirt** | ⚠️ Manual | ❌ No | ✅ Yes | ❌ No | ✅ Yes |
+When a test fails, the framework automatically:
+1. Attempts to run `exasol destroy` on the failed deployment
+2. Frees up resources (nodes, memory) for subsequent tests
+3. Continues with remaining tests in the queue
+
+This prevents resource exhaustion when tests fail partway through.
+
+### Stop on Error (Debugging Mode)
+
+Use `--stop-on-error` to halt execution after the first test failure:
+
+```bash
+./tests/run_e2e.sh --provider libvirt --stop-on-error
+```
+
+**Behavior:**
+- Stops scheduling new tests after first failure
+- Allows currently running tests to complete
+- Preserves failed deployment for debugging
+- Useful for investigating test failures locally
+
+**Without --stop-on-error (default):**
+- Cleans up failed deployments automatically
+- Continues executing remaining tests
+- Better for CI/CD and unattended runs
+
+### Resource-Aware Scheduling
+
+See `max_concurrent_nodes` in provider configuration for details on limiting total nodes.
+
+## Provider Support
+
+All workflow operations are supported across all providers:
+
+| Provider | Cluster Stop (SSH) | Cluster Start | Node Reboot (SSH) |
+|----------|-------------------|---------------|-------------------|
+| **AWS** | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Azure** | ✅ Yes | ✅ Yes | ✅ Yes |
+| **GCP** | ✅ Yes | ✅ Yes | ✅ Yes |
+| **DigitalOcean** | ✅ Yes | ⚠️ Manual* | ✅ Yes |
+| **Hetzner** | ✅ Yes | ⚠️ Manual* | ✅ Yes |
+| **libvirt** | ✅ Yes | ⚠️ Manual* | ✅ Yes |
 
 **Legend:**
 - ✅ **Yes**: Fully supported and implemented
-- ⚠️ **Manual**: In-guest shutdown works; requires manual power-on via provider interface
-- 🚧 **Planned**: Provider APIs support this, but not yet implemented in framework
-- ❌ **No**: Not supported; workflow steps will raise `NotImplementedError`
+- ⚠️ **Manual***: VMs are powered off; requires manual power-on via provider interface
 
-### Unsupported Operations
-
-For **DigitalOcean, Hetzner, and libvirt**, the following workflow steps will raise `NotImplementedError`:
-- `stop_node` - Individual node power off via API
-- `start_node` - Individual node power on via API
-- `crash_node` with `method: "destroy"` - Hard crash via power API
-- `restart_node` with `method: "graceful"` - Power cycle restart
-
-### Universal Operations (Work on All Providers)
-
-The following operations work on **all providers** via SSH:
-- ✅ `restart_node` with `method: "ssh"` (default) - Graceful reboot via `sudo reboot`
-- ✅ `crash_node` with `method: "ssh"` (default) - Hard crash via SysRq or `poweroff -f`
+**Note:** 
+- Cluster stop uses `exasol stop` command via SSH (works on all providers)
+- Cluster start uses `exasol start` command - requires VMs to be running
+- For DigitalOcean/Hetzner/libvirt: after cluster stop, VMs must be manually powered on before cluster start
+- Node reboot uses SSH `sudo reboot` command
 
 ## Workflow Configuration Format
 
@@ -561,9 +590,9 @@ Workflows are stored in `tests/e2e/configs/workflow/` and define sequences of te
 
 **Key Points:**
 - Workflows are **abstract and reusable** - no deployment-specific parameters
-- The `workflow_name` field is **not needed** - derived from filename (e.g., `enhanced.json` → `enhanced`)
+- The `workflow_name` field is **not needed** - derived from filename (e.g., `basic.json` → `basic`)
 - The `description` field is **optional** for self-explanatory steps
-- Suite name format: `{sut-name}_{workflow-name}` (e.g., `aws-4n_enhanced`)
+- Suite name format: `{sut-name}_{workflow-name}` (e.g., `aws-4n_basic`)
 
 ### SUT (System Under Test) File Structure
 
@@ -600,14 +629,8 @@ The following step types are supported (in typical lifecycle order):
 | `validate` | `step`, `checks` | `description`, `allow_failures`, `retry` | Perform validation checks |
 | `stop_cluster` | `step` | `description` | Stop entire cluster |
 | `start_cluster` | `step` | `description` | Start entire cluster |
-| `stop_node` | `step`, `target_node` | `description` | Stop specific node (not yet implemented) |
-| `start_node` | `step`, `target_node` | `description` | Start specific node (not yet implemented) |
 | `restart_node` | `step`, `target_node` | `description`, `method` | Restart specific node |
-| `crash_node` | `step`, `target_node` | `description`, `method` | Simulate node crash |
-| `custom_command` | `step`, `custom_command` | `description` | Execute custom command |
 | `destroy` | `step` | `description` | Destroy cluster and cleanup |
-
-**Note:** Steps like `stop_node` and `start_node` are planned for AWS/Azure/GCP but not yet implemented. All providers support `restart_node` and `crash_node` via SSH (`method: "ssh"`).
 
 ### Basic Structure
 
@@ -691,32 +714,8 @@ Start all nodes in the cluster.
 }
 ```
 
-#### 6. `stop_node` - Stop Specific Node (Planned: AWS/Azure/GCP)
-Stop a specific node via provider API. Use `description` to indicate which node and why.
-
-```json
-{
-  "step": "stop_node",
-  "description": "Stop node n12 for failover testing",
-  "target_node": "n12"
-}
-```
-**Note:** Not yet implemented. Will raise `NotImplementedError` for all providers.
-
-#### 7. `start_node` - Start Specific Node (Planned: AWS/Azure/GCP)
-Start a specific node via provider API. Use `description` to indicate recovery intent.
-
-```json
-{
-  "step": "start_node",
-  "description": "Recover node n12",
-  "target_node": "n12"
-}
-```
-**Note:** Not yet implemented. Will raise `NotImplementedError` for all providers.
-
-#### 8. `restart_node` - Restart Specific Node
-Restart a specific node either gracefully via SSH or through power cycle. Use `description` for node-specific operations.
+#### 6. `restart_node` - Restart Specific Node
+Restart a specific node via SSH. Use `description` for node-specific operations.
 
 ```json
 {
@@ -727,36 +726,9 @@ Restart a specific node either gracefully via SSH or through power cycle. Use `d
 }
 ```
 **Supported Methods:**
-- `ssh` (default): Reboot via SSH `sudo reboot` command - **works for all providers**
-- `graceful`: Power cycle (stop then start) - **planned for AWS/Azure/GCP**, raises `NotImplementedError` for all providers currently
+- `ssh`: Reboot via SSH `sudo reboot` command - **works for all providers**
 
-#### 9. `crash_node` - Simulate Node Crash
-Simulate a hard crash on a specific node for testing recovery scenarios. Use `description` to explain the test scenario.
-
-```json
-{
-  "step": "crash_node",
-  "description": "Simulate hard crash on n11",
-  "target_node": "n11",
-  "method": "ssh"
-}
-```
-**Supported Methods:**
-- `ssh` (default): Hard crash via SSH using SysRq trigger or `poweroff -f` - **works for all providers**
-- `destroy`: Hard power-off via provider API - **planned for AWS/Azure/GCP** (not yet implemented)
-
-#### 10. `custom_command` - Execute Custom Command
-Execute a custom shell command or script for validation or operations. Always use `description` to explain what the command does.
-
-```json
-{
-  "step": "custom_command",
-  "description": "Run custom verification script",
-  "custom_command": ["./scripts/verify_data.sh", "--check-integrity"]
-}
-```
-
-#### 11. `destroy` - Destroy Cluster
+#### 7. `destroy` - Destroy Cluster
 Destroy the cluster and clean up all cloud resources.
 
 ```json
@@ -809,58 +781,7 @@ Destroy the cluster and clean up all cloud resources.
 }
 ```
 
-### 3. Single Node Failure Test (Planned)
 
-**Note:** This workflow uses `stop_node` and `start_node` steps which are planned but not yet implemented for any provider.
-
-```json
-{
-  "description": "Single node failure and recovery test",
-  "steps": [
-    {"step": "init"},
-    {"step": "deploy"},
-    {"step": "validate", "description": "All nodes healthy", "checks": [
-      "cluster_status==database_ready",
-      "health_status[*].ssh==ok"
-    ]},
-    {"step": "stop_node", "description": "Stop node n12 for failover test", "target_node": "n12"},
-    {"step": "validate", "description": "Cluster degraded with n12 down", "checks": [
-      "cluster_status==degraded",
-      "health_status[*].ssh!=ok"
-    ]},
-    {"step": "start_node", "description": "Recover node n12", "target_node": "n12"},
-    {"step": "validate", "description": "All nodes recovered", "checks": [
-      "cluster_status==database_ready",
-      "health_status[*].ssh==ok"
-    ]},
-    {"step": "destroy"}
-  ]
-}
-```
-
-### 4. Crash Recovery Test (Planned)
-
-**Note:** This workflow uses `crash_node` with `method: "destroy"` and `start_node` which are planned but not yet implemented.
-
-```json
-{
-  "description": "Multi-node crash and recovery test",
-  "steps": [
-    {"step": "init"},
-    {"step": "deploy"},
-    {"step": "crash_node", "description": "Simulate hard crash on n11", "target_node": "n11", "method": "destroy"},
-    {"step": "crash_node", "description": "Simulate hard crash on n12", "target_node": "n12", "method": "destroy"},
-    {"step": "validate", "description": "Cluster degraded with 2 nodes down", "checks": [
-      "cluster_status==degraded"
-    ]},
-    {"step": "start_node", "description": "Recover n11", "target_node": "n11"},
-    {"step": "start_node", "description": "Recover n12", "target_node": "n12"},
-    {"step": "validate", "description": "Cluster recovered", "checks": [
-      "cluster_status==database_ready"
-    ], "retry": {"max_attempts": 5, "delay_seconds": 30}}
-  ]
-}
-```
 
 ## Extending the Framework
 

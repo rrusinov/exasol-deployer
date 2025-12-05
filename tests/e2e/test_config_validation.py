@@ -39,8 +39,7 @@ class TestConfigSchema(unittest.TestCase):
         """Test that all workflow steps have schema definitions"""
         required_steps = [
             'init', 'deploy', 'validate', 'stop_cluster', 'start_cluster',
-            'stop_node', 'start_node', 'restart_node', 'crash_node',
-            'custom_command', 'destroy'
+            'restart_node', 'destroy'
         ]
         
         for step in required_steps:
@@ -90,7 +89,7 @@ class TestWorkflowValidation(unittest.TestCase):
     
     def test_workflow_files_exist(self):
         """Test that expected workflow files exist"""
-        expected = ['simple', 'basic', 'enhanced']
+        expected = ['simple', 'basic', 'node-reboot']
         
         for name in expected:
             self.assertIn(name, self.workflows, f"Missing workflow file: {name}.json")

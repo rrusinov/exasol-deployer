@@ -697,7 +697,7 @@ This is expected behavior for Hetzner, DigitalOcean, and libvirt. Follow the man
 - Check system logs: `journalctl -u exasol-overlay` and `journalctl -u c4_cloud_command`
 
 #### Overlay network issues
-- Ensure VXLAN port 4789 is allowed in firewall rules
+- VXLAN port 4789 is used internally for cluster communication between nodes (not required in firewall rules for external access)
 - Check overlay service status: `systemctl status exasol-overlay`
 - Verify bridge interface exists: `ip addr show vxlan-br0`
 
@@ -707,6 +707,31 @@ This is expected behavior for Hetzner, DigitalOcean, and libvirt. Follow the man
 - `variables.auto.tfvars` - Terraform variables
 - `.credentials.json` - Passwords (DB/AdminUI/host; keep secure)
 - `terraform.tfstate` - Terraform state (created after deployment)
+
+## Testing
+
+This project includes comprehensive test coverage:
+
+- **Unit Tests**: Shell script tests for core functionality
+  ```bash
+  # Run all tests
+  ./tests/run_tests.sh
+  
+  # Run specific test
+  ./tests/test_common.sh
+  ```
+
+- **E2E Tests**: End-to-end integration tests across cloud providers
+  - See [E2E Test Framework Documentation](docs/E2E-README.md) for details
+  - Resource-aware scheduling prevents local memory exhaustion
+  - Supports workflow-based testing with validation
+  ```bash
+  # Run E2E tests for libvirt
+  ./tests/run_e2e.sh --provider libvirt
+  
+  # List available tests
+  ./tests/run_e2e.sh --list-tests
+  ```
 
 ## Project Notes
 

@@ -62,40 +62,12 @@ WORKFLOW_STEPS = {
         optional_fields=['description'],
         supported_providers=set()  # All providers
     ),
-    'stop_node': WorkflowStepSchema(
-        name='stop_node',
-        description='Stop specific node (not yet implemented)',
-        required_fields=['step', 'target_node'],
-        optional_fields=['description'],
-        supported_providers=set()  # Will be aws, azure, gcp when implemented
-    ),
-    'start_node': WorkflowStepSchema(
-        name='start_node',
-        description='Start specific node (not yet implemented)',
-        required_fields=['step', 'target_node'],
-        optional_fields=['description'],
-        supported_providers=set()  # Will be aws, azure, gcp when implemented
-    ),
     'restart_node': WorkflowStepSchema(
         name='restart_node',
         description='Restart specific node',
         required_fields=['step', 'target_node'],
         optional_fields=['description', 'method'],
         supported_providers=set()  # All providers support method='ssh'
-    ),
-    'crash_node': WorkflowStepSchema(
-        name='crash_node',
-        description='Simulate node crash',
-        required_fields=['step', 'target_node'],
-        optional_fields=['description', 'method'],
-        supported_providers=set()  # All providers support method='ssh'
-    ),
-    'custom_command': WorkflowStepSchema(
-        name='custom_command',
-        description='Execute custom command',
-        required_fields=['step', 'custom_command'],
-        optional_fields=['description'],
-        supported_providers=set()  # All providers
     ),
     'destroy': WorkflowStepSchema(
         name='destroy',

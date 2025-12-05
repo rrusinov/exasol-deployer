@@ -101,7 +101,6 @@ class WorkflowStep:
     checks: List[str] = field(default_factory=list)
     allow_failures: List[str] = field(default_factory=list)
     retry: Optional[Dict[str, int]] = None
-    custom_command: Optional[List[str]] = None
 
 
 class ValidationRegistry:
@@ -522,8 +521,7 @@ class WorkflowExecutor:
             command=config.get('command'),
             checks=config.get('checks', []),
             allow_failures=config.get('allow_failures', []),
-            retry=config.get('retry'),
-            custom_command=config.get('custom_command')
+            retry=config.get('retry')
         )
 
     def _execute_step(self, step: WorkflowStep, params: Dict[str, Any]) -> WorkflowStep:
@@ -543,16 +541,8 @@ class WorkflowExecutor:
                 self._execute_stop_cluster(step)
             elif step.step_type == 'start_cluster':
                 self._execute_start_cluster(step)
-            elif step.step_type == 'stop_node':
-                self._execute_stop_node(step)
-            elif step.step_type == 'start_node':
-                self._execute_start_node(step)
             elif step.step_type == 'restart_node':
                 self._execute_restart_node(step)
-            elif step.step_type == 'crash_node':
-                self._execute_crash_node(step)
-            elif step.step_type == 'custom_command':
-                self._execute_custom_command(step)
             elif step.step_type == 'destroy':
                 self._execute_destroy(step)
             else:
@@ -719,44 +709,15 @@ class WorkflowExecutor:
 
         step.result = {'stdout': result.stdout, 'stderr': result.stderr}
 
-    def _execute_stop_node(self, step: WorkflowStep):
-        """Stop a specific node"""
-        if not step.target_node:
-            raise ValueError("target_node is required for stop_node")
-
-        # Node power control is not supported for these providers
-        if self.provider in ["digitalocean", "hetzner", "libvirt"]:
-            raise NotImplementedError(
-                f"Node stop not supported for {self.provider}. "
-                f"Provider does not support power on/off state transitions. "
-                f"Only reboot via SSH is supported."
-            )
-
-        # For other cloud providers that support power control
-        raise NotImplementedError(f"Node stop not implemented for {self.provider}")
-
-    def _execute_start_node(self, step: WorkflowStep):
-        """Start a specific node"""
-        if not step.target_node:
-            raise ValueError("target_node is required for start_node")
-
-        # Node power control is not supported for these providers
-        if self.provider in ["digitalocean", "hetzner", "libvirt"]:
-            raise NotImplementedError(
-                f"Node start not supported for {self.provider}. "
-                f"Provider does not support power on/off state transitions. "
-                f"Only reboot via SSH is supported."
-            )
-
-        # For other cloud providers that support power control
-        raise NotImplementedError(f"Node start not implemented for {self.provider}")
-
     def _execute_restart_node(self, step: WorkflowStep):
-        """Restart a specific node"""
+        """Restart a specific node via SSH reboot command"""
         if not step.target_node:
             raise ValueError("target_node is required for restart_node")
 
         method = step.method or "ssh"
+
+        if method != "ssh":
+            raise ValueError(f"Only method='ssh' is supported for restart_node, got: {method}")
 
         if method == "ssh":
             # Reboot via SSH command - supported for all providers
@@ -798,118 +759,3 @@ class WorkflowExecutor:
             # SSH connection may drop during reboot, so non-zero exit is expected
             step.result = {'method': 'ssh', 'node': step.target_node,
                           'command': ' '.join(ssh_cmd)}
-
-        elif method == "graceful":
-            # Power cycle method - not supported for digitalocean, hetzner, libvirt
-            if self.provider in ["digitalocean", "hetzner", "libvirt"]:
-                raise NotImplementedError(
-                    f"Graceful restart (power cycle) not supported for {self.provider}. "
-                    f"Use method='ssh' for reboot via SSH command."
-                )
-
-            # For other providers with power control support
-            stop_step = WorkflowStep(
-                step_type="stop_node",
-                description=f"Stop {step.target_node}",
-                target_node=step.target_node
-            )
-            self._execute_stop_node(stop_step)
-
-            # Wait a bit
-            time.sleep(5)
-
-            start_step = WorkflowStep(
-                step_type="start_node",
-                description=f"Start {step.target_node}",
-                target_node=step.target_node
-            )
-            self._execute_start_node(start_step)
-
-            step.result = {'method': 'graceful', 'node': step.target_node}
-        else:
-            raise ValueError(f"Unknown restart method: {method}")
-
-    def _execute_crash_node(self, step: WorkflowStep):
-        """Simulate node crash"""
-        if not step.target_node:
-            raise ValueError("target_node is required for crash_node")
-
-        method = step.method or "ssh"
-
-        if method == "ssh":
-            # Crash via SSH - immediate shutdown without graceful stop
-            # Supported for all providers
-            inventory_path = self.deploy_dir / "inventory.ini"
-            ssh_config_path = self.deploy_dir / "ssh_config"
-
-            if not inventory_path.exists():
-                raise RuntimeError(f"Inventory file not found: {inventory_path}")
-
-            # Find the target node in inventory
-            node_host = None
-            with open(inventory_path, 'r') as f:
-                in_nodes_section = False
-                for line in f:
-                    line = line.strip()
-                    if line == "[exasol_nodes]":
-                        in_nodes_section = True
-                        continue
-                    if line.startswith("["):
-                        in_nodes_section = False
-                    if in_nodes_section and line and not line.startswith("#"):
-                        parts = line.split()
-                        if parts and parts[0] == step.target_node:
-                            node_host = parts[0]
-                            break
-
-            if not node_host:
-                raise RuntimeError(f"Could not find node {step.target_node} in inventory")
-
-            # Execute immediate shutdown (simulates crash)
-            # Using 'shutdown -h now' with no grace period simulates a hard crash
-            # Alternative: 'echo b > /proc/sysrq-trigger' for even harder crash (requires sysrq)
-            ssh_cmd = ['ssh', '-F', str(ssh_config_path), '-o', 'BatchMode=yes',
-                      '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10',
-                      node_host, 'sudo', 'sh', '-c',
-                      'nohup bash -c "sleep 0.5 && echo b > /proc/sysrq-trigger || poweroff -f" &']
-
-            result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
-
-            # SSH connection may drop, so non-zero exit is expected
-            step.result = {'method': 'ssh', 'node': step.target_node,
-                          'command': 'immediate poweroff via sysrq or poweroff -f',
-                          'crash_type': 'hard_shutdown'}
-
-        elif method == "destroy":
-            # Power destroy method - only for cloud providers with power control
-            if self.provider in ["digitalocean", "hetzner", "libvirt"]:
-                raise NotImplementedError(
-                    f"Crash via power destroy not supported for {self.provider}. "
-                    f"Use method='ssh' for crash via SSH command."
-                )
-
-            # For other cloud providers that support power control via API
-            raise NotImplementedError(f"Crash via power destroy not implemented for {self.provider}")
-
-        else:
-            raise ValueError(f"Unknown crash method: {method}")
-
-    def _execute_custom_command(self, step: WorkflowStep):
-        """Execute a custom command"""
-        if not step.custom_command:
-            raise ValueError("custom_command is required")
-
-        result = subprocess.run(
-            step.custom_command,
-            capture_output=True, text=True, timeout=300,
-            cwd=str(self.deploy_dir)
-        )
-
-        step.result = {
-            'returncode': result.returncode,
-            'stdout': result.stdout,
-            'stderr': result.stderr
-        }
-
-        if result.returncode != 0:
-            raise RuntimeError(f"Custom command failed: {result.stderr}")

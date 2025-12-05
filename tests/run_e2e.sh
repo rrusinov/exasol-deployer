@@ -19,6 +19,7 @@ Usage: tests/run_e2e.sh [options]
 Options:
   --provider <name[,name...]>   Run only tests for the specified cloud provider(s)
   --parallel <n>                Override parallelism (0 = auto/all tests)
+  --stop-on-error               Stop execution on first test failure (for debugging)
   --db-version <version>        Database version to use (e.g. 8.0.0-x86_64, overrides config)
   --results-dir <path>          Use specific execution directory (default: auto-generated)
   --rerun <exec-dir> <suite>    Rerun specific suite from execution directory
@@ -39,6 +40,7 @@ EOF
 RESULTS_DIR=""
 PROVIDER_FILTER=""
 PARALLEL=0
+STOP_ON_ERROR=0
 DB_VERSION=""
 RERUN_EXEC_DIR=""
 RERUN_SUITE=""
@@ -54,6 +56,10 @@ while [[ $# -gt 0 ]]; do
         --parallel)
             PARALLEL="$2"
             shift 2
+            ;;
+        --stop-on-error)
+            STOP_ON_ERROR=1
+            shift
             ;;
         --db-version)
             DB_VERSION="$2"
@@ -117,12 +123,17 @@ run_framework() {
     if [[ -n "$RESULTS_DIR" ]]; then
         results_dir_args=(--results-dir "$RESULTS_DIR")
     fi
+    local stop_on_error_args=()
+    if [[ "$STOP_ON_ERROR" -eq 1 ]]; then
+        stop_on_error_args=(--stop-on-error)
+    fi
     
     # Run the framework without capturing output so progress bar is visible
     python3 "$SCRIPT_DIR/e2e/e2e_framework.py" run \
         --config "$config_file" \
         "${results_dir_args[@]}" \
         --parallel "$PARALLEL" \
+        "${stop_on_error_args[@]}" \
         "${db_version_args[@]}" \
         "$@"
     
