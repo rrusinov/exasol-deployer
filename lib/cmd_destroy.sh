@@ -153,16 +153,33 @@ cmd_destroy_execute() {
     log_info "Destroying cloud infrastructure..."
 
     local destroy_rc=0
-    if ! tofu destroy -auto-approve; then
-        destroy_rc=$?
-        state_set_status "$deploy_dir" "$STATE_DESTROY_FAILED"
-        log_error "Terraform destroy failed"
-        # Do not exit here with die() because we want to reach the final
-        # inspection/notification block and inform the user that manual
-        # cleanup is required before removing the deployment directory.
-    else
-        destroy_rc=0
-    fi
+    local destroy_attempt=1
+    local destroy_max_attempts=2
+    local destroy_sleep=200  # Azure NIC reservations can take up to 180s to clear
+    while (( destroy_attempt <= destroy_max_attempts )); do
+        local destroy_output
+        if destroy_output=$(tofu destroy -auto-approve 2>&1); then
+            destroy_rc=0
+            log_info "Terraform destroy succeeded on attempt ${destroy_attempt}"
+            log_debug "${destroy_output}"
+            break
+        else
+            destroy_rc=$?
+            log_error "Terraform destroy failed (attempt ${destroy_attempt}/${destroy_max_attempts})"
+            log_error "${destroy_output}"
+            # Retry once if NICs are reserved for another VM (Azure transient condition)
+            if (( destroy_attempt < destroy_max_attempts )) && [[ "${destroy_output}" == *"NicReservedForAnotherVm"* ]]; then
+                log_warn "NIC reserved error detected; waiting ${destroy_sleep}s before retrying destroy"
+                sleep "${destroy_sleep}"
+                destroy_attempt=$((destroy_attempt + 1))
+                continue
+            fi
+            # Break on non-retryable or final failure
+            state_set_status "$deploy_dir" "$STATE_DESTROY_FAILED"
+            log_error "Terraform destroy failed"
+            break
+        fi
+    done
 
     # Clean up generated files only if destroy succeeded
     if [[ $destroy_rc -eq 0 ]]; then

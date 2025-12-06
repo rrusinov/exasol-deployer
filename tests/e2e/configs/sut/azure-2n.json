@@ -1,8 +1,8 @@
 {
-  "description": "Azure single node configuration (Standard_D2as_v4: 2 vCPU, 8GB RAM)",
+  "description": "Azure 2-node cluster configuration (Standard_D2as_v4: 2 vCPU, 8GB RAM, fits 4 vCPU quota)",
   "provider": "azure",
   "parameters": {
-    "cluster_size": 1,
+    "cluster_size": 2,
     "instance_type": "Standard_D2as_v4",
     "data_volumes_per_node": 1,
     "data_volume_size": 20,

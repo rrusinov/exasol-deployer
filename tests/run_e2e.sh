@@ -12,6 +12,107 @@ set -euo pipefail
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Track background processes and deployment directories for cleanup
+declare -a BACKGROUND_PIDS=()
+declare -a DEPLOYMENT_DIRS=()
+
+cleanup_on_interrupt() {
+    echo ""
+    echo "=========================================="
+    echo "Interrupt received - cleaning up..."
+    echo "=========================================="
+    
+    # Kill all background test processes
+    if [[ ${#BACKGROUND_PIDS[@]} -gt 0 ]]; then
+        echo "Terminating ${#BACKGROUND_PIDS[@]} background test process(es)..."
+        for pid in "${BACKGROUND_PIDS[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "  Killing process $pid"
+                kill -TERM "$pid" 2>/dev/null || true
+            fi
+        done
+        # Wait a moment for graceful termination
+        sleep 2
+        # Force kill any remaining processes
+        for pid in "${BACKGROUND_PIDS[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "  Force killing process $pid"
+                kill -KILL "$pid" 2>/dev/null || true
+            fi
+        done
+    fi
+    
+    # Destroy all active deployments with retry logic
+    if [[ ${#DEPLOYMENT_DIRS[@]} -gt 0 ]]; then
+        echo ""
+        echo "Destroying ${#DEPLOYMENT_DIRS[@]} active deployment(s)..."
+        
+        # Try up to 3 times
+        for attempt in 1 2 3; do
+            declare -a failed_dirs=()
+            
+            # Launch destroy operations in parallel
+            for deploy_dir in "${DEPLOYMENT_DIRS[@]}"; do
+                if [[ -d "$deploy_dir" && -f "$deploy_dir/.exasol.json" ]]; then
+                    if [[ $attempt -eq 1 ]]; then
+                        echo "  Destroying: $deploy_dir"
+                    else
+                        echo "  Retry $attempt: $deploy_dir"
+                    fi
+                    (
+                        output=$(./exasol destroy --auto-approve --deployment-dir "$deploy_dir" 2>&1)
+                        echo "$output" | grep -E "INFO|ERROR|Destroy" || true
+                        # Check if destroy failed
+                        if echo "$output" | grep -qE "ERROR|Another operation is in progress"; then
+                            exit 1
+                        fi
+                    ) &
+                fi
+            done
+            
+            # Wait for all destroy operations
+            echo "  Waiting for destroy operations to complete..."
+            wait
+            
+            # Check which deployments still exist
+            for deploy_dir in "${DEPLOYMENT_DIRS[@]}"; do
+                if [[ -d "$deploy_dir" && -f "$deploy_dir/.exasol.json" ]]; then
+                    # Check if terraform state still exists
+                    if [[ -f "$deploy_dir/terraform.tfstate" ]] && grep -q '"resources":' "$deploy_dir/terraform.tfstate" 2>/dev/null; then
+                        failed_dirs+=("$deploy_dir")
+                    fi
+                fi
+            done
+            
+            # If all succeeded, break
+            if [[ ${#failed_dirs[@]} -eq 0 ]]; then
+                echo "  All deployments destroyed successfully"
+                break
+            fi
+            
+            # Update list for retry
+            DEPLOYMENT_DIRS=("${failed_dirs[@]}")
+            
+            if [[ $attempt -lt 3 ]]; then
+                echo "  ${#failed_dirs[@]} deployment(s) still active, retrying in 3 seconds..."
+                sleep 3
+            else
+                echo "  Warning: ${#failed_dirs[@]} deployment(s) could not be destroyed after 3 attempts"
+                for dir in "${failed_dirs[@]}"; do
+                    echo "    - $dir"
+                done
+            fi
+        done
+    fi
+    
+    echo ""
+    echo "Cleanup complete"
+    exit 130
+}
+
+# Set up trap for SIGINT (Ctrl+C) and SIGTERM
+trap cleanup_on_interrupt SIGINT SIGTERM
+
 usage() {
     cat <<'EOF'
 Usage: tests/run_e2e.sh [options]
@@ -376,8 +477,139 @@ else
             cfg_pids["$pid"]="$cfg"
             cfg_results["$pid"]="$cfg_results_dir"
             current_jobs=$((current_jobs + 1))
+            
+            # Track for cleanup on interrupt
+            BACKGROUND_PIDS+=("$pid")
+            
+            # Track deployment directories for cleanup
+            if [[ -d "$cfg_results_dir/deployments" ]]; then
+                for deploy_dir in "$cfg_results_dir/deployments"/*; do
+                    if [[ -d "$deploy_dir" ]]; then
+                        DEPLOYMENT_DIRS+=("$deploy_dir")
+                    fi
+                done
+            fi
+            
             echo "Started $cfg (pid $pid), results: $cfg_results_dir"
         done
+
+        # Monitor progress while jobs are running
+        echo ""
+        echo "Monitoring progress across ${#cfg_pids[@]} provider(s)..."
+        echo "(Press Ctrl+C to interrupt and clean up all deployments)"
+        echo ""
+        
+        # Track completion
+        declare -A completed_pids=()
+        total_providers=${#cfg_pids[@]}
+        
+        while [[ ${#completed_pids[@]} -lt $total_providers ]]; do
+            # Update deployment directories list for cleanup
+            DEPLOYMENT_DIRS=()
+            for cfg_results_dir in "${cfg_results[@]}"; do
+                if [[ -d "$cfg_results_dir/deployments" ]]; then
+                    for deploy_dir in "$cfg_results_dir/deployments"/*; do
+                        if [[ -d "$deploy_dir" && -f "$deploy_dir/.exasol.json" ]]; then
+                            DEPLOYMENT_DIRS+=("$deploy_dir")
+                        fi
+                    done
+                fi
+            done
+            
+            # Build progress summary for all providers
+            progress_lines=()
+            
+            for pid in "${!cfg_pids[@]}"; do
+                cfg="${cfg_pids[$pid]}"
+                cfg_name="$(basename "$cfg" .json)"
+                cfg_results_dir="${cfg_results[$pid]}"
+                results_file="$cfg_results_dir/results.json"
+                
+                # Check if process completed
+                if [[ -n "${completed_pids[$pid]:-}" ]]; then
+                    progress_lines+=("  $cfg_name: COMPLETE")
+                    continue
+                fi
+                
+                # Check if process is still running
+                if ! kill -0 "$pid" 2>/dev/null; then
+                    completed_pids["$pid"]=1
+                    progress_lines+=("  $cfg_name: COMPLETE")
+                    continue
+                fi
+                
+                # Show progress from results.json or run.log
+                if [[ -f "$results_file" ]]; then
+                    progress_info=$(python3 -c "
+import json
+try:
+    with open('$results_file', 'r') as f:
+        data = json.load(f)
+        results = data.get('results', [])
+        total = len(results)
+        completed = sum(1 for r in results if 'success' in r)
+        if total > 0:
+            print(f'{completed}/{total}')
+        else:
+            print('0/0')
+except:
+    print('initializing')
+" 2>/dev/null)
+                    progress_lines+=("  $cfg_name: $progress_info")
+                else
+                    # Parse run.log for progress
+                    run_log="$cfg_results_dir/run.log"
+                    if [[ -f "$run_log" ]]; then
+                        # Count completed tests from log (match only test completion lines with duration)
+                        completed_count=$(grep -c "COMPLETED duration:\|FAILED duration:" "$run_log" 2>/dev/null || echo "0")
+                        # Strip leading zeros and ensure numeric
+                        completed_count=$(echo "$completed_count" | sed 's/^0*//' || echo "0")
+                        completed_count=${completed_count:-0}
+                        
+                        # Check if tests are running
+                        if grep -q "STARTED workflow" "$run_log" 2>/dev/null; then
+                            if [[ $completed_count -gt 0 ]]; then
+                                progress_lines+=("  $cfg_name: $completed_count completed, running...")
+                            else
+                                progress_lines+=("  $cfg_name: running...")
+                            fi
+                        else
+                            progress_lines+=("  $cfg_name: starting...")
+                        fi
+                    else
+                        progress_lines+=("  $cfg_name: initializing...")
+                    fi
+                fi
+            done
+            
+            # Display progress (clear and rewrite all lines)
+            if [[ ${#completed_pids[@]} -lt $total_providers ]]; then
+                # Move cursor up and clear lines from previous iteration
+                if [[ -n "${prev_line_count:-}" ]]; then
+                    for ((i=0; i<prev_line_count; i++)); do
+                        printf "\033[1A\033[K"
+                    done
+                fi
+                
+                # Print all progress lines
+                for line in "${progress_lines[@]}"; do
+                    echo "$line"
+                done
+                
+                # Remember line count for next iteration
+                prev_line_count=${#progress_lines[@]}
+                sleep 2
+            else
+                # Final display - just print without cursor manipulation
+                for line in "${progress_lines[@]}"; do
+                    echo "$line"
+                done
+            fi
+        done
+        
+        echo ""
+        echo "All providers completed"
+        echo ""
 
         # Wait for jobs and aggregate status
         for pid in "${!cfg_pids[@]}"; do
@@ -406,6 +638,15 @@ else
             fi
         done
     fi
+fi
+
+# Generate results index page
+echo ""
+echo "Generating results index..."
+if python3 "$SCRIPT_DIR/e2e/generate_results_index.py" ./tmp/tests 2>/dev/null; then
+    echo "Results index: file://$(pwd)/tmp/tests/index.html"
+else
+    echo "Warning: Failed to generate results index" >&2
 fi
 
 exit "$overall_status"

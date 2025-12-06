@@ -675,6 +675,52 @@ Database, AdminUI, and host OS credentials are stored in `.credentials.json` (pr
 3. Run `./exasol status --deployment-dir /Users/ruslan.rusinov/work/exasol-deployer/.` to check status
 4. Run `./exasol destroy --deployment-dir /Users/ruslan.rusinov/work/exasol-deployer/.` to tear down
 
+## Cleanup and Resource Management
+
+### Resource Limit Checking
+
+Before deploying, check your cloud provider resource limits and current usage:
+
+```bash
+# Generate HTML report with all providers and regions
+./scripts/generate-limits-report.sh --output limits-report.html
+
+# Check specific provider
+./scripts/generate-limits-report.sh --provider azure --output azure-report.html
+```
+
+### Bulk Resource Cleanup
+
+If you have orphaned resources or want to clean up multiple deployments at once, use the unified cleanup script:
+
+```bash
+# List all resources without deleting (dry run)
+./scripts/cleanup-resources.sh --provider azure --dry-run
+
+# Delete all resources with confirmation prompt
+./scripts/cleanup-resources.sh --provider hetzner
+
+# Delete resources without confirmation
+./scripts/cleanup-resources.sh --provider gcp --yes
+
+# Use custom prefix filter
+./scripts/cleanup-resources.sh --provider aws --prefix myapp --yes
+```
+
+**Supported providers:** aws, azure, gcp, hetzner, digitalocean, libvirt
+
+**Note:** The scripts in `scripts/` directory are not included in packaged releases as they require cloud provider CLI tools (aws, az, gcloud, hcloud, doctl, virsh) to be installed. See [Scripts README](scripts/README.md) for prerequisites and detailed information.
+
+See [scripts/README.md](scripts/README.md) for detailed documentation.
+
+### Per-Deployment Cleanup
+
+To destroy a specific deployment:
+
+```bash
+./exasol destroy --deployment-dir ./my-deployment
+```
+
 ## Troubleshooting
 
 ### Manual Power Control (Hetzner, DigitalOcean, libvirt)

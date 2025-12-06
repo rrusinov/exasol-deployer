@@ -166,6 +166,19 @@ log_plugin_cache_dir() {
     log_info "Using provider cache directory: ${TF_PLUGIN_CACHE_DIR}"
 }
 
+# Registry client retry defaults (honor user overrides)
+setup_registry_retries() {
+    if [[ -z "${TF_REGISTRY_CLIENT_RETRY_MAX:-}" ]]; then
+        export TF_REGISTRY_CLIENT_RETRY_MAX=6
+    fi
+    if [[ -z "${TF_REGISTRY_CLIENT_TIMEOUT:-}" ]]; then
+        export TF_REGISTRY_CLIENT_TIMEOUT=30
+    fi
+}
+
+# Initialize registry retry defaults
+setup_registry_retries
+
 # ==============================================================================
 # OPERATION GUARD
 # ==============================================================================
