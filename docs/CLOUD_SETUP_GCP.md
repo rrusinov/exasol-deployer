@@ -10,6 +10,20 @@ This guide provides detailed instructions for setting up GCP credentials and dep
 - Ansible installed
 - jq installed
 
+## Required Permissions
+
+You can check the exact GCP IAM permissions required for deploying Exasol:
+
+```bash
+./exasol init --cloud-provider gcp --show-permissions
+```
+
+This will display the complete IAM policy in JSON format. If the permissions file is not available, generate it first:
+
+```bash
+./build/generate_permissions.sh
+```
+
 ## Step 1: Create Google Cloud Account
 
 If you don't have a GCP account:

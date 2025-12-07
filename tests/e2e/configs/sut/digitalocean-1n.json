@@ -1,0 +1,11 @@
+{
+  "description": "DigitalOcean single node configuration",
+  "provider": "digitalocean",
+  "parameters": {
+    "cluster_size": 1,
+    "instance_type": "s-2vcpu-4gb",
+    "data_volumes_per_node": 1,
+    "data_volume_size": 20,
+    "root_volume_size": 50
+  }
+}

@@ -1,30 +1,109 @@
 # Create Automated Release Build System
 
-Create a build script that generates a single self-contained bash installer executable with the following sequential workflow:
+Create a build script that generates a single self-contained bash installer executable following best practices for shell script installers.
 
 ## Phase 1: Build Process (Executed on CI/Build Machine)
 
-1. **Generate Version Information**: Create automatic versioning using timestamp + git hash (format: YYYYMMDD-HHMMSS-GITSHORT)
-2. **Regenerate Cloud Permissions**: Use pike tool to scan all Terraform templates and update REQUIRED_PERMISSIONS for each cloud provider
-3. **Create Production Artifact**: Bundle only essential files (exclude .md docs, tests, development files) into a single self-contained bash script
-4. **Make Executable**: Ensure the final artifact is a standalone bash script that can be executed directly
-5. **Full Functionality**: This standalone release artifact should be fully functional (contain all templates, sub scripts, etc)
-6. **Install Option**: The new option `--install` (with optional arguments) should do the Installation Process from Phase 2.
+### Build Script (`build/create_release.sh`)
+
+1. **Version Generation**: Auto-generate version from git tags or timestamp + git hash (format: v1.2.3 or YYYYMMDD-GITSHORT)
+2. **Payload Preparation**: 
+   - Bundle essential runtime files (lib/, templates/, exasol main script, versions.conf, instance-types.conf)
+   - Exclude development files (.md docs, tests/, .git/, .venv/, build/, todo/)
+   - Create tarball payload with deterministic ordering
+3. **Self-Extracting Archive**: Generate installer using makeself-style approach:
+   - Installer header (bash script with installation logic)
+   - Embedded base64-encoded tarball payload
+   - Extraction and installation functions
+4. **Metadata Embedding**: Include version, checksum, build date in installer header
+5. **Executable Output**: Produce `exasol-installer.sh` with +x permissions
+
+### Installer Structure
+```
+#!/usr/bin/env bash
+# Installer header with metadata and functions
+# __ARCHIVE_BELOW__
+# <base64-encoded tarball>
+```
 
 ## Phase 2: Installation Process (Executed on End-User Machine)
 
-1. **One-Line Installation**: Support `curl https://... | bash` execution pattern
-2. **Platform Detection**: Auto-detect OS (Linux/macOS/WSL) and shell environment (bash/zsh/fish)
-3. **Rootless Installation**: Install to appropriate user directory (~/.local/bin/exasol on Linux, ~/bin/exasol on macOS)
-4. **User Confirmation**: Prompt user to confirm installation location and PATH modifications
-5. **Update Detection**: Check if exasol is already installed and prompt for update confirmation
-6. **PATH Configuration**: Automatically add exasol to PATH for all detected shells (bash, zsh, fish) with user confirmation
-7. **Cross-Platform Compatibility**: Ensure works on Linux distributions, macOS Terminal, WSL, and other Unix-like systems
+### Installer Modes
+
+**Direct Execution**: `./exasol-installer.sh [OPTIONS]`
+**Pipe Installation**: `curl -fsSL https://... | bash -s -- [OPTIONS]`
+
+### Installation Options
+
+- `--install [PATH]`: Install to specified path (default: auto-detect)
+- `--prefix PATH`: Custom installation prefix
+- `--no-path`: Skip PATH configuration
+- `--force`: Overwrite existing installation without prompting
+- `--extract-only PATH`: Extract files without installing
+- `--version`: Show installer version and exit
+- `--help`: Display usage information
+
+### Installation Flow
+
+1. **Preflight Checks**:
+   - Verify bash version (4.0+)
+   - Check required commands (tar, base64, mkdir, chmod)
+   - Validate disk space availability
+   - Check write permissions
+
+2. **Platform Detection**:
+   - OS detection (Linux/macOS/WSL/BSD)
+   - Shell detection (bash/zsh/fish)
+   - XDG Base Directory compliance on Linux
+
+3. **Installation Path Selection**:
+   - Linux: `~/.local/bin` (XDG standard)
+   - macOS: `~/bin` or `/usr/local/bin` (with sudo)
+   - WSL: `~/.local/bin`
+   - Custom: User-specified via `--prefix`
+
+4. **Update Detection**:
+   - Check for existing installation
+   - Compare versions (semantic or timestamp)
+   - Prompt for confirmation unless `--force`
+   - Backup existing installation before update
+
+5. **Extraction & Installation**:
+   - Create temporary directory (mktemp)
+   - Extract embedded tarball to temp location
+   - Verify extraction integrity
+   - Copy files to installation directory
+   - Set proper permissions (755 for executables)
+   - Clean up temporary files
+
+6. **PATH Configuration** (unless `--no-path`):
+   - Detect shell config files (~/.bashrc, ~/.zshrc, ~/.config/fish/config.fish)
+   - Check if PATH already configured
+   - Add PATH export with idempotent guards
+   - Prompt user to reload shell or source config
+
+7. **Post-Install Verification**:
+   - Verify exasol executable is accessible
+   - Run basic health check (`exasol --version`)
+   - Display success message with next steps
+
+### Error Handling
+
+- Trap EXIT/ERR for cleanup
+- Rollback on installation failure
+- Preserve existing installation on update failure
+- Clear error messages with troubleshooting hints
+- Non-zero exit codes for scripting
 
 ## Success Criteria
 
-- Single executable file that handles complete installation
-- No external dependencies beyond curl/bash
-- Graceful handling of existing installations
-- Clear user prompts with sensible defaults
-- Automatic PATH setup for all common shells
+- Single self-contained executable (no external dependencies except bash/tar/base64)
+- Idempotent installation (safe to run multiple times)
+- Atomic updates (rollback on failure)
+- XDG Base Directory compliance
+- Works with `curl | bash` pattern
+- Supports both interactive and non-interactive modes
+- Proper exit codes for automation
+- Clear, actionable error messages
+- Minimal user interaction with sensible defaults
+- Respects user environment (no sudo required for user install)

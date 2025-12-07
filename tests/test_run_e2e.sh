@@ -58,6 +58,16 @@ else
     test_fail "--list-tests didn't show expected providers"
 fi
 
+# Test 2b: --list-tests all shows all providers
+test_feature "--list-tests all shows all providers"
+output=$("${RUN_E2E_BASE[@]}" --list-tests all 2>&1)
+if echo "$output" | grep -q "Provider: LIBVIRT" && \
+   echo "$output" | grep -q "Total:.*tests"; then
+    test_pass
+else
+    test_fail "--list-tests all didn't show expected providers"
+fi
+
 # Test 3: --list-tests with provider filter
 test_feature "--list-tests libvirt filters correctly"
 output=$("${RUN_E2E_BASE[@]}" --list-tests libvirt 2>&1)

@@ -10,6 +10,20 @@ This guide provides detailed instructions for setting up Azure credentials and d
 - Ansible installed
 - jq installed
 
+## Required Permissions
+
+You can check the exact Azure permissions required for deploying Exasol:
+
+```bash
+./exasol init --cloud-provider azure --show-permissions
+```
+
+This will display the complete role permissions in JSON format. If the permissions file is not available, generate it first:
+
+```bash
+./build/generate_permissions.sh
+```
+
 ## Step 1: Create Azure Account
 
 If you don't have an Azure account:

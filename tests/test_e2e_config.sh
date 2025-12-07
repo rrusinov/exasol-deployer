@@ -79,7 +79,7 @@ fi
 # Test 4: Verify provider configs reference valid SUT and workflow files
 test_config_structure "Provider configs reference valid files"
 provider_refs_valid=true
-for provider_file in "$CONFIGS_DIR"/{aws,azure,gcp,libvirt}.json; do
+for provider_file in "$CONFIGS_DIR"/{aws,azure,gcp,libvirt,hetzner,digitalocean}.json; do
     if [[ -f "$provider_file" ]]; then
         # Extract SUT and workflow references
         refs=$(python3 <<EOF
@@ -237,7 +237,7 @@ fi
 # Test 8: Verify all providers have matching provider field
 test_config_structure "Provider configs have matching provider field"
 provider_field_valid=true
-for provider_file in "$CONFIGS_DIR"/{aws,azure,gcp,libvirt}.json; do
+for provider_file in "$CONFIGS_DIR"/{aws,azure,gcp,libvirt,hetzner,digitalocean}.json; do
     if [[ -f "$provider_file" ]]; then
         provider_name=$(basename "$provider_file" .json)
         config_provider=$(python3 -c "import json; print(json.load(open('$provider_file')).get('provider', ''))")

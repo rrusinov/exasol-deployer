@@ -20,6 +20,7 @@ This directory contains a deployment configuration for Exasol database.
 - **Automated Configuration**: Ansible playbooks for complete cluster setup
 - **Credential Management**: Secure password generation and storage for database, AdminUI, and host OS access
 - **Dynamic Configuration**: All Terraform variables generated from command-line parameters and version configurations
+- **Permission Analysis**: Static permission analysis for cloud provider templates to help configure cloud accounts
 
 ## Prerequisites
 
@@ -142,6 +143,22 @@ Install libvirt and KVM, then ensure your user is in the `libvirt` and `kvm` gro
 
 # List available database versions (shows availability and architecture)
 ./exasol init --list-versions
+```
+
+### 1.5 Check Required Permissions (Optional)
+
+Before deploying, you can check the required cloud permissions:
+
+```bash
+# Show required permissions for a cloud provider
+./exasol init --cloud-provider aws --show-permissions
+```
+
+If permissions are not available, generate them (only needed when templates change):
+
+```bash
+# Generate permissions tables for all providers
+./build/generate_permissions.sh
 ```
 
 **For detailed cloud provider setup, see:**
@@ -392,6 +409,7 @@ Initialize a new deployment directory with configuration files.
 - `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., `exasol-2025.1.8`; x86_64 is implicit).
 - `--list-versions`: List all available database versions (with availability and architecture) and exit.
 - `--list-providers`: List all supported cloud providers and exit.
+- `--show-permissions`: Show required cloud permissions for the specified provider and exit.
 - `--cluster-size number`: Number of nodes (default: 1).
 - `--instance-type string`: Instance/VM type (auto-detected from version if omitted).
 - `--data-volume-size number`: Data volume size in GB (default: 100).
@@ -657,6 +675,52 @@ Database, AdminUI, and host OS credentials are stored in `.credentials.json` (pr
 2. Run `./exasol deploy --deployment-dir /Users/ruslan.rusinov/work/exasol-deployer/.` to deploy
 3. Run `./exasol status --deployment-dir /Users/ruslan.rusinov/work/exasol-deployer/.` to check status
 4. Run `./exasol destroy --deployment-dir /Users/ruslan.rusinov/work/exasol-deployer/.` to tear down
+
+## Cleanup and Resource Management
+
+### Resource Limit Checking
+
+Before deploying, check your cloud provider resource limits and current usage:
+
+```bash
+# Generate HTML report with all providers and regions
+./scripts/generate-limits-report.sh --output limits-report.html
+
+# Check specific provider
+./scripts/generate-limits-report.sh --provider azure --output azure-report.html
+```
+
+### Bulk Resource Cleanup
+
+If you have orphaned resources or want to clean up multiple deployments at once, use the unified cleanup script:
+
+```bash
+# List all resources without deleting (dry run)
+./scripts/cleanup-resources.sh --provider azure --dry-run
+
+# Delete all resources with confirmation prompt
+./scripts/cleanup-resources.sh --provider hetzner
+
+# Delete resources without confirmation
+./scripts/cleanup-resources.sh --provider gcp --yes
+
+# Use custom prefix filter
+./scripts/cleanup-resources.sh --provider aws --prefix myapp --yes
+```
+
+**Supported providers:** aws, azure, gcp, hetzner, digitalocean, libvirt
+
+**Note:** The scripts in `scripts/` directory are not included in packaged releases as they require cloud provider CLI tools (aws, az, gcloud, hcloud, doctl, virsh) to be installed. See [Scripts README](scripts/README.md) for prerequisites and detailed information.
+
+See [scripts/README.md](scripts/README.md) for detailed documentation.
+
+### Per-Deployment Cleanup
+
+To destroy a specific deployment:
+
+```bash
+./exasol destroy --deployment-dir ./my-deployment
+```
 
 ## Troubleshooting
 

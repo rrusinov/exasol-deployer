@@ -774,15 +774,15 @@ class WorkflowExecutor:
         """Execute a custom shell command with variable substitution
         
         Supported variables:
-        - $deployment_dir: Path to the deployment directory
+        - $deployment_dir: Path to the deployment directory (absolute path)
         - $provider: Cloud provider name
         """
         if not step.command:
             raise ValueError("command is required for custom_command step")
         
-        # Substitute variables
+        # Substitute variables - use absolute path to avoid issues with relative paths
         command = step.command
-        command = command.replace('$deployment_dir', str(self.deploy_dir))
+        command = command.replace('$deployment_dir', str(self.deploy_dir.resolve()))
         command = command.replace('$provider', self.provider)
         
         self.log_callback(f"Executing custom command: {command}")

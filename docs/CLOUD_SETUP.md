@@ -2,6 +2,26 @@
 
 This guide provides instructions for setting up credentials and accounts for each supported cloud provider to deploy Exasol using this deployer tool.
 
+## Permission Requirements
+
+Before setting up cloud credentials, you can check the required permissions for your chosen cloud provider:
+
+```bash
+# Check required permissions for a specific provider
+./exasol init --cloud-provider aws --show-permissions
+./exasol init --cloud-provider azure --show-permissions
+./exasol init --cloud-provider gcp --show-permissions
+```
+
+**Note:** The permission files are generated statically from the Terraform templates. If permissions are not available, you can generate them by running:
+
+```bash
+# Generate permission tables for all providers
+./build/generate_permissions.sh
+```
+
+This requires either the [pike](https://github.com/JamesWoolfenden/pike) tool installed locally, or Docker/Podman to run the pike container.
+
 ## Supported Cloud Providers
 
 The Exasol Cloud Deployer supports the following cloud providers:

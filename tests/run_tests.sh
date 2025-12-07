@@ -73,9 +73,11 @@ run_test_file "$TEST_DIR/test_template_validation_libvirt.sh"
 run_test_file "$TEST_DIR/test_url_availability.sh"
 run_test_file "$TEST_DIR/test_documentation.sh"
 run_test_file "$TEST_DIR/test_help_options.sh"
+run_test_file "$TEST_DIR/test_permissions.sh"
 run_test_file "$TEST_DIR/test_e2e_framework.sh"
 run_test_file "$TEST_DIR/test_e2e_config.sh"
 run_test_file "$TEST_DIR/test_run_e2e.sh"
+run_test_file "$TEST_DIR/test_generate_limits_report.sh"
 
 # Overall summary
 echo -e "${BLUE}=========================================${NC}"

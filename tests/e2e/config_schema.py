@@ -154,7 +154,7 @@ SUT_PARAMETERS = {
     'instance_type': {
         'type': 'string',
         'cli_flag': '--instance-type',
-        'providers': {'aws', 'azure', 'gcp', 'digitalocean'},
+        'providers': {'aws', 'azure', 'gcp', 'digitalocean', 'hetzner'},
         'description': 'Cloud instance type'
     },
     'libvirt_memory': {

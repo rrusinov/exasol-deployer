@@ -18,6 +18,7 @@ import html
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import ssl
@@ -200,6 +201,7 @@ class HTMLReportGenerator:
             error = html.escape(result.get('error') or '')
             suite_name = html.escape(result.get('suite', result.get('deployment_id', 'n/a')))
             db_version = html.escape(result.get('db_version', 'default'))
+            log_errors = result.get('log_errors') or []
             
             # Build workflow steps display
             steps_html = []
@@ -226,6 +228,21 @@ class HTMLReportGenerator:
             # Description from SUT
             sut_desc = html.escape(result.get('sut_description') or '')
             
+            # Error snippets (for failures)
+            log_errors_html = ''
+            if not result.get('success') and log_errors:
+                snippets = ''.join(f"<div class='error-line'>{html.escape(line)}</div>" for line in log_errors)
+                log_errors_html = f"<div class='config-section'><strong>Error snippets:</strong>{snippets}</div>"
+
+            cleanup_html = ''
+            cleanup_info = result.get('cleanup')
+            if not result.get('success') and cleanup_info:
+                status = html.escape(cleanup_info.get('status', 'unknown'))
+                rc = cleanup_info.get('return_code')
+                err = html.escape(cleanup_info.get('error') or '')
+                rc_text = f" (rc={rc})" if rc is not None else ""
+                cleanup_html = f"<div class='config-section'><strong>Cleanup:</strong> {status}{rc_text} {err}</div>"
+            
             rows.append(
                 f"<tr class='{row_class}'>"
                 f"<td><strong>{suite_name}</strong><br/><small>{sut_desc}</small></td>"
@@ -238,6 +255,8 @@ class HTMLReportGenerator:
                 "</tr>"
                 f"<tr class='{row_class}-details'><td colspan='7'><details><summary>Steps & Config</summary>"
                 f"<div class='config-section'><strong>Parameters:</strong> {params_display_full}</div>"
+                f"{cleanup_html}"
+                f"{log_errors_html}"
                 f"{steps_display}</details></td></tr>"
             )
         rows_html = '\n'.join(rows)
@@ -263,6 +282,7 @@ summary {{ cursor: pointer; font-weight: bold; padding: 0.5rem; background: #f0f
 .summary-box {{ background: #f0f0f0; padding: 1rem; border-radius: 5px; margin-bottom: 1rem; }}
 .summary-box h2 {{ margin-top: 0; }}
 .config-section {{ background: #f9f9f9; padding: 0.5rem; margin: 0.3rem 0; border-radius: 3px; }}
+.error-line {{ font-family: monospace; color: #a8071a; padding: 0.2rem 0; }}
 </style>
 </head>
 <body>
@@ -345,6 +365,13 @@ class E2ETestFramework:
         
         # Register cleanup function to be called on exit
         atexit.register(self._cleanup)
+        
+        # Extra environment for terraform provider retries (configurable via env)
+        self.extra_env = {}
+        if 'TF_REGISTRY_CLIENT_RETRY_MAX' not in os.environ:
+            self.extra_env['TF_REGISTRY_CLIENT_RETRY_MAX'] = '6'
+        if 'TF_REGISTRY_CLIENT_TIMEOUT' not in os.environ:
+            self.extra_env['TF_REGISTRY_CLIENT_TIMEOUT'] = '30'
 
     def _resolve_db_version(self, suite_db_version: Optional[Union[str, List[str]]]) -> Optional[str]:
         """Resolve database version with fallback support.
@@ -728,11 +755,6 @@ class E2ETestFramework:
         self.generated_ids.add(final_name)
         return final_name
 
-    def _provider_supports_spot(self, provider: str) -> bool:
-        """Return True if the provider supports spot/preemptible instances."""
-        normalized = provider.lower()
-        return normalized in {'aws', 'azure', 'gcp'}
-
     def generate_test_plan(
         self,
         dry_run: bool = False,
@@ -766,8 +788,6 @@ class E2ETestFramework:
                 'sut_description': suite_config.get('sut_description', ''),
                 'db_version': suite_config.get('db_version')
             }
-            if self._provider_supports_spot(suite_config['provider']):
-                test_case['parameters'].setdefault('enable_spot_instances', True)
             test_plan.append(test_case)
 
         if dry_run:
@@ -954,9 +974,19 @@ class E2ETestFramework:
                         deploy_dir = Path(result.get('deployment_dir', ''))
                         if deploy_dir.exists():
                             try:
-                                self._cleanup_failed_deployment(deploy_dir, result['deployment_id'])
-                                self.logger.info(f"Cleanup completed for {result['deployment_id']}")
+                                cleanup_info = self._cleanup_failed_deployment(
+                                    deploy_dir,
+                                    result['deployment_id'],
+                                    provider=result.get('provider'),
+                                    log_path=Path(result.get('log_file', '')) if result.get('log_file') else None
+                                )
+                                result['cleanup'] = cleanup_info
+                                if cleanup_info.get('status') == 'completed':
+                                    self.logger.info(f"Cleanup completed for {result['deployment_id']}")
+                                else:
+                                    self.logger.warning(f"Cleanup incomplete for {result['deployment_id']}: {cleanup_info.get('error')}")
                             except Exception as cleanup_err:
+                                result['cleanup'] = {'status': 'failed', 'error': str(cleanup_err)}
                                 self.logger.error(f"Cleanup failed for {result['deployment_id']}: {cleanup_err}")
                         
                         # Stop execution if --stop-on-error is set
@@ -985,7 +1015,7 @@ class E2ETestFramework:
         
         return results
 
-    def _cleanup_failed_deployment(self, deploy_dir: Path, deployment_id: str):
+    def _cleanup_failed_deployment(self, deploy_dir: Path, deployment_id: str, provider: Optional[str] = None, log_path: Optional[Path] = None) -> Dict[str, Any]:
         """Clean up a failed deployment to free resources.
         
         Attempts to destroy the infrastructure and remove deployment directory.
@@ -993,6 +1023,30 @@ class E2ETestFramework:
         """
         self.logger.info(f"Cleaning up failed deployment: {deployment_id}")
         
+        cleanup_info = {
+            'deployment_id': deployment_id,
+            'provider': provider,
+            'status': 'started',
+            'return_code': None,
+            'error': None
+        }
+
+        def log_msg(msg: str):
+            self.logger.info(msg)
+            if log_path:
+                try:
+                    self._log_to_file(log_path, msg)
+                except Exception:
+                    pass
+
+        def log_err(msg: str):
+            self.logger.error(msg)
+            if log_path:
+                try:
+                    self._log_to_file(log_path, msg)
+                except Exception:
+                    pass
+
         # Try to run destroy command
         destroy_cmd = [
             './exasol', 'destroy',
@@ -1008,18 +1062,33 @@ class E2ETestFramework:
                 timeout=300,  # 5 minute timeout
                 cwd=self.repo_root
             )
-            
+            cleanup_info['return_code'] = result.returncode
+
+            if result.stdout:
+                log_msg(f"Destroy STDOUT:\n{result.stdout.strip()}")
+            if result.stderr:
+                log_err(f"Destroy STDERR:\n{result.stderr.strip()}")
+
             if result.returncode != 0:
-                self.logger.warning(
+                cleanup_info['status'] = 'failed'
+                cleanup_info['error'] = f"Destroy returned {result.returncode}"
+                log_err(
                     f"Destroy command returned {result.returncode}, "
                     f"resources may not be fully cleaned up"
                 )
-                # Continue anyway - partial cleanup is better than none
+            else:
+                cleanup_info['status'] = 'completed'
         
         except subprocess.TimeoutExpired:
-            self.logger.error(f"Destroy command timed out for {deployment_id}")
+            cleanup_info['status'] = 'timeout'
+            cleanup_info['error'] = 'Destroy command timed out'
+            log_err(f"Destroy command timed out for {deployment_id}")
         except Exception as e:
-            self.logger.error(f"Destroy command failed for {deployment_id}: {e}")
+            cleanup_info['status'] = 'failed'
+            cleanup_info['error'] = str(e)
+            log_err(f"Destroy command failed for {deployment_id}: {e}")
+
+        return cleanup_info
 
     def _render_progress(self, completed: int, total: int, current_deployment: Optional[str] = None, current_step: Optional[str] = None):
         """Render an enhanced progress bar with deployment and step information."""
@@ -1079,7 +1148,9 @@ class E2ETestFramework:
         """Run a CLI command, capturing output in the test log."""
         cmd_str = ' '.join(cmd)
         self._log_to_file(log_file, f"Running command: {cmd_str}")
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(cwd or self.repo_root))
+        env = os.environ.copy()
+        env.update(self.extra_env)
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(cwd or self.repo_root), env=env)
         if result.stdout:
             self._log_to_file(log_file, f"STDOUT:\n{result.stdout.strip()}")
         if result.stderr:
@@ -1155,6 +1226,26 @@ class E2ETestFramework:
             for result in results:
                 if not result['success']:
                     print(f"- {result['deployment_id']}: {result.get('error', 'Unknown error')}")
+
+    def _extract_log_errors(self, log_file: Path, max_lines: int = 10) -> List[str]:
+        """Extract error-like lines from a log file for failed tests."""
+        if not log_file.exists():
+            return []
+        patterns = (r'\bERROR\b', r'\bFAILED\b', r'\bFATAL\b')
+        combined = re.compile('|'.join(patterns), re.IGNORECASE)
+        errors: List[str] = []
+        ansi_re = re.compile(r"\x1B\[[0-9;]*[A-Za-z]")
+        try:
+            with log_file.open('r', encoding='utf-8', errors='ignore') as handle:
+                for line in handle:
+                    if combined.search(line):
+                        clean_line = ansi_re.sub('', line).strip()
+                        errors.append(clean_line)
+                        if len(errors) >= max_lines:
+                            break
+        except Exception:
+            return errors
+        return errors
 
     def _run_single_test(self, test_case: Dict[str, Any]) -> Dict[str, Any]:
         """Run a single test case using the workflow engine."""
@@ -1297,6 +1388,10 @@ class E2ETestFramework:
                     error_msg += f" - {failed.error}"
                     result['logs'].append(error_msg)
                     self._log_to_file(log_file, error_msg)
+                result['log_errors'] = self._extract_log_errors(log_file)
+            else:
+                result['log_errors'] = []
+            result['cleanup'] = None
 
         except Exception as e:
             result['error'] = str(e)
@@ -1308,6 +1403,8 @@ class E2ETestFramework:
                 'timestamp': datetime.now(timezone.utc).isoformat(),
                 'error': str(e)
             })
+            result['log_errors'] = self._extract_log_errors(log_file)
+            result['cleanup'] = None
             self._log_to_file(log_file, f"Workflow test {suite_name} failed: {e}")
             if emergency_handler:
                 try:
@@ -1335,6 +1432,11 @@ class E2ETestFramework:
             with self._progress_lock:
                 self._current_deployment = None
                 self._current_step = None
+            
+            if 'log_errors' not in result:
+                result['log_errors'] = []
+            if 'cleanup' not in result:
+                result['cleanup'] = None
 
         return result
 
