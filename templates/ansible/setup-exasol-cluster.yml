@@ -555,21 +555,21 @@
           ansible.builtin.shell: |
             set -e
             file="{{ item.path }}"
-            
+
             # Check if file has empty passwords
             if grep -qE '^[^:]+::' "$file" 2>/dev/null; then
               # Found empty passwords - patch them
               echo "PATCHING: Found empty password entries in $file"
-              
+
               # Create backup
               cp -a "$file" "${file}.bak-$(date +%Y%m%d-%H%M%S)"
-              
+
               # Replace :: with :*: (locked account)
               sed -i 's/^\([^:]*\)::\(.*\)$/\1:*:\2/' "$file"
-              
+
               # Show what was changed
               grep -E '^[^:]+:\*:' "$file" | head -5 || true
-              
+
               echo "PATCHED: Replaced empty passwords with locked accounts (*) in $file"
               exit 0
             else

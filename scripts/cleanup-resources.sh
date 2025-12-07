@@ -448,19 +448,19 @@ cleanup_hetzner() {
     
     # List servers
     local servers
-    servers=$(hcloud server list -o columns=name,status,ipv4 2>/dev/null | grep "^${PREFIX_FILTER}" || echo "")
+    servers=$(hcloud server list -o noheader -o columns=name,status,ipv4 2>/dev/null | grep "^${PREFIX_FILTER}" || echo "")
     
     # List volumes
     local volumes
-    volumes=$(hcloud volume list -o columns=name,size,server 2>/dev/null | grep "^${PREFIX_FILTER}" || echo "")
+    volumes=$(hcloud volume list -o noheader -o columns=name,size,server 2>/dev/null | grep "^${PREFIX_FILTER}" || echo "")
     
     # List networks
     local networks
-    networks=$(hcloud network list -o columns=name,ip_range 2>/dev/null | grep "^${PREFIX_FILTER}" || echo "")
+    networks=$(hcloud network list -o noheader -o columns=name,ip_range 2>/dev/null | grep "^${PREFIX_FILTER}" || echo "")
     
     # List firewalls
     local firewalls
-    firewalls=$(hcloud firewall list -o columns=name,rules 2>/dev/null | grep "^${PREFIX_FILTER}" || echo "")
+    firewalls=$(hcloud firewall list -o noheader -o columns=name,rules 2>/dev/null | grep "^${PREFIX_FILTER}" || echo "")
     
     echo ""
     echo "=== HETZNER RESOURCES ==="
@@ -468,25 +468,25 @@ cleanup_hetzner() {
     if [[ -n "$servers" ]]; then
         echo ""
         echo "Servers:"
-        hcloud server list -o table 2>/dev/null | grep -E "(NAME|^${PREFIX_FILTER})" || true
+        echo "$servers"
     fi
     
     if [[ -n "$volumes" ]]; then
         echo ""
         echo "Volumes:"
-        hcloud volume list -o table 2>/dev/null | grep -E "(NAME|^${PREFIX_FILTER})" || true
+        echo "$volumes"
     fi
     
     if [[ -n "$networks" ]]; then
         echo ""
         echo "Networks:"
-        hcloud network list -o table 2>/dev/null | grep -E "(NAME|^${PREFIX_FILTER})" || true
+        echo "$networks"
     fi
     
     if [[ -n "$firewalls" ]]; then
         echo ""
         echo "Firewalls:"
-        hcloud firewall list -o table 2>/dev/null | grep -E "(NAME|^${PREFIX_FILTER})" || true
+        echo "$firewalls"
     fi
     
     # Count resources

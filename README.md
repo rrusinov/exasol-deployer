@@ -409,6 +409,7 @@ Initialize a new deployment directory with configuration files.
 - `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., `exasol-2025.1.8`; x86_64 is implicit).
 - `--list-versions`: List all available database versions (with availability and architecture) and exit.
 - `--list-providers`: List all supported cloud providers and exit.
+- `--show-permissions`: Show required cloud permissions for the specified provider and exit.
 - `--cluster-size number`: Number of nodes (default: 1).
 - `--instance-type string`: Instance/VM type (auto-detected from version if omitted).
 - `--data-volume-size number`: Data volume size in GB (default: 100).
