@@ -486,7 +486,7 @@ generate_html() {
     local provider_filter="${2:-}"
     local temp_dir="$3"
     local timestamp
-    timestamp=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     
     generate_html_header > "$output_file"
     
