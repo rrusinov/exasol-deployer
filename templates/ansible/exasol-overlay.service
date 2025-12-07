@@ -10,8 +10,11 @@ Type=oneshot
 ExecStart=/usr/local/bin/exasol-overlay-setup.sh
 ExecStop=/bin/bash -c 'ip link show vxlan-br0 >/dev/null 2>&1 && ip link delete vxlan-br0 || true; ip link show vxlan0 >/dev/null 2>&1 && ip link delete vxlan0 || true'
 RemainAfterExit=yes
+Restart=on-failure
+RestartSec=5s
 StandardOutput=journal
 StandardError=journal
+TimeoutStartSec=60s
 
 [Install]
 WantedBy=multi-user.target

@@ -1228,7 +1228,7 @@ class E2ETestFramework:
                     print(f"- {result['deployment_id']}: {result.get('error', 'Unknown error')}")
 
     def _extract_log_errors(self, log_file: Path, max_lines: int = 10) -> List[str]:
-        """Extract error-like lines from a log file for failed tests."""
+        """Extract error-like lines from a log file for failed tests (returns last N errors)."""
         if not log_file.exists():
             return []
         patterns = (r'\bERROR\b', r'\bFAILED\b', r'\bFATAL\b')
@@ -1241,11 +1241,9 @@ class E2ETestFramework:
                     if combined.search(line):
                         clean_line = ansi_re.sub('', line).strip()
                         errors.append(clean_line)
-                        if len(errors) >= max_lines:
-                            break
         except Exception:
-            return errors
-        return errors
+            return errors[-max_lines:] if errors else []
+        return errors[-max_lines:] if errors else []
 
     def _run_single_test(self, test_case: Dict[str, Any]) -> Dict[str, Any]:
         """Run a single test case using the workflow engine."""

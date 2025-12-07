@@ -85,6 +85,31 @@
           ansible.builtin.wait_for_connection:
             timeout: 600
 
+        - name: Wait for cloud-init to complete
+          ansible.builtin.command: cloud-init status --wait
+          changed_when: false
+          register: cloud_init_wait
+          retries: 30
+          delay: 10
+          until: cloud_init_wait.rc == 0
+          failed_when: false
+
+        - name: Wait for apt locks to be released
+          ansible.builtin.shell: |
+            while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+                  fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+                  fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
+              echo "Waiting for apt locks to be released..."
+              sleep 5
+            done
+          args:
+            executable: /bin/bash
+          changed_when: false
+          register: apt_lock_wait
+          retries: 60
+          delay: 5
+          until: apt_lock_wait.rc == 0
+
         - name: Set hostname to n11, n12, etc.
           ansible.builtin.hostname:
             name: "n{{ ansible_play_hosts.index(inventory_hostname) + 11 }}"
@@ -224,13 +249,40 @@
             enabled: yes
             daemon_reload: yes
             state: started
+          register: start_overlay_service
+
+        - name: Check overlay service status after start
+          ansible.builtin.systemd:
+            name: exasol-overlay.service
+          register: overlay_service_status
+
+        - name: Display overlay service status
+          ansible.builtin.debug:
+            msg: "{{ inventory_hostname }}: exasol-overlay.service is {{ overlay_service_status.status.ActiveState }} ({{ overlay_service_status.status.SubState }})"
+          when: overlay_service_status.status is defined
+
+        - name: Get overlay service logs if not active
+          ansible.builtin.command: journalctl -u exasol-overlay.service -n 50 --no-pager
+          register: overlay_logs
+          when:
+            - overlay_service_status.status is defined
+            - overlay_service_status.status.ActiveState != "active"
+          changed_when: false
+          failed_when: false
+
+        - name: Display overlay service logs on failure
+          ansible.builtin.debug:
+            msg: "{{ overlay_logs.stdout_lines }}"
+          when:
+            - overlay_logs is defined
+            - overlay_logs.stdout_lines is defined
 
         - name: Wait for VXLAN overlay device
           ansible.builtin.command: ip addr show vxlan-br0
           register: overlay_status
           changed_when: false
-          retries: 36 # 36 * 5 seconds = 3 minutes max
-          delay: 5
+          retries: 30 # 30 * 10 seconds = 5 minutes max
+          delay: 10
           until: overlay_status.rc == 0
           failed_when: overlay_status.rc != 0
 
@@ -286,6 +338,33 @@
             enabled: yes
             daemon_reload: yes
             state: started
+          register: start_data_symlinks_service
+
+        - name: Check data-symlinks service status
+          ansible.builtin.systemd:
+            name: exasol-data-symlinks.service
+          register: data_symlinks_status
+
+        - name: Display data-symlinks service status
+          ansible.builtin.debug:
+            msg: "{{ inventory_hostname }}: exasol-data-symlinks.service is {{ data_symlinks_status.status.ActiveState }} ({{ data_symlinks_status.status.SubState }})"
+          when: data_symlinks_status.status is defined
+
+        - name: Get data-symlinks service logs if not active
+          ansible.builtin.command: journalctl -u exasol-data-symlinks.service -n 50 --no-pager
+          register: data_symlinks_logs
+          when:
+            - data_symlinks_status.status is defined
+            - data_symlinks_status.status.ActiveState != "active"
+          changed_when: false
+          failed_when: false
+
+        - name: Display data-symlinks service logs on failure
+          ansible.builtin.debug:
+            msg: "{{ data_symlinks_logs.stdout_lines }}"
+          when:
+            - data_symlinks_logs is defined
+            - data_symlinks_logs.stdout_lines is defined
 
         - name: Discover existing /dev/exasol_data_* symlinks (sorted)
           ansible.builtin.shell:
@@ -518,7 +597,7 @@
             chdir: "/home/{{ exa_user }}/exasol-release"
           become_user: "{{ exa_user }}"
           register: c4_wait
-          timeout: 600 # 10 minutes timeout
+          timeout: 1200 # 20 minutes timeout (increased to handle slow node boots)
           changed_when: false
 
         - name: Display database boot status

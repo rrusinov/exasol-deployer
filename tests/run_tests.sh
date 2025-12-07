@@ -78,6 +78,7 @@ run_test_file "$TEST_DIR/test_e2e_framework.sh"
 run_test_file "$TEST_DIR/test_e2e_config.sh"
 run_test_file "$TEST_DIR/test_run_e2e.sh"
 run_test_file "$TEST_DIR/test_generate_limits_report.sh"
+run_test_file "$TEST_DIR/test_cleanup_resources.sh"
 
 # Overall summary
 echo -e "${BLUE}=========================================${NC}"

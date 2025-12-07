@@ -192,7 +192,8 @@ cmd_start() {
 
         # Run Ansible to start the database services
         log_info "Starting database services via Ansible..."
-        if ! ansible-playbook -i inventory.ini .templates/start-exasol-cluster.yml; then
+        # Ensure stdin is in blocking mode to avoid Ansible errors
+        if ! ansible-playbook -i inventory.ini .templates/start-exasol-cluster.yml </dev/null; then
             state_set_status "$deploy_dir" "$STATE_START_FAILED"
             die "Ansible start operation failed"
         fi

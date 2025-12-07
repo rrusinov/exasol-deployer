@@ -164,7 +164,9 @@ cmd_deploy() {
     fi
 
     log_info "Configuring cluster with Ansible..."
-    if ! ansible-playbook -i inventory.ini .templates/setup-exasol-cluster.yml; then
+    # Ensure stdin is in blocking mode to avoid Ansible errors
+    # Redirect stdin from /dev/null to prevent non-blocking IO issues
+    if ! ansible-playbook -i inventory.ini .templates/setup-exasol-cluster.yml </dev/null; then
         state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
         die "Ansible configuration failed"
     fi

@@ -139,7 +139,8 @@ cmd_stop() {
     # Run Ansible to stop the database with graceful shutdown for all providers
     local ansible_extra=(-i inventory.ini .templates/stop-exasol-cluster.yml -e "power_off_fallback=true")
 
-    if ! ansible-playbook "${ansible_extra[@]}"; then
+    # Ensure stdin is in blocking mode to avoid Ansible errors
+    if ! ansible-playbook "${ansible_extra[@]}" </dev/null; then
         # Unreachable hosts after shutdown are expected since we're powering off the hosts
         log_warn "Ansible reported unreachable hosts after shutdown; this is expected if VMs are powered off."
     fi

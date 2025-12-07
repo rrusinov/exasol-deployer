@@ -39,8 +39,9 @@ Required:
   --provider <PROVIDER>    Cloud provider: aws, azure, gcp, hetzner, digitalocean, libvirt
 
 Optional:
-  --tag <TAG>             Filter resources by tag/label (e.g., owner=team-name)
-  --prefix <PREFIX>       Filter resources by name prefix (default: exasol)
+  --tag <TAG>             Filter resources by tag/label (default: owner=exasol-deployer)
+  --prefix <PREFIX>       Filter resources by name prefix (default: empty)
+  --region <REGION>       AWS region (default: AWS_DEFAULT_REGION or us-east-1)
   --dry-run               Show what would be deleted without deleting
   --yes                   Skip confirmation prompt
   --help                  Show this help message
@@ -53,8 +54,8 @@ Examples:
   $0 --provider hetzner
 
 
-  # Delete AWS resources with tag filter
-  $0 --provider aws --tag owner=dev-team --yes
+  # Delete AWS resources in specific region
+  $0 --provider aws --region us-east-2 --yes
 
   # Delete GCP resources without confirmation
   $0 --provider gcp --yes
@@ -68,24 +69,32 @@ EOF
 
 # Parse command line arguments
 PROVIDER=""
-TAG_FILTER=""  # Reserved for future use
+TAG_FILTER="owner=exasol-deployer"
 PREFIX_FILTER=""
+AWS_REGION=""
 DRY_RUN=false
 SKIP_CONFIRM=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --provider)
+            [[ -z "${2:-}" ]] && die "--provider requires a value"
             PROVIDER="$2"
             shift 2
             ;;
         --tag)
-            # shellcheck disable=SC2034
-            TAG_FILTER="$2"  # Reserved for future tag-based filtering
+            [[ -z "${2:-}" ]] && die "--tag requires a value"
+            TAG_FILTER="$2"
             shift 2
             ;;
         --prefix)
+            [[ -z "${2:-}" ]] && die "--prefix requires a value"
             PREFIX_FILTER="$2"
+            shift 2
+            ;;
+        --region)
+            [[ -z "${2:-}" ]] && die "--region requires a value"
+            AWS_REGION="$2"
             shift 2
             ;;
         --dry-run)
@@ -118,6 +127,15 @@ case "$PROVIDER" in
         die "Unsupported provider: $PROVIDER. Supported: aws, azure, gcp, hetzner, digitalocean, libvirt"
         ;;
 esac
+
+# Validate feature support per provider
+if [[ -n "$AWS_REGION" && "$PROVIDER" != "aws" ]]; then
+    die "--region flag is only supported for AWS provider"
+fi
+
+if [[ "$TAG_FILTER" != "owner=exasol-deployer" && "$PROVIDER" != "aws" ]]; then
+    die "--tag filtering is only supported for AWS provider (other providers use resource groups or global listing)"
+fi
 
 # Check required CLI tools
 check_cli_tool() {
@@ -159,77 +177,143 @@ confirm_deletion() {
 cleanup_aws() {
     check_cli_tool "aws" "Install: https://aws.amazon.com/cli/"
     
-    log_info "Fetching AWS resources with prefix '$PREFIX_FILTER'..."
+    # Disable AWS CLI pager
+    export AWS_PAGER=""
     
-    # Get default region or use us-east-1
-    local region="${AWS_DEFAULT_REGION:-us-east-1}"
-    log_info "Using AWS region: $region"
+    log_info "Fetching AWS resources with tag '$TAG_FILTER' and prefix '$PREFIX_FILTER'..."
     
-    # Find VPCs with exasol prefix
-    local vpcs
-    vpcs=$(aws ec2 describe-vpcs --region "$region" \
-        --filters "Name=tag:Name,Values=${PREFIX_FILTER}*" \
-        --query 'Vpcs[].VpcId' --output text 2>/dev/null || echo "")
+    # Get regions to scan
+    local regions
+    if [[ -n "$AWS_REGION" ]]; then
+        regions=("$AWS_REGION")
+        log_info "Using AWS region: $AWS_REGION"
+    else
+        regions=("us-east-1" "us-east-2" "us-west-1" "us-west-2" "eu-west-1" "eu-west-2" "eu-central-1" "ap-southeast-1" "ap-northeast-1")
+        log_info "Scanning all AWS regions..."
+    fi
     
-    if [[ -z "$vpcs" ]]; then
-        log_info "No AWS VPCs found with prefix '$PREFIX_FILTER'"
+    local found_resources=false
+    
+    # Parse tag filter (format: key=value)
+    local tag_key tag_value
+    if [[ -n "$TAG_FILTER" && "$TAG_FILTER" == *"="* ]]; then
+        tag_key="${TAG_FILTER%%=*}"
+        tag_value="${TAG_FILTER#*=}"
+    fi
+    
+    for region in "${regions[@]}"; do
+        # Build filters for VPC discovery
+        local filter_args=("Name=tag:Name,Values=${PREFIX_FILTER}*")
+        if [[ -n "$tag_key" ]]; then
+            filter_args+=("Name=tag:${tag_key},Values=${tag_value}")
+        fi
+        
+        # Find VPCs with filters
+        local vpcs
+        vpcs=$(aws ec2 describe-vpcs --region "$region" \
+            --filters "${filter_args[@]}" \
+            --query 'Vpcs[].VpcId' --output text 2>/dev/null || echo "")
+        
+        if [[ -z "$vpcs" ]]; then
+            continue
+        fi
+        
+        found_resources=true
+        
+        echo ""
+        echo "=== AWS RESOURCES (Region: $region) ==="
+        
+        for vpc in $vpcs; do
+            echo ""
+            echo "VPC: $vpc"
+            
+            # List spot instance requests
+            local spot_reqs
+            spot_reqs=$(aws ec2 describe-spot-instance-requests --region "$region" \
+                --filters "Name=state,Values=open,active" \
+                --query 'SpotInstanceRequests[].[SpotInstanceRequestId,State,InstanceId]' \
+                --output text 2>/dev/null || echo "")
+            
+            if [[ -n "$spot_reqs" ]]; then
+                echo ""
+                echo "Active Spot Requests:"
+                echo "$spot_reqs" | awk '{printf "  %s (%s) - Instance: %s\n", $1, $2, $3}'
+            fi
+            
+            # List instances
+            # shellcheck disable=SC2016
+            aws ec2 describe-instances --region "$region" \
+                --filters "Name=vpc-id,Values=$vpc" \
+                --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],State.Name]' \
+                --output table 2>/dev/null || true
+            
+            # List volumes
+            aws ec2 describe-volumes --region "$region" \
+                --filters "Name=tag:VpcId,Values=$vpc" \
+                --query 'Volumes[].[VolumeId,Size,State]' \
+                --output table 2>/dev/null || true
+        done
+    done
+    
+    if [[ "$found_resources" == "false" ]]; then
+        log_info "No AWS VPCs found with prefix '$PREFIX_FILTER' in any region"
         return 0
     fi
     
-    echo ""
-    echo "=== AWS RESOURCES (Region: $region) ==="
-    
-    for vpc in $vpcs; do
-        echo ""
-        echo "VPC: $vpc"
-        
-        # List instances
-        # shellcheck disable=SC2016
-        aws ec2 describe-instances --region "$region" \
-            --filters "Name=vpc-id,Values=$vpc" \
-            --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],State.Name]' \
-            --output table 2>/dev/null || true
-        
-        # List volumes
-        aws ec2 describe-volumes --region "$region" \
-            --filters "Name=tag:VpcId,Values=$vpc" \
-            --query 'Volumes[].[VolumeId,Size,State]' \
-            --output table 2>/dev/null || true
-    done
-    
-    local resource_count
-    resource_count=$(echo "$vpcs" | wc -w)
-    
-    if ! confirm_deletion "$resource_count VPC(s) and associated resources" "AWS"; then
+    if ! confirm_deletion "VPC(s) and associated resources across regions" "AWS"; then
         return 0
     fi
     
     log_info "Deleting AWS resources..."
-    for vpc in $vpcs; do
-        log_info "Deleting VPC: $vpc"
+    for region in "${regions[@]}"; do
+        # Cancel all active spot instance requests in this region first
+        log_info "Cancelling spot instance requests in $region..."
+        local spot_requests
+        spot_requests=$(aws ec2 describe-spot-instance-requests --region "$region" \
+            --filters "Name=state,Values=open,active" \
+            --query 'SpotInstanceRequests[].SpotInstanceRequestId' --output text 2>/dev/null || echo "")
         
-        # Terminate instances
-        local instances
-        instances=$(aws ec2 describe-instances --region "$region" \
-            --filters "Name=vpc-id,Values=$vpc" "Name=instance-state-name,Values=running,stopped" \
-            --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || echo "")
-        
-        if [[ -n "$instances" ]]; then
+        if [[ -n "$spot_requests" ]]; then
             # shellcheck disable=SC2086
-            aws ec2 terminate-instances --region "$region" --instance-ids $instances 2>/dev/null || true
-            log_info "  Terminated instances: $instances"
+            aws ec2 cancel-spot-instance-requests --region "$region" --spot-instance-request-ids $spot_requests 2>/dev/null || true
+            log_info "  Cancelled spot requests: $spot_requests"
         fi
         
-        # Wait for instances to terminate
-        if [[ -n "$instances" ]]; then
-            log_info "  Waiting for instances to terminate..."
-            # shellcheck disable=SC2086
-            aws ec2 wait instance-terminated --region "$region" --instance-ids $instances 2>/dev/null || true
+        local vpcs
+        vpcs=$(aws ec2 describe-vpcs --region "$region" \
+            --filters "Name=tag:Name,Values=${PREFIX_FILTER}*" \
+            --query 'Vpcs[].VpcId' --output text 2>/dev/null || echo "")
+        
+        if [[ -z "$vpcs" ]]; then
+            continue
         fi
         
-        # Delete VPC (this will fail if resources still exist, which is expected)
-        aws ec2 delete-vpc --region "$region" --vpc-id "$vpc" 2>/dev/null || \
-            log_warn "  Could not delete VPC $vpc (may have dependencies)"
+        for vpc in $vpcs; do
+            log_info "Deleting VPC: $vpc (region: $region)"
+            
+            # Terminate instances
+            local instances
+            instances=$(aws ec2 describe-instances --region "$region" \
+                --filters "Name=vpc-id,Values=$vpc" "Name=instance-state-name,Values=running,stopped" \
+                --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || echo "")
+            
+            if [[ -n "$instances" ]]; then
+                # shellcheck disable=SC2086
+                aws ec2 terminate-instances --region "$region" --instance-ids $instances 2>/dev/null || true
+                log_info "  Terminated instances: $instances"
+            fi
+            
+            # Wait for instances to terminate
+            if [[ -n "$instances" ]]; then
+                log_info "  Waiting for instances to terminate..."
+                # shellcheck disable=SC2086
+                aws ec2 wait instance-terminated --region "$region" --instance-ids $instances 2>/dev/null || true
+            fi
+            
+            # Delete VPC (this will fail if resources still exist, which is expected)
+            aws ec2 delete-vpc --region "$region" --vpc-id "$vpc" 2>/dev/null || \
+                log_warn "  Could not delete VPC $vpc (may have dependencies)"
+        done
     done
     
     log_info "AWS cleanup initiated (some resources may take time to delete)"

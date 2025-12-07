@@ -408,12 +408,13 @@ health_run_internal_checks() {
             
             if [[ "$port_8563_ok" == "true" ]]; then
                 database_passed=$((database_passed + 1))
-            elif [[ -n "$public_ip" ]]; then
+            else
+                # Count as failed regardless of public_ip presence
+                # This ensures stopped clusters are properly detected
                 database_failed=$((database_failed + 1))
-                overall_issues=$((overall_issues + 1))
-            fi
-            if [[ "$port_8563_ok" != "true" && -n "$public_ip" ]]; then
-                overall_issues=$((overall_issues + 1))
+                if [[ -n "$public_ip" ]]; then
+                    overall_issues=$((overall_issues + 1))
+                fi
             fi
 
             # Track cluster readiness (for status update logic)

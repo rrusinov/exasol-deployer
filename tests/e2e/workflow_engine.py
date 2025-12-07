@@ -776,6 +776,10 @@ class WorkflowExecutor:
         Supported variables:
         - $deployment_dir: Path to the deployment directory (absolute path)
         - $provider: Cloud provider name
+        
+        Supports retry logic via step.retry configuration:
+        - max_attempts: Number of retry attempts (default: 1)
+        - delay_seconds: Delay between retries (default: 10)
         """
         if not step.command:
             raise ValueError("command is required for custom_command step")
@@ -785,30 +789,52 @@ class WorkflowExecutor:
         command = command.replace('$deployment_dir', str(self.deploy_dir.resolve()))
         command = command.replace('$provider', self.provider)
         
+        # Get retry configuration
+        max_attempts = 1
+        delay_seconds = 10
+        if step.retry:
+            max_attempts = step.retry.get('max_attempts', 1)
+            delay_seconds = step.retry.get('delay_seconds', 10)
+        
         self.log_callback(f"Executing custom command: {command}")
         
-        # Execute command using shell to support piping and redirection
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=self.deploy_dir.parent  # Execute from parent of deployment dir
-        )
+        last_error = None
+        for attempt in range(1, max_attempts + 1):
+            # Execute command using shell to support piping and redirection
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                cwd=self.deploy_dir.parent  # Execute from parent of deployment dir
+            )
+            
+            # Log output
+            if result.stdout:
+                self.log_callback(f"STDOUT: {result.stdout}")
+            if result.stderr:
+                self.log_callback(f"STDERR: {result.stderr}")
+            
+            if result.returncode == 0:
+                # Success
+                step.result = {
+                    'command': command,
+                    'stdout': result.stdout,
+                    'stderr': result.stderr,
+                    'returncode': result.returncode,
+                    'attempts': attempt
+                }
+                return
+            
+            # Command failed
+            last_error = f"Custom command failed with exit code {result.returncode}: {result.stderr}"
+            
+            if attempt < max_attempts:
+                self.log_callback(f"Attempt {attempt}/{max_attempts} failed, retrying in {delay_seconds}s...")
+                time.sleep(delay_seconds)
+            else:
+                self.log_callback(f"All {max_attempts} attempts failed")
         
-        # Log output
-        if result.stdout:
-            self.log_callback(f"STDOUT: {result.stdout}")
-        if result.stderr:
-            self.log_callback(f"STDERR: {result.stderr}")
-        
-        if result.returncode != 0:
-            raise RuntimeError(f"Custom command failed with exit code {result.returncode}: {result.stderr}")
-        
-        step.result = {
-            'command': command,
-            'stdout': result.stdout,
-            'stderr': result.stderr,
-            'returncode': result.returncode
-        }
+        # All attempts failed
+        raise RuntimeError(last_error)

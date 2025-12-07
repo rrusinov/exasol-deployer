@@ -73,10 +73,10 @@ resource "digitalocean_vpc" "exasol_vpc" {
   region = var.digitalocean_region
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
   # This avoids conflicts with existing VPCs from failed/previous deployments
-  # Format: 10.X.0.0/16 where X is derived from cluster ID hex digits
-  # Provides 254 possible unique networks
-  # Use a /16 network and carve /24 subnets from it to reduce collision risk
-  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.0.0/16"
+  # Format: 10.X.Y.0/24 where X and Y are derived from cluster ID hex digits
+  # Provides 254 × 254 = 64,516 possible unique networks (much lower collision probability)
+  # Using /24 network which is sufficient for small test clusters
+  ip_range = "10.${(parseint(substr(random_id.instance.hex, 0, 2), 16) % 254) + 1}.${(parseint(substr(random_id.instance.hex, 2, 2), 16) % 254) + 1}.0/24"
 }
 
 # ==============================================================================

@@ -514,12 +514,14 @@ else
         echo "Monitoring progress across ${#cfg_pids[@]} provider(s)..."
         echo "(Press Ctrl+C to interrupt and clean up all deployments)"
         echo ""
-        echo "View aggregated results: file://$(pwd)/tmp/tests/index.html"
+        echo "📊 View detailed results in your browser:"
+        echo "   file://$(pwd)/tmp/tests/index.html"
         echo ""
         
         # Track completion
         declare -A completed_pids=()
         total_providers=${#cfg_pids[@]}
+        first_iteration=1
         
         while [[ ${#completed_pids[@]} -lt $total_providers ]]; do
             # Update deployment directories list for cleanup
@@ -606,10 +608,11 @@ except:
             
             # Display progress - each provider on its own line
             if [[ ${#completed_pids[@]} -lt $total_providers ]]; then
-                # Move cursor up to overwrite previous lines
-                if [[ ${#progress_lines[@]} -gt 0 ]]; then
+                # Move cursor up to overwrite previous lines (skip on first iteration)
+                if [[ ${#progress_lines[@]} -gt 0 && $first_iteration -eq 0 ]]; then
                     printf "\033[%dA" "${#progress_lines[@]}"
                 fi
+                first_iteration=0
                 
                 # Display each provider status on its own line
                 for line in "${progress_lines[@]}"; do
@@ -669,6 +672,14 @@ echo ""
 echo "Generating results index..."
 if python3 "$SCRIPT_DIR/e2e/generate_results_index.py" ./tmp/tests 2>/dev/null; then
     echo "Results index: file://$(pwd)/tmp/tests/index.html"
+    echo ""
+    echo "=========================================="
+    echo "E2E Test Run Complete"
+    echo "=========================================="
+    echo ""
+    echo "📊 View detailed results in your browser:"
+    echo "   file://$(pwd)/tmp/tests/index.html"
+    echo ""
 else
     echo "Warning: Failed to generate results index" >&2
 fi
