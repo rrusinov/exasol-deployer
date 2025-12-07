@@ -63,17 +63,18 @@ test_show_permissions_with_provider() {
 
     local test_dir
     test_dir=$(setup_test_dir)
-    local permissions_file="$LIB_DIR/permissions/aws.json"
     
-    # Ensure permissions directory exists
-    mkdir -p "$(dirname "$permissions_file")"
+    # Create temp permissions directory
+    local temp_lib_dir="$test_dir/lib"
+    local temp_permissions_dir="$temp_lib_dir/permissions"
+    mkdir -p "$temp_permissions_dir"
     
-    # Create dummy permissions file
-    echo '{"Version": "2012-10-17", "Statement": {"Effect": "Allow", "Action": ["ec2:DescribeInstances"], "Resource": "*"}}' > "$permissions_file"
+    # Create dummy permissions file in temp location
+    echo '{"Version": "2012-10-17", "Statement": {"Effect": "Allow", "Action": ["ec2:DescribeInstances"], "Resource": "*"}}' > "$temp_permissions_dir/aws.json"
 
-    # Test show permissions
+    # Test show permissions with overridden LIB_DIR
     local output
-    if output=$(cmd_init --cloud-provider aws --show-permissions 2>&1); then
+    if output=$(LIB_DIR="$temp_lib_dir" cmd_init --cloud-provider aws --show-permissions 2>&1); then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "${GREEN}✓${NC} --show-permissions displays permissions"
@@ -104,15 +105,15 @@ test_show_permissions_missing_file() {
 
     local test_dir
     test_dir=$(setup_test_dir)
-    local permissions_json="$LIB_DIR/permissions/hetzner.json"
-    local permissions_txt="$LIB_DIR/permissions/hetzner.txt"
     
-    # Remove permissions files if they exist (both JSON and TXT)
-    rm -f "$permissions_json" "$permissions_txt"
+    # Create temp permissions directory without hetzner files
+    local temp_lib_dir="$test_dir/lib"
+    local temp_permissions_dir="$temp_lib_dir/permissions"
+    mkdir -p "$temp_permissions_dir"
 
     # Test show permissions for missing file
     local output
-    if output=$(cmd_init --cloud-provider hetzner --show-permissions 2>&1); then
+    if output=$(LIB_DIR="$temp_lib_dir" cmd_init --cloud-provider hetzner --show-permissions 2>&1); then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_FAILED=$((TESTS_FAILED + 1))
         echo -e "${RED}✗${NC} Should fail when permissions file is missing"
@@ -132,9 +133,6 @@ test_show_permissions_missing_file() {
             echo -e "${RED}✗${NC} Should indicate file not found"
         fi
     fi
-    
-    # Restore the file so other tests can run
-    ./build/generate_permissions.sh >/dev/null 2>&1
 
     cleanup_test_dir "$test_dir"
 }

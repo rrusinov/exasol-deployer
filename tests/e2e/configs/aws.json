@@ -1,7 +1,7 @@
 {
   "provider": "aws",
   "description": "AWS E2E test configurations combining different SUTs and workflows",
-  "max_concurrent_nodes": 10,
+  "max_concurrent_nodes": 20,
   "test_suites": [
     {
       "sut": "sut/aws-1n.json",

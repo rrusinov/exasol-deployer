@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 declare -a BACKGROUND_PIDS=()
 declare -a DEPLOYMENT_DIRS=()
 
+# shellcheck disable=SC2317
 cleanup_on_interrupt() {
     echo ""
     echo "=========================================="
@@ -32,7 +33,7 @@ cleanup_on_interrupt() {
             fi
         done
         # Wait a moment for graceful termination
-        sleep 2
+        sleep 10
         # Force kill any remaining processes
         for pid in "${BACKGROUND_PIDS[@]}"; do
             if kill -0 "$pid" 2>/dev/null; then
@@ -48,7 +49,7 @@ cleanup_on_interrupt() {
         echo "Destroying ${#DEPLOYMENT_DIRS[@]} active deployment(s)..."
         
         # Try up to 3 times
-        for attempt in 1 2 3; do
+        for attempt in 1 2 3 4 5 6; do
             declare -a failed_dirs=()
             
             # Launch destroy operations in parallel
@@ -58,6 +59,7 @@ cleanup_on_interrupt() {
                         echo "  Destroying: $deploy_dir"
                     else
                         echo "  Retry $attempt: $deploy_dir"
+                        sleep 10
                     fi
                     (
                         output=$(./exasol destroy --auto-approve --deployment-dir "$deploy_dir" 2>&1)
@@ -468,10 +470,24 @@ else
                 current_jobs=$((current_jobs - 1))
             done
 
-            (
-                RESULTS_DIR="$cfg_results_dir"
-                run_framework "$cfg" "${provider_args[@]}" --results-dir "$cfg_results_dir"
-            ) >"$cfg_results_dir/run.log" 2>&1 &
+            # Launch Python process directly without subshell to get correct PID
+            db_version_args=()
+            if [[ -n "$DB_VERSION" ]]; then
+                db_version_args=(--db-version "$DB_VERSION")
+            fi
+            stop_on_error_args=()
+            if [[ "$STOP_ON_ERROR" -eq 1 ]]; then
+                stop_on_error_args=(--stop-on-error)
+            fi
+            
+            python3 "$SCRIPT_DIR/e2e/e2e_framework.py" run \
+                --config "$cfg" \
+                --results-dir "$cfg_results_dir" \
+                --parallel "$PARALLEL" \
+                "${stop_on_error_args[@]}" \
+                "${db_version_args[@]}" \
+                "${provider_args[@]}" \
+                >"$cfg_results_dir/run.log" 2>&1 &
 
             pid=$!
             cfg_pids["$pid"]="$cfg"
@@ -498,6 +514,8 @@ else
         echo "Monitoring progress across ${#cfg_pids[@]} provider(s)..."
         echo "(Press Ctrl+C to interrupt and clean up all deployments)"
         echo ""
+        echo "View aggregated results: file://$(pwd)/tmp/tests/index.html"
+        echo ""
         
         # Track completion
         declare -A completed_pids=()
@@ -508,11 +526,14 @@ else
             DEPLOYMENT_DIRS=()
             for cfg_results_dir in "${cfg_results[@]}"; do
                 if [[ -d "$cfg_results_dir/deployments" ]]; then
+                    # Use nullglob to handle empty directories
+                    shopt -s nullglob
                     for deploy_dir in "$cfg_results_dir/deployments"/*; do
                         if [[ -d "$deploy_dir" && -f "$deploy_dir/.exasol.json" ]]; then
                             DEPLOYMENT_DIRS+=("$deploy_dir")
                         fi
                     done
+                    shopt -u nullglob
                 fi
             done
             
@@ -554,21 +575,22 @@ try:
             print('0/0')
 except:
     print('initializing')
-" 2>/dev/null)
+" 2>/dev/null || echo "initializing")
                     progress_lines+=("  $cfg_name: $progress_info")
                 else
                     # Parse run.log for progress
                     run_log="$cfg_results_dir/run.log"
                     if [[ -f "$run_log" ]]; then
-                        # Count completed tests from log (match only test completion lines with duration)
-                        completed_count=$(grep -c "COMPLETED duration:\|FAILED duration:" "$run_log" 2>/dev/null || echo "0")
-                        # Strip leading zeros and ensure numeric
-                        completed_count=$(echo "$completed_count" | sed 's/^0*//' || echo "0")
+                        # Count completed tests from log using grep + wc to avoid grep -c issues with leading zeros
+                        # shellcheck disable=SC2126
+                        completed_count=$(grep "COMPLETED duration:\|FAILED duration:" "$run_log" 2>/dev/null | wc -l || echo "0")
+                        # Trim all whitespace including newlines and ensure it's a number
+                        completed_count=$(echo "$completed_count" | tr -d ' \n\r\t')
                         completed_count=${completed_count:-0}
                         
                         # Check if tests are running
-                        if grep -q "STARTED workflow" "$run_log" 2>/dev/null; then
-                            if [[ $completed_count -gt 0 ]]; then
+                        if grep -q "STARTED workflow" "$run_log" 2>/dev/null || true; then
+                            if [[ "$completed_count" != "0" && "$completed_count" -gt 0 ]]; then
                                 progress_lines+=("  $cfg_name: $completed_count completed, running...")
                             else
                                 progress_lines+=("  $cfg_name: running...")
@@ -582,28 +604,30 @@ except:
                 fi
             done
             
-            # Display progress (clear and rewrite all lines)
+            # Display progress - each provider on its own line
             if [[ ${#completed_pids[@]} -lt $total_providers ]]; then
-                # Move cursor up and clear lines from previous iteration
-                if [[ -n "${prev_line_count:-}" ]]; then
-                    for ((i=0; i<prev_line_count; i++)); do
-                        printf "\033[1A\033[K"
-                    done
+                # Move cursor up to overwrite previous lines
+                if [[ ${#progress_lines[@]} -gt 0 ]]; then
+                    printf "\033[%dA" "${#progress_lines[@]}"
                 fi
                 
-                # Print all progress lines
+                # Display each provider status on its own line
                 for line in "${progress_lines[@]}"; do
-                    echo "$line"
+                    printf "\r\033[K%s\n" "$line"
                 done
                 
-                # Remember line count for next iteration
-                prev_line_count=${#progress_lines[@]}
+                # Regenerate index if new results are available
+                python3 "$SCRIPT_DIR/e2e/generate_results_index.py" ./tmp/tests >/dev/null 2>&1 || true
+                
                 sleep 2
             else
-                # Final display - just print without cursor manipulation
-                for line in "${progress_lines[@]}"; do
-                    echo "$line"
-                done
+                # Final display
+                echo ""
+                if [[ ${#progress_lines[@]} -gt 0 ]]; then
+                    for line in "${progress_lines[@]}"; do
+                        echo "$line"
+                    done
+                fi
             fi
         done
         

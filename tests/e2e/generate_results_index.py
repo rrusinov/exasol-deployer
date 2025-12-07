@@ -83,6 +83,7 @@ def generate_index_html(base_dir: Path, results):
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
+<meta http-equiv="refresh" content="60">
 <title>Exasol E2E Test Results Index</title>
 <style>
 body {
@@ -214,18 +215,7 @@ function toggleExecution(execId) {
     }
 }
 
-// Auto-refresh every 30 seconds if page is visible
-let refreshInterval;
-function startAutoRefresh() {
-    refreshInterval = setInterval(() => {
-        if (!document.hidden) {
-            location.reload();
-        }
-    }, 30000);
-}
-
 document.addEventListener('DOMContentLoaded', () => {
-    startAutoRefresh();
     // Expand the first (most recent) execution by default
     const firstExec = document.querySelector('.providers');
     if (firstExec) {
@@ -243,7 +233,7 @@ document.addEventListener('DOMContentLoaded', () => {
 <div class="header-info">
     <p><strong>Total Executions:</strong> """ + str(len(results)) + """</p>
     <p><strong>Last Updated:</strong> """ + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + """</p>
-    <p><small>This page auto-refreshes every 30 seconds</small></p>
+    <p><small>This page auto-refreshes every 60 seconds</small></p>
 </div>
 """
     

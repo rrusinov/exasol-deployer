@@ -77,7 +77,7 @@ test_help_option() {
 test_html_generation() {
     local temp_file="/tmp/test-limits-report-$$.html"
     
-    "$REPORT_SCRIPT" --provider azure --output "$temp_file" >/dev/null 2>&1 || true
+    "$REPORT_SCRIPT" --provider libvirt --output "$temp_file" >/dev/null 2>&1 || true
     
     assert_file_exists "$temp_file" "HTML report file created"
     
@@ -85,36 +85,83 @@ test_html_generation() {
         local content
         content=$(cat "$temp_file")
         assert_contains "$content" "<!DOCTYPE html>" "HTML has DOCTYPE"
-        assert_contains "$content" "<title>Cloud Resource Limits Report</title>" "HTML has title"
+        assert_contains "$content" "<title>Cloud Resource Usage & Limits Report</title>" "HTML has correct title"
         assert_contains "$content" "toggleProvider" "HTML has JavaScript"
         assert_contains "$content" "quota-table" "HTML has quota table"
         assert_contains "$content" "Resource Quotas" "HTML has resource quotas section"
+        assert_contains "$content" "auto-refreshes every 30 seconds" "HTML has auto-refresh message"
+        assert_contains "$content" "Total Providers:" "HTML has provider count"
+        assert_contains "$content" "Last Updated:" "HTML has timestamp"
         
         rm -f "$temp_file"
     fi
 }
 
-test_all_regions_option() {
-    local temp_file="/tmp/test-all-regions-$$.html"
+test_provider_filter() {
+    local temp_file="/tmp/test-provider-filter-$$.html"
     
-    "$REPORT_SCRIPT" --provider azure --all-regions --output "$temp_file" >/dev/null 2>&1 || true
+    "$REPORT_SCRIPT" --provider libvirt --output "$temp_file" >/dev/null 2>&1 || true
     
     ((test_count++))
     if [[ -f "$temp_file" ]]; then
-        local region_count
-        region_count=$(grep -c "Location:" "$temp_file" 2>/dev/null || echo "0")
-        if [[ "$region_count" -gt 1 ]]; then
+        local content
+        content=$(cat "$temp_file")
+        if [[ "$content" == *"LIBVIRT"* ]] && [[ "$content" != *"AWS"* ]]; then
             ((pass_count++))
-            echo -e "${COLOR_GREEN}✓${COLOR_RESET} All regions option works (found $region_count regions)"
+            echo -e "${COLOR_GREEN}✓${COLOR_RESET} Provider filter works"
         else
             ((fail_count++))
-            echo -e "${COLOR_RED}✗${COLOR_RESET} All regions option failed"
+            echo -e "${COLOR_RED}✗${COLOR_RESET} Provider filter failed"
         fi
         rm -f "$temp_file"
     else
         ((fail_count++))
-        echo -e "${COLOR_RED}✗${COLOR_RESET} All regions file not created"
+        echo -e "${COLOR_RED}✗${COLOR_RESET} Provider filter file not created"
     fi
+}
+
+test_styling() {
+    local temp_file="/tmp/test-styling-$$.html"
+    
+    "$REPORT_SCRIPT" --provider libvirt --output "$temp_file" >/dev/null 2>&1 || true
+    
+    if [[ -f "$temp_file" ]]; then
+        local content
+        content=$(cat "$temp_file")
+        assert_contains "$content" "linear-gradient(135deg, #667eea 0%, #764ba2 100%)" "Has purple gradient header"
+        assert_contains "$content" "border-bottom: 3px solid #4CAF50" "Has green title border"
+        assert_contains "$content" "toggle-icon" "Has toggle icon"
+        assert_contains "$content" "header-info" "Has header info section"
+        
+        rm -f "$temp_file"
+    fi
+}
+
+test_temp_cleanup() {
+    local before_count
+    before_count=$(find /tmp -maxdepth 1 -name 'tmp.*' -type d 2>/dev/null | wc -l)
+    
+    "$REPORT_SCRIPT" --provider libvirt --output /tmp/test-cleanup-$$.html >/dev/null 2>&1 || true
+    
+    local after_count
+    after_count=$(find /tmp -maxdepth 1 -name 'tmp.*' -type d 2>/dev/null | wc -l)
+    
+    ((test_count++))
+    if [[ "$after_count" -eq "$before_count" ]]; then
+        ((pass_count++))
+        echo -e "${COLOR_GREEN}✓${COLOR_RESET} Temp directory cleaned up"
+    else
+        ((fail_count++))
+        echo -e "${COLOR_RED}✗${COLOR_RESET} Temp directory not cleaned up"
+    fi
+    
+    rm -f /tmp/test-cleanup-$$.html
+}
+
+test_all_regions_option() {
+    # This test is no longer applicable as --all-regions option doesn't exist
+    # The script always collects all regions for each provider
+    return 0
 }
 
 run_all_tests() {
@@ -125,6 +172,9 @@ run_all_tests() {
     test_script_executable
     test_help_option
     test_html_generation
+    test_provider_filter
+    test_styling
+    test_temp_cleanup
     
     echo ""
     echo "=========================================="

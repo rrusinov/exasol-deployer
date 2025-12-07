@@ -5,6 +5,16 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Global temp directory for cleanup trap
+TEMP_DIR=""
+
+# Cleanup function for trap
+cleanup_temp() {
+    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
+        rm -rf "$TEMP_DIR"
+    fi
+}
+
 usage() {
     cat <<EOF
 Usage: $0 [OPTIONS]
@@ -31,24 +41,27 @@ generate_html_header() {
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Cloud Resource Limits Report</title>
+    <meta http-equiv="refresh" content="60">
+    <title>Cloud Resource Usage & Limits Report</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-        h1 { color: #333; }
-        .provider { background: white; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .provider-header { background: #4CAF50; color: white; padding: 15px; cursor: pointer; border-radius: 8px 8px 0 0; user-select: none; }
-        .provider-header:hover { background: #45a049; }
-        .provider-header::before { content: '▼ '; }
-        .provider-header.collapsed::before { content: '▶ '; }
-        .provider-header h2 { display: inline-block; margin: 0; }
-        .provider-summary { display: inline-block; margin-left: 20px; font-size: 0.9em; opacity: 0.9; }
+        body { font-family: Arial, sans-serif; margin: 2rem; background: #f5f5f5; }
+        h1 { color: #333; border-bottom: 3px solid #4CAF50; padding-bottom: 0.5rem; }
+        .header-info { background: #fff; padding: 1rem; border-radius: 5px; margin-bottom: 2rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .timestamp { color: #666; font-size: 0.9rem; }
+        .provider { background: white; margin-bottom: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden; }
+        .provider-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 1rem 1.5rem; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .provider-header:hover { background: linear-gradient(135deg, #5568d3 0%, #653a8b 100%); }
+        .provider-header h2 { margin: 0; font-size: 1.2rem; margin-bottom: 0.5rem; }
+        .provider-summary { margin-left: 1.5rem; font-size: 0.9rem; opacity: 0.9; }
         .provider-summary .badge { background: rgba(255,255,255,0.2); padding: 4px 8px; border-radius: 4px; margin: 0 4px; }
         .provider-summary .badge.active { background: rgba(255,255,255,0.3); font-weight: bold; }
-        .provider-content { padding: 15px; max-height: 5000px; overflow: hidden; transition: max-height 0.3s ease; }
-        .provider-content.collapsed { max-height: 0; padding: 0 15px; }
-        .region { margin: 15px 0; padding: 15px; background: #f9f9f9; border-left: 4px solid #2196F3; }
-        .region h3 { margin-top: 0; color: #2196F3; }
-        table { width: 100%; border-collapse: collapse; margin: 15px 0; background: white; }
+        .provider-content { padding: 1rem 1.5rem; max-height: 5000px; overflow: hidden; transition: max-height 0.3s ease; }
+        .provider-content.collapsed { max-height: 0; padding: 0 1.5rem; }
+        .toggle-icon { transition: transform 0.3s; font-size: 1rem; }
+        .toggle-icon.expanded { transform: rotate(90deg); }
+        .region { margin: 1rem 0; padding: 1rem; background: #f9f9f9; border-radius: 5px; border-left: 4px solid #2196F3; }
+        .region h3 { margin-top: 0; color: #2196F3; font-size: 1.1rem; }
+        table { width: 100%; border-collapse: collapse; margin: 1rem 0; background: white; }
         th { background: #e0e0e0; padding: 10px; text-align: left; font-weight: bold; border-bottom: 2px solid #ccc; }
         td { padding: 10px; border-bottom: 1px solid #ddd; }
         tr:hover { background: #f5f5f5; }
@@ -59,20 +72,20 @@ generate_html_header() {
         .quota-table td:nth-child(2), .quota-table td:nth-child(3), .quota-table td:nth-child(4) { text-align: right; font-family: monospace; }
         .instances-table th:first-child { width: 30%; }
         .warning { color: #ff9800; font-weight: bold; }
-        .timestamp { color: #999; font-size: 0.9em; text-align: right; }
-        .summary { background: #e3f2fd; padding: 10px; margin: 10px 0; border-radius: 4px; }
     </style>
     <script>
         function toggleProvider(id) {
             const header = document.getElementById(id + '-header');
             const content = document.getElementById(id + '-content');
+            const icon = document.getElementById(id + '-icon');
             header.classList.toggle('collapsed');
             content.classList.toggle('collapsed');
+            icon.classList.toggle('expanded');
         }
     </script>
 </head>
 <body>
-    <h1>Cloud Resource Limits Report</h1>
+    <h1>Cloud Resource Usage & Limits Report</h1>
 HTMLHEAD
 }
 
@@ -107,8 +120,7 @@ EOF
     
     # Get current usage
     local instance_count eip_count vcpu_used
-    # shellcheck disable=SC2016  # Backticks are part of JMESPath query syntax, not shell expansion
-    instance_count=$(aws ec2 describe-instances --region "$region" --query 'length(Reservations[].Instances[?State.Name==`running`])' --output text 2>/dev/null || echo "0")
+    instance_count=$(aws ec2 describe-instances --region "$region" --filters "Name=instance-state-name,Values=running" --query 'length(Reservations[].Instances[])' --output text 2>/dev/null || echo "0")
     eip_count=$(aws ec2 describe-addresses --region "$region" --query 'length(Addresses)' --output text 2>/dev/null || echo "0")
     vcpu_used="N/A"
     
@@ -147,6 +159,19 @@ EOF
     echo "        </div>" >> "$output_file"
 }
 
+# Parallel wrapper for AWS regions
+collect_aws_data_parallel() {
+    local temp_dir="$1"
+    local regions=("us-east-1" "us-east-2" "us-west-1" "us-west-2" "eu-west-1" "eu-west-2" "eu-central-1" "ap-southeast-1" "ap-northeast-1")
+    
+    for region in "${regions[@]}"; do
+        {
+            collect_aws_data "$region" "$temp_dir/aws-$region.html"
+        } &
+    done
+    wait
+}
+
 collect_azure_data() {
     local location="$1"
     local output_file="$2"
@@ -172,14 +197,14 @@ EOF
     vcpu_current=$(echo "$quotas" | jq -r '.[] | select(.name.localizedValue=="Total Regional vCPUs") | .currentValue' 2>/dev/null || echo "0")
     vcpu_limit=$(echo "$quotas" | jq -r '.[] | select(.name.localizedValue=="Total Regional vCPUs") | .limit' 2>/dev/null || echo "N/A")
     
-    # Get public IPs
-    ip_current=$(az network public-ip list --query 'length(@)' --output tsv 2>/dev/null || echo "0")
+    # Get public IPs for this location
+    ip_current=$(az network public-ip list --query "[?location=='$location'] | length(@)" --output tsv 2>/dev/null || echo "0")
     ip_limit=$(az network list-usages --location "$location" --output json 2>/dev/null | jq -r '.[] | select(.name.localizedValue=="Public IP Addresses") | .limit' 2>/dev/null)
     [[ -z "$ip_limit" ]] && ip_limit="N/A"
     
-    # Get VM count
+    # Get VM count for this location
     local vm_count
-    vm_count=$(az vm list --query 'length(@)' --output tsv 2>/dev/null || echo "0")
+    vm_count=$(az vm list --query "[?location=='$location'] | length(@)" --output tsv 2>/dev/null || echo "0")
     
     # Calculate percentages
     local vcpu_pct="N/A" ip_pct="N/A"
@@ -197,7 +222,7 @@ EOF
             </table>
 EOF
     
-    # List running VMs
+    # List running VMs in this location
     if [[ "$vm_count" -gt 0 ]]; then
         {
             cat <<EOF
@@ -205,7 +230,7 @@ EOF
             <table class="instances-table">
                 <tr><th>Name</th><th>Size</th><th>Location</th><th>State</th><th>Tags</th></tr>
 EOF
-            az vm list --output json 2>/dev/null | jq -r '.[] | 
+            az vm list --query "[?location=='$location']" --output json 2>/dev/null | jq -r '.[] | 
                 (.tags // {} | to_entries | map(select(.key | test("owner|creator|project"; "i")) | "\(.key)=\(.value)") | join(", ")) as $tags |
                 "<tr><td>\(.name)</td><td>\(.hardwareProfile.vmSize)</td><td>\(.location)</td><td>\(.provisioningState)</td><td>\($tags)</td></tr>"'
             echo "            </table>"
@@ -213,6 +238,19 @@ EOF
     fi
     
     echo "        </div>" >> "$output_file"
+}
+
+# Parallel wrapper for Azure locations
+collect_azure_data_parallel() {
+    local temp_dir="$1"
+    local locations=("eastus" "eastus2" "westus" "westus2" "westeurope" "northeurope")
+    
+    for location in "${locations[@]}"; do
+        {
+            collect_azure_data "$location" "$temp_dir/azure-$location.html"
+        } &
+    done
+    wait
 }
 
 collect_gcp_data() {
@@ -286,6 +324,19 @@ EOF
     fi
     
     echo "        </div>" >> "$output_file"
+}
+
+# Parallel wrapper for GCP regions
+collect_gcp_data_parallel() {
+    local temp_dir="$1"
+    local regions=("us-central1" "us-east1" "us-west1" "europe-west1" "europe-west2" "asia-southeast1")
+    
+    for region in "${regions[@]}"; do
+        {
+            collect_gcp_data "$region" "$temp_dir/gcp-$region.html"
+        } &
+    done
+    wait
 }
 
 collect_hetzner_data() {
@@ -433,11 +484,11 @@ EOF
 generate_html() {
     local output_file="$1"
     local provider_filter="${2:-}"
+    local temp_dir="$3"
     local timestamp
     timestamp=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
     
     generate_html_header > "$output_file"
-    echo "    <div class=\"timestamp\">Generated: $timestamp</div>" >> "$output_file"
     
     local providers=("aws" "azure" "gcp" "hetzner" "digitalocean" "libvirt")
     
@@ -445,40 +496,109 @@ generate_html() {
         providers=("$provider_filter")
     fi
     
+    local provider_count=${#providers[@]}
+    
+    # Add header info section
+    cat >> "$output_file" <<EOF
+    <div class="header-info">
+        <p><strong>Total Providers:</strong> $provider_count</p>
+        <p><strong>Last Updated:</strong> $timestamp</p>
+        <p><small>This page auto-refreshes every 60 seconds</small></p>
+    </div>
+EOF
+    
+    # Parallel data collection phase
+    echo "Collecting data in parallel..." >&2
+    local start_time
+    start_time=$(date +%s)
+    
     for prov in "${providers[@]}"; do
-        # Collect summary data first
+        case "$prov" in
+            aws)
+                if command -v aws &>/dev/null; then
+                    collect_aws_data_parallel "$temp_dir" &
+                fi
+                ;;
+            azure)
+                if command -v az &>/dev/null; then
+                    collect_azure_data_parallel "$temp_dir" &
+                fi
+                ;;
+            gcp)
+                if command -v gcloud &>/dev/null; then
+                    collect_gcp_data_parallel "$temp_dir" &
+                fi
+                ;;
+        esac
+    done
+    wait
+    
+    local end_time
+    end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    echo "Data collection completed in ${duration}s" >&2
+    
+    # Generate HTML from collected data
+    echo "Generating report..." >&2
+    local gen_start_time
+    gen_start_time=$(date +%s)
+    
+    # Generate HTML from collected data
+    for prov in "${providers[@]}"; do
+        # Extract summary data from already-collected files
         local summary=""
+        local ip_summary=""
         case "$prov" in
             aws)
                 if command -v aws &>/dev/null; then
                     local total_instances=0
+                    local total_ips=0
                     for region in us-east-1 us-east-2 us-west-1 us-west-2 eu-west-1 eu-west-2 eu-central-1 ap-southeast-1 ap-northeast-1; do
-                        # shellcheck disable=SC2016  # Backticks are part of JMESPath query syntax
-                        local inst=$(aws ec2 describe-instances --region "$region" --query 'length(Reservations[].Instances[?State.Name==`running`])' --output text 2>/dev/null || echo "0")
-                        total_instances=$((total_instances + inst))
+                        if [[ -f "$temp_dir/aws-$region.html" ]]; then
+                            local inst=$(grep -o "Running Instances</td><td>[0-9]*" "$temp_dir/aws-$region.html" | grep -o "[0-9]*$" || echo "0")
+                            local ips=$(grep -o "Public IPs (Elastic)</td><td>[0-9]*" "$temp_dir/aws-$region.html" | grep -o "[0-9]*$" || echo "0")
+                            total_instances=$((total_instances + inst))
+                            total_ips=$((total_ips + ips))
+                        fi
                     done
                     summary="$total_instances instances"
+                    ip_summary="$total_ips IPs"
                 else
                     summary="CLI not installed"
                 fi
                 ;;
             azure)
                 if command -v az &>/dev/null; then
-                    local vm_count=$(az vm list --query 'length(@)' --output tsv 2>/dev/null || echo "0")
+                    local vm_count=0
+                    local ip_count=0
+                    for location in eastus eastus2 westus westus2 westeurope northeurope; do
+                        if [[ -f "$temp_dir/azure-$location.html" ]]; then
+                            local vms=$(grep -o "Running Instances</td><td>[0-9]*" "$temp_dir/azure-$location.html" | grep -o "[0-9]*$" || echo "0")
+                            local ips=$(grep -o "Public IPs</td><td>[0-9]*" "$temp_dir/azure-$location.html" | grep -o "[0-9]*$" || echo "0")
+                            vm_count=$((vm_count + vms))
+                            ip_count=$((ip_count + ips))
+                        fi
+                    done
                     summary="$vm_count VMs"
+                    ip_summary="$ip_count IPs"
                 else
                     summary="CLI not installed"
                 fi
                 ;;
             gcp)
                 if command -v gcloud &>/dev/null; then
-                    local project=$(gcloud config get-value project 2>/dev/null || echo "")
-                    if [[ -n "$project" ]]; then
-                        local inst_count=$(gcloud compute instances list --format="value(name)" 2>/dev/null | wc -l)
-                        summary="$inst_count instances"
-                    else
-                        summary="Not configured"
-                    fi
+                    local inst_count=0
+                    local ip_count=0
+                    for region in us-central1 us-east1 us-west1 europe-west1 europe-west2 asia-southeast1; do
+                        if [[ -f "$temp_dir/gcp-$region.html" ]]; then
+                            local insts=$(grep -o "Running Instances</td><td>[0-9]*" "$temp_dir/gcp-$region.html" | grep -o "[0-9]*$" || echo "0")
+                            local ips=$(grep -o "Public IPs (Static)</td><td>[0-9]*" "$temp_dir/gcp-$region.html" | grep -o "[0-9]*$" || echo "0")
+                            inst_count=$((inst_count + insts))
+                            ip_count=$((ip_count + ips))
+                        fi
+                    done
+                    summary="$inst_count instances"
+                    ip_summary="$ip_count IPs"
                 else
                     summary="CLI not installed"
                 fi
@@ -496,7 +616,9 @@ generate_html() {
                 if command -v doctl &>/dev/null; then
                     local droplet_data=$(doctl compute droplet list --output json 2>/dev/null || echo "[]")
                     local droplet_count=$(echo "$droplet_data" | jq -r 'length' 2>/dev/null || echo "0")
+                    local ip_count=$(doctl compute floating-ip list --output json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
                     summary="$droplet_count droplets"
+                    ip_summary="$ip_count IPs"
                 else
                     summary="CLI not installed"
                 fi
@@ -517,11 +639,23 @@ generate_html() {
             badge_class="badge active"
         fi
         
+        local ip_badge_class="badge"
+        if [[ "$ip_summary" =~ ^[1-9] ]]; then
+            ip_badge_class="badge active"
+        fi
+        
         {
             echo "    <div class=\"provider\">"
             echo "        <div class=\"provider-header collapsed\" id=\"${prov}-header\" onclick=\"toggleProvider('${prov}')\">"
-            echo "            <h2>${prov^^}</h2>"
-            echo "            <span class=\"provider-summary\"><span class=\"$badge_class\">$summary</span></span>"
+            echo "            <div>"
+            echo "                <h2>${prov^^}</h2>"
+            echo "                <span class=\"provider-summary\"><span class=\"$badge_class\">$summary</span>"
+            if [[ -n "$ip_summary" ]]; then
+                echo "<span class=\"$ip_badge_class\">$ip_summary</span>"
+            fi
+            echo "</span>"
+            echo "            </div>"
+            echo "            <div class=\"toggle-icon\" id=\"${prov}-icon\">▶</div>"
             echo "        </div>"
             echo "        <div class=\"provider-content collapsed\" id=\"${prov}-content\">"
         } >> "$output_file"
@@ -529,17 +663,23 @@ generate_html() {
         case "$prov" in
             aws)
                 for region in us-east-1 us-east-2 us-west-1 us-west-2 eu-west-1 eu-west-2 eu-central-1 ap-southeast-1 ap-northeast-1; do
-                    collect_aws_data "$region" "$output_file"
+                    if [[ -f "$temp_dir/aws-$region.html" ]]; then
+                        cat "$temp_dir/aws-$region.html" >> "$output_file"
+                    fi
                 done
                 ;;
             azure)
                 for location in eastus eastus2 westus westus2 westeurope northeurope; do
-                    collect_azure_data "$location" "$output_file"
+                    if [[ -f "$temp_dir/azure-$location.html" ]]; then
+                        cat "$temp_dir/azure-$location.html" >> "$output_file"
+                    fi
                 done
                 ;;
             gcp)
                 for region in us-central1 us-east1 us-west1 europe-west1 europe-west2 asia-southeast1; do
-                    collect_gcp_data "$region" "$output_file"
+                    if [[ -f "$temp_dir/gcp-$region.html" ]]; then
+                        cat "$temp_dir/gcp-$region.html" >> "$output_file"
+                    fi
                 done
                 ;;
             hetzner)
@@ -560,6 +700,11 @@ generate_html() {
     done
     
     generate_html_footer >> "$output_file"
+    
+    local gen_end_time
+    gen_end_time=$(date +%s)
+    local gen_duration=$((gen_end_time - gen_start_time))
+    echo "Report generated in ${gen_duration}s" >&2
 }
 
 main() {
@@ -575,9 +720,20 @@ main() {
         esac
     done
     
+    local output_dir
+    local output_name
+    output_dir="$(dirname "$output_file")"
+    output_name="$(basename "$output_file")"
+    local temp_file="${output_dir}/.tmp-${output_name}"
+    
+    # Create temp directory for parallel collection
+    TEMP_DIR=$(mktemp -d)
+    trap cleanup_temp EXIT INT TERM
+    
     echo "Generating HTML report..."
-    generate_html "$output_file" "$provider"
-    echo "Report generated: $output_file"
+    generate_html "$temp_file" "$provider" "$TEMP_DIR"
+    mv "$temp_file" "$output_file"
+    echo "Saved to: $output_file"
 }
 
 main "$@"

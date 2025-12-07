@@ -647,8 +647,8 @@ cleanup_digitalocean() {
     
     # Delete droplets first
     local droplet_list
-    droplet_list=$(doctl compute droplet list --format ID,Name --no-header 2>/dev/null | grep "${PREFIX_FILTER}" || echo "")
-    while IFS=$'\t' read -r id name; do
+    droplet_list=$(doctl compute droplet list --format ID,Name --no-header 2>/dev/null | awk "\$2 ~ /^${PREFIX_FILTER}/" || echo "")
+    while read -r id name; do
         if [[ -n "$id" && -n "$name" ]]; then
             log_info "  Deleting droplet: $name (ID: $id)"
             doctl compute droplet delete "$id" --force 2>/dev/null || \
@@ -664,8 +664,8 @@ cleanup_digitalocean() {
     
     # Delete volumes
     local volume_list
-    volume_list=$(doctl compute volume list --format ID,Name --no-header 2>/dev/null | grep "${PREFIX_FILTER}" || echo "")
-    while IFS=$'\t' read -r id name; do
+    volume_list=$(doctl compute volume list --format ID,Name --no-header 2>/dev/null | awk "\$2 ~ /^${PREFIX_FILTER}/" || echo "")
+    while read -r id name; do
         if [[ -n "$id" && -n "$name" ]]; then
             log_info "  Deleting volume: $name (ID: $id)"
             doctl compute volume delete "$id" --force 2>/dev/null || \
@@ -675,8 +675,8 @@ cleanup_digitalocean() {
     
     # Delete firewalls
     local firewall_list
-    firewall_list=$(doctl compute firewall list --format ID,Name --no-header 2>/dev/null | grep "${PREFIX_FILTER}" || echo "")
-    while IFS=$'\t' read -r id name; do
+    firewall_list=$(doctl compute firewall list --format ID,Name --no-header 2>/dev/null | awk "\$2 ~ /^${PREFIX_FILTER}/" || echo "")
+    while read -r id name; do
         if [[ -n "$id" && -n "$name" ]]; then
             log_info "  Deleting firewall: $name (ID: $id)"
             doctl compute firewall delete "$id" --force 2>/dev/null || \
@@ -686,8 +686,8 @@ cleanup_digitalocean() {
     
     # Delete VPCs (must be last)
     local vpc_list
-    vpc_list=$(doctl vpcs list --format ID,Name --no-header 2>/dev/null | grep "${PREFIX_FILTER}" || echo "")
-    while IFS=$'\t' read -r id name; do
+    vpc_list=$(doctl vpcs list --format ID,Name --no-header 2>/dev/null | awk "\$2 ~ /^${PREFIX_FILTER}/" || echo "")
+    while read -r id name; do
         if [[ -n "$id" && -n "$name" ]]; then
             log_info "  Deleting VPC: $name (ID: $id)"
             doctl vpcs delete "$id" --force 2>/dev/null || \
