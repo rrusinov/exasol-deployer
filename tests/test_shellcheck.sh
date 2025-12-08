@@ -40,6 +40,12 @@ for script in "${shell_scripts[@]}"; do
         echo "Skipping (missing): $script"
         continue
     fi
+    # Skip generated installer (contains base64 payload that shellcheck can't parse)
+    if [[ "$script" == "build/exasol-installer.sh" ]]; then
+        echo ""
+        echo "Skipping (generated): $script"
+        continue
+    fi
     echo ""
     echo "Linting: $script"
     set +e

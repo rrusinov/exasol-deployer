@@ -1,0 +1,50 @@
+name: Build and Release Installer
+
+on:
+  release:
+    types: [created, published]
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-installer:
+    name: Build Installer
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build installer
+        run: |
+          chmod +x build/create_release.sh
+          ./build/create_release.sh
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION=$(./build/exasol-installer.sh --version | head -1 | awk '{print $NF}')
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Upload installer to release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            build/exasol-installer.sh
+          name: Exasol Deployer ${{ steps.version.outputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create latest installer artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: exasol-installer
+          path: build/exasol-installer.sh
+          retention-days: 90

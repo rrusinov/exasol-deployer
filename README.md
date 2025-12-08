@@ -22,6 +22,68 @@ This directory contains a deployment configuration for Exasol database.
 - **Dynamic Configuration**: All Terraform variables generated from command-line parameters and version configurations
 - **Permission Analysis**: Static permission analysis for cloud provider templates to help configure cloud accounts
 
+## Installation
+
+### Quick Install (Recommended)
+
+Install the latest release with a single command:
+
+```bash
+curl -fsSL https://is.gd/exasol_deployer | bash
+```
+
+Or using the full URL:
+
+```bash
+curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-installer.sh | bash
+```
+
+Or download and run manually:
+
+```bash
+# Download the installer (short URL)
+curl -fsSL https://is.gd/exasol_deployer -o exasol-installer.sh
+
+# Or use the full URL
+curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-installer.sh -o exasol-installer.sh
+
+# Make it executable
+chmod +x exasol-installer.sh
+
+# Run the installer
+./exasol-installer.sh
+```
+
+The installer will:
+- Install to `~/.local/bin/exasol-deployer/` (or `~/bin/` on macOS)
+- Create a symlink at `~/.local/bin/exasol`
+- Configure your shell PATH automatically
+- Verify all prerequisites
+
+**Note:** For fresh installations, no confirmation is needed. To overwrite an existing installation non-interactively, add `--yes`.
+
+### Non-Interactive Installation
+
+For automation or CI/CD:
+
+```bash
+curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-installer.sh | bash -s -- --yes
+```
+
+### Custom Installation Path
+
+```bash
+./exasol-installer.sh --prefix /opt/exasol --yes
+```
+
+### Verify Installation
+
+```bash
+exasol version
+```
+
+For detailed build and installation documentation, see [Build System Documentation](docs/BUILD.md).
+
 ## Prerequisites
 
 ### System Requirements
