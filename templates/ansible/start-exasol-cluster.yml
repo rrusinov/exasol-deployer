@@ -79,18 +79,25 @@
       changed_when: false
       failed_when: false
 
-    - name: Start overlay network service (VXLAN)
+    # Restart overlay service only when overlay is configured
+    - name: Restart overlay network service (VXLAN)
+      when: overlay_ip is defined and overlay_ip | length > 0
       ansible.builtin.systemd:
         name: exasol-overlay.service
         state: restarted
       register: start_overlay
       failed_when: false
 
-    - name: Check overlay service status after start
+    - name: Wait for overlay service to be active
+      when: start_overlay is defined
       ansible.builtin.systemd:
         name: exasol-overlay.service
       register: overlay_service_status
-      when: start_overlay is defined
+      until: overlay_service_status.status.ActiveState == "active"
+      retries: 6
+      delay: 5
+      changed_when: false
+      failed_when: false
 
     - name: Display overlay service status
       ansible.builtin.debug:
@@ -98,7 +105,7 @@
       when: overlay_service_status.status is defined
 
     - name: Get overlay service logs if not active
-      ansible.builtin.command: journalctl -u exasol-overlay.service -n 50 --no-pager
+      ansible.builtin.command: journalctl -u exasol-overlay.service -n 100 --no-pager
       register: overlay_logs
       when:
         - overlay_service_status.status is defined

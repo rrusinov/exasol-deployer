@@ -23,7 +23,11 @@
         "health_status[*].cos_ssh==ok",
         "health_status[*].adminui==ok",
         "health_status[*].database==ok"
-      ]
+      ], 
+      "retry": {
+        "max_attempts": 6,
+        "delay_seconds": 10
+      } 
     },
     {
       "step": "destroy"
@@ -38,7 +42,11 @@
         "health_status[*].cos_ssh!=ok",
         "health_status[*].adminui!=ok",
         "health_status[*].database!=ok"
-      ]
+      ],
+      "retry": {
+        "max_attempts": 6,
+        "delay_seconds": 10
+      } 
     }
   ]
 }

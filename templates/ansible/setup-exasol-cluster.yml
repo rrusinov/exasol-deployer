@@ -234,15 +234,6 @@
             mode: "0644"
           notify: Reload systemd
 
-        - name: Run overlay setup script
-          ansible.builtin.command: /usr/local/bin/exasol-overlay-setup.sh
-          register: overlay_setup_result
-          changed_when: true
-
-        - name: Display overlay setup output
-          ansible.builtin.debug:
-            var: overlay_setup_result.stdout_lines
-
         - name: Enable and start overlay network service
           ansible.builtin.systemd:
             name: exasol-overlay.service
