@@ -517,31 +517,35 @@ The framework includes intelligent resource management to prevent overcommitment
 
 ### Automatic Cleanup on Failure
 
+**Default behavior (without `--stop-on-error`):**
 When a test fails, the framework automatically:
-1. Attempts to run `exasol destroy` on the failed deployment
-2. Frees up resources (nodes, memory) for subsequent tests
-3. Continues with remaining tests in the queue
+1. Runs `exasol destroy` to clean up cloud resources
+2. Removes the deployment directory
+3. Frees up resources (nodes, memory) for subsequent tests
+4. Continues with remaining tests in the queue
 
-This prevents resource exhaustion when tests fail partway through.
+This prevents resource exhaustion and cost accumulation when tests fail.
 
 ### Stop on Error (Debugging Mode)
 
-Use `--stop-on-error` to halt execution after the first test failure:
+Use `--stop-on-error` to preserve failed deployments for debugging:
 
 ```bash
 ./tests/run_e2e.sh --provider libvirt --stop-on-error
 ```
 
-**Behavior:**
+**Behavior with `--stop-on-error`:**
 - Stops scheduling new tests after first failure
 - Allows currently running tests to complete
-- Preserves failed deployment for debugging
+- **Preserves failed deployment** (no destroy, no cleanup)
+- Deployment remains in `tmp/tests/e2e-YYYYMMDD-HHMMSS/<provider>/deployments/<suite-name>/`
 - Useful for investigating test failures locally
 
-**Without --stop-on-error (default):**
-- Cleans up failed deployments automatically
+**Without `--stop-on-error` (default):**
+- Destroys all failed deployments automatically
 - Continues executing remaining tests
 - Better for CI/CD and unattended runs
+- Prevents cloud resource leaks and costs
 
 ### Resource-Aware Scheduling
 

@@ -6,15 +6,25 @@
 - name: Play 1 - Gather Host Facts
   hosts: exasol_nodes
   become: yes
+  gather_facts: no
   tasks:
     - name: Wait for SSH to become available (cloud-init may still be running)
       ansible.builtin.wait_for_connection:
-        timeout: 300
-        delay: 15
-        sleep: 5
+        timeout: "{{ (ssh_initial_timeout | default(600)) | int }}"
+        delay: "{{ (ssh_initial_delay | default(15)) | int }}"
+        sleep: "{{ (ssh_initial_sleep | default(5)) | int }}"
+
+    - name: Pause to allow cloud-init grace period
+      ansible.builtin.pause:
+        seconds: "{{ (cloud_init_grace_seconds | default(45)) | int }}"
+      when: (cloud_init_grace_seconds | default(45)) | int > 0
 
     - name: Ensure all host facts are gathered
       ansible.builtin.setup:
+      register: gather_facts_result
+      until: gather_facts_result is succeeded
+      retries: "{{ (gather_facts_retry_attempts | default(3)) | int }}"
+      delay: "{{ (gather_facts_retry_delay | default(20)) | int }}"
 
     - name: "PROGRESS: Ansible connection established"
       ansible.builtin.debug:

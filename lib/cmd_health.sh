@@ -6,6 +6,8 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$LIB_DIR/common.sh"
 # shellcheck source=lib/state.sh
 source "$LIB_DIR/state.sh"
+# shellcheck source=lib/ssh_checks.sh
+source "$LIB_DIR/ssh_checks.sh"
 # shellcheck source=lib/health_internal.sh
 source "$LIB_DIR/health_internal.sh"
 
@@ -630,14 +632,15 @@ health_check_single_host() {
     local port_8563_ok="false"
 
     # SSH check
-    if ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" true >/dev/null 2>&1; then
+    if ssh_run_with_retries "$ssh_config" "$host_name" "$ssh_timeout" 1 0 true; then
         ssh_ok="true"
 
         # COS SSH check
         if grep -Eq "^Host[[:space:]]+${host_name}-cos" "$ssh_config" >/dev/null 2>&1; then
-            if ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "${host_name}-cos" true >/dev/null 2>&1; then
+            if ssh_run_with_retries "$ssh_config" "${host_name}-cos" "$ssh_timeout" 1 0 true; then
                 cos_ssh_ok="true"
             else
+                [[ -n "$SSH_RETRY_LAST_ERROR" ]] && log_debug "SSH error for ${host_name}-cos: $SSH_RETRY_LAST_ERROR"
                 local_issues+=("{\"type\": \"cos_ssh_unreachable\", \"host\": \"$host_name-cos\", \"severity\": \"warning\"}")
             fi
         fi
@@ -699,6 +702,7 @@ health_check_single_host() {
             fi
         fi
     else
+        [[ -n "$SSH_RETRY_LAST_ERROR" ]] && log_debug "SSH error for $host_name: $SSH_RETRY_LAST_ERROR"
         local_issues+=("{\"type\": \"ssh_unreachable\", \"host\": \"$host_name\", \"severity\": \"critical\"}")
     fi
 
