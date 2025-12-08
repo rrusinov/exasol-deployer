@@ -4,4 +4,5 @@ AGENTS.md
 tmp*
 .cloude*
 .venv
+.vscode
 __pycache__
