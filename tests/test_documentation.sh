@@ -9,7 +9,7 @@ source "$TEST_DIR/test_helper.sh"
 source "$SCRIPT_ROOT/lib/cmd_init.sh"
 
 README_FILE="$SCRIPT_ROOT/README.md"
-CLOUD_OVERVIEW_DOC="$SCRIPT_ROOT/docs/CLOUD_SETUP.md"
+CLOUD_OVERVIEW_DOC="$SCRIPT_ROOT/clouds/CLOUD_SETUP.md"
 README_CONTENT="$(cat "$README_FILE")"
 
 echo "Documentation validation"
@@ -51,7 +51,7 @@ test_cloud_provider_docs_linked() {
         local upper_provider
         upper_provider=$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')
         local doc_name="CLOUD_SETUP_${upper_provider}.md"
-        local doc_rel_path="docs/$doc_name"
+        local doc_rel_path="clouds/$doc_name"
         local doc_abs_path="$SCRIPT_ROOT/$doc_rel_path"
 
         assert_file_exists "$doc_abs_path" "Doc exists for provider $provider"

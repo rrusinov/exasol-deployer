@@ -82,7 +82,7 @@ curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/
 exasol version
 ```
 
-For detailed build and installation documentation, see [Build System Documentation](docs/BUILD.md).
+For detailed build and installation documentation, see [Build System Documentation](build/README.md).
 
 ## Prerequisites
 
@@ -100,7 +100,7 @@ For detailed build and installation documentation, see [Build System Documentati
 - **Ansible** (>= 2.9)
 - **jq** (for JSON processing)
 - **Standard Unix tools**: grep, sed, awk, curl, ssh, date, mktemp, readlink/realpath
-- **Cloud provider credentials** configured (see [Cloud Setup Guide](docs/CLOUD_SETUP.md))
+- **Cloud provider credentials** configured (see [Cloud Setup Guide](clouds/CLOUD_SETUP.md))
 
 **For Development/Testing Only:**
 - **Python 3.6+** (required only for running unit tests in `tests/` directory)
@@ -155,14 +155,14 @@ sudo apt-get install -y jq
 
 Before deploying, you need to set up credentials for your chosen cloud provider. We support:
 
-- **[AWS (Amazon Web Services)](docs/CLOUD_SETUP_AWS.md)** - Most feature-complete
-- **[Azure (Microsoft Azure)](docs/CLOUD_SETUP_AZURE.md)** - Full support with spot instances
-- **[GCP (Google Cloud Platform)](docs/CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
-- **[Hetzner Cloud](docs/CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
-- **[DigitalOcean](docs/CLOUD_SETUP_DIGITALOCEAN.md)** - Simple and affordable
-- **[Local libvirt/KVM](docs/CLOUD_SETUP_LIBVIRT.md)** - Local testing and development
+- **[AWS (Amazon Web Services)](clouds/CLOUD_SETUP_AWS.md)** - Most feature-complete
+- **[Azure (Microsoft Azure)](clouds/CLOUD_SETUP_AZURE.md)** - Full support with spot instances
+- **[GCP (Google Cloud Platform)](clouds/CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
+- **[Hetzner Cloud](clouds/CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
+- **[DigitalOcean](clouds/CLOUD_SETUP_DIGITALOCEAN.md)** - Simple and affordable
+- **[Local libvirt/KVM](clouds/CLOUD_SETUP_LIBVIRT.md)** - Local testing and development
 
-**See the [Cloud Provider Setup Guide](docs/CLOUD_SETUP.md) for detailed instructions.**
+**See the [Cloud Provider Setup Guide](clouds/CLOUD_SETUP.md) for detailed instructions.**
 
 ### Quick Setup Examples
 
@@ -193,7 +193,7 @@ gcloud config get-value project  # Get project ID
 Get API token from provider console and use with `--hetzner-token` or `--digitalocean-token` flag.
 
 **Local libvirt/KVM**:
-Install libvirt and KVM, then ensure your user is in the `libvirt` and `kvm` groups. See [Libvirt Setup Guide](docs/CLOUD_SETUP_LIBVIRT.md).
+Install libvirt and KVM, then ensure your user is in the `libvirt` and `kvm` groups. See [Libvirt Setup Guide](clouds/CLOUD_SETUP_LIBVIRT.md).
 
 ## Quick Start
 
@@ -224,12 +224,12 @@ If permissions are not available, generate them (only needed when templates chan
 ```
 
 **For detailed cloud provider setup, see:**
-- [AWS Setup Guide](docs/CLOUD_SETUP_AWS.md)
-- [Azure Setup Guide](docs/CLOUD_SETUP_AZURE.md)
-- [GCP Setup Guide](docs/CLOUD_SETUP_GCP.md)
-- [Hetzner Setup Guide](docs/CLOUD_SETUP_HETZNER.md)
-- [DigitalOcean Setup Guide](docs/CLOUD_SETUP_DIGITALOCEAN.md)
-- [Libvirt Setup Guide](docs/CLOUD_SETUP_LIBVIRT.md)
+- [AWS Setup Guide](clouds/CLOUD_SETUP_AWS.md)
+- [Azure Setup Guide](clouds/CLOUD_SETUP_AZURE.md)
+- [GCP Setup Guide](clouds/CLOUD_SETUP_GCP.md)
+- [Hetzner Setup Guide](clouds/CLOUD_SETUP_HETZNER.md)
+- [DigitalOcean Setup Guide](clouds/CLOUD_SETUP_DIGITALOCEAN.md)
+- [Libvirt Setup Guide](clouds/CLOUD_SETUP_LIBVIRT.md)
 
 ### 2. Initialize a Deployment
 
@@ -848,6 +848,15 @@ This is expected behavior for Hetzner, DigitalOcean, and libvirt. Follow the man
 - `.credentials.json` - Passwords (DB/AdminUI/host; keep secure)
 - `terraform.tfstate` - Terraform state (created after deployment)
 
+## Documentation
+
+- **[Build System](build/README.md)** - Release build system and installer
+- **[Cloud Setup](clouds/README.md)** - Cloud provider setup guides
+- **[Testing](tests/README.md)** - Unit and E2E testing framework
+- **[Templates](templates/README.md)** - Terraform and Ansible templates
+- **[Library](lib/README.md)** - Core shell library modules
+- **[Scripts](scripts/README.md)** - Utility scripts for resource management
+
 ## Testing
 
 This project includes comprehensive test coverage:
@@ -862,7 +871,7 @@ This project includes comprehensive test coverage:
   ```
 
 - **E2E Tests**: End-to-end integration tests across cloud providers
-  - See [E2E Test Framework Documentation](docs/E2E-README.md) for details
+  - See [Testing Framework Documentation](tests/README.md) for details
   - Resource-aware scheduling prevents local memory exhaustion
   - Supports workflow-based testing with validation
   ```bash

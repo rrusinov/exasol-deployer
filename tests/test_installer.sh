@@ -354,6 +354,42 @@ df -h . >/dev/null 2>&1 && \
     pass "Disk space check available" || \
     pass "Disk space check (command available)"
 
+# Test 29: Payload structure verification (no .md files)
+echo "TEST: Payload contains no .md files"
+TESTS_RUN=$((TESTS_RUN + 1))
+temp_structure=$(create_test_dir)
+"$INSTALLER" --extract-only "$temp_structure" >/dev/null 2>&1
+md_files=$(find "$temp_structure" -name "*.md" -type f)
+if [[ -z "$md_files" ]]; then
+    pass "No .md files in payload"
+else
+    fail "Found .md files in payload: $md_files"
+fi
+rm -rf "$temp_structure"
+
+# Test 30: Payload structure verification (expected files)
+echo "TEST: Payload contains expected files and directories"
+TESTS_RUN=$((TESTS_RUN + 1))
+temp_structure=$(create_test_dir)
+"$INSTALLER" --extract-only "$temp_structure" >/dev/null 2>&1
+expected_items=(
+    "exasol"
+    "lib"
+    "templates"
+    "versions.conf"
+    "instance-types.conf"
+)
+missing=()
+for item in "${expected_items[@]}"; do
+    [[ -e "$temp_structure/$item" ]] || missing+=("$item")
+done
+if [[ ${#missing[@]} -eq 0 ]]; then
+    pass "All expected files present"
+else
+    fail "Missing files: ${missing[*]}"
+fi
+rm -rf "$temp_structure"
+
 echo
 echo "========================================"
 echo "  Test Results"

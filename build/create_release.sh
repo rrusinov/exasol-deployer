@@ -34,6 +34,9 @@ create_payload() {
     # Copy files to staging
     cp -r lib templates versions.conf instance-types.conf "$stage_dir/"
     
+    # Remove all .md files from staging
+    find "$stage_dir" -name "*.md" -type f -delete
+    
     # Copy exasol script and inject version
     sed "s/__EXASOL_VERSION__/$version/g" exasol > "$stage_dir/exasol"
     chmod +x "$stage_dir/exasol"

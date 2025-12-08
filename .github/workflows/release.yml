@@ -41,10 +41,3 @@ jobs:
           name: Exasol Deployer ${{ steps.version.outputs.version }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create latest installer artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: exasol-installer
-          path: build/exasol-installer.sh
-          retention-days: 90
