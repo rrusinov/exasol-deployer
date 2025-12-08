@@ -89,7 +89,7 @@ test_html_generation() {
         assert_contains "$content" "toggleProvider" "HTML has JavaScript"
         assert_contains "$content" "quota-table" "HTML has quota table"
         assert_contains "$content" "Resource Quotas" "HTML has resource quotas section"
-        assert_contains "$content" "auto-refreshes every 30 seconds" "HTML has auto-refresh message"
+        assert_contains "$content" "auto-refreshes every 60 seconds" "HTML has auto-refresh message"
         assert_contains "$content" "Total Providers:" "HTML has provider count"
         assert_contains "$content" "Last Updated:" "HTML has timestamp"
         

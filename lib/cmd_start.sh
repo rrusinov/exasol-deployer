@@ -7,6 +7,8 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$LIB_DIR/common.sh"
 # shellcheck source=lib/state.sh
 source "$LIB_DIR/state.sh"
+# shellcheck source=lib/ssh_checks.sh
+source "$LIB_DIR/ssh_checks.sh"
 
 # Show help for start command
 show_start_help() {
@@ -107,6 +109,11 @@ cmd_start() {
 
     local cloud_provider
     cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
+    local cluster_size
+    cluster_size=$(state_read "$deploy_dir" "cluster_size" 2>/dev/null || echo "")
+    if [[ ! "$cluster_size" =~ ^[0-9]+$ || "$cluster_size" -lt 1 ]]; then
+        cluster_size=1
+    fi
     local infra_power_supported="false"
     case "$cloud_provider" in
         aws|azure|gcp)
@@ -169,30 +176,23 @@ cmd_start() {
             log_warn "Failed to regenerate inventory files; attempting to continue"
         fi
 
-        # Wait a bit for VMs to fully boot up and SSH to become available
-        log_info "Waiting for VMs to boot and SSH to become available..."
-        sleep 30
+        local ssh_attempts=10
+        local ssh_retry_delay=10
+        local ssh_timeout=10
+        local ssh_parallelism="$cluster_size"
 
-        # Test SSH connectivity before running Ansible
         log_info "Testing SSH connectivity to nodes..."
-        local ssh_test_success=true
-        for i in $(seq 1 5); do
-            if ssh -F ssh_config -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null n11 "echo 'SSH connection test successful'" 2>/dev/null; then
-                log_info "SSH connectivity test passed"
-                break
-            else
-                log_info "SSH connectivity test failed (attempt $i/5), retrying in 10 seconds..."
-                sleep 10
-                if [[ $i -eq 5 ]]; then
-                    log_warn "SSH connectivity test failed after 5 attempts, proceeding with Ansible (it has built-in retry logic)"
-                    ssh_test_success=false
-                fi
+        if ! ssh_check_inventory_connectivity "inventory.ini" "ssh_config" 0 "$ssh_attempts" "$ssh_retry_delay" "$ssh_timeout" "$ssh_parallelism" ""; then
+            if [[ ${#SSH_CONNECTIVITY_FAILED_HOSTS[@]} -gt 0 ]]; then
+                log_warn "SSH pre-check failed for: ${SSH_CONNECTIVITY_FAILED_HOSTS[*]}"
             fi
-        done
+            log_warn "Proceeding with Ansible; playbook includes additional retry logic"
+        fi
 
         # Run Ansible to start the database services
         log_info "Starting database services via Ansible..."
-        if ! ansible-playbook -i inventory.ini .templates/start-exasol-cluster.yml; then
+        # Ensure stdin is in blocking mode to avoid Ansible errors
+        if ! ansible-playbook -i inventory.ini .templates/start-exasol-cluster.yml </dev/null; then
             state_set_status "$deploy_dir" "$STATE_START_FAILED"
             die "Ansible start operation failed"
         fi

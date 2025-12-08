@@ -70,22 +70,76 @@
     # ==============================================================================
     # START DATABASE SERVICES VIA SYSTEMD ON ALL NODES
     # ==============================================================================
-    - name: Start overlay network service (VXLAN)
+    - name: Wait for network to be ready (check default route)
+      ansible.builtin.command: ip route show default
+      register: default_route
+      retries: 30
+      delay: 2
+      until: default_route.rc == 0 and default_route.stdout | length > 0
+      changed_when: false
+      failed_when: false
+
+    # Restart overlay service only when overlay is configured
+    - name: Restart overlay network service (VXLAN)
+      when: overlay_ip is defined and overlay_ip | length > 0
       ansible.builtin.systemd:
         name: exasol-overlay.service
-        state: started
+        state: restarted
       register: start_overlay
       failed_when: false
+
+    - name: Wait for overlay service to be active
+      when:
+        - start_overlay is defined
+        - not (start_overlay.skipped | default(false))
+      ansible.builtin.systemd:
+        name: exasol-overlay.service
+      register: overlay_service_status
+      until: overlay_service_status.status.ActiveState == "active"
+      retries: 6
+      delay: 5
+      changed_when: false
+      failed_when: false
+
+    - name: Display overlay service status
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: exasol-overlay.service is {{ overlay_service_status.status.ActiveState }} ({{ overlay_service_status.status.SubState }})"
+      when:
+        - start_overlay is defined
+        - not (start_overlay.skipped | default(false))
+        - overlay_service_status.status is defined
+
+    - name: Get overlay service logs if not active
+      ansible.builtin.command: journalctl -u exasol-overlay.service -n 100 --no-pager
+      register: overlay_logs
+      when:
+        - start_overlay is defined
+        - not (start_overlay.skipped | default(false))
+        - overlay_service_status.status is defined
+        - overlay_service_status.status.ActiveState != "active"
+      changed_when: false
+      failed_when: false
+
+    - name: Display overlay service logs on failure
+      ansible.builtin.debug:
+        msg: "{{ overlay_logs.stdout_lines }}"
+      when:
+        - start_overlay is defined
+        - not (start_overlay.skipped | default(false))
+        - overlay_logs is defined
+        - overlay_logs.stdout_lines is defined
 
     - name: Wait for overlay interface to be ready
       ansible.builtin.command: ip -o addr show vxlan-br0
       register: overlay_status
-      retries: 10
-      delay: 3
+      retries: 30
+      delay: 10
       until: overlay_status.rc == 0
       changed_when: false
       failed_when: overlay_status.rc != 0
-      when: start_overlay is defined
+      when:
+        - start_overlay is defined
+        - not (start_overlay.skipped | default(false))
 
     - name: Start exasol-data-symlinks.service (if exists)
       ansible.builtin.systemd:
@@ -94,6 +148,19 @@
       register: start_data_symlinks
       failed_when: false
 
+    - name: Check data-symlinks service status
+      ansible.builtin.systemd:
+        name: exasol-data-symlinks.service
+      register: data_symlinks_status
+      failed_when: false
+
+    - name: Display data-symlinks service status if not active
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: exasol-data-symlinks.service is {{ data_symlinks_status.status.ActiveState | default('not found') }}"
+      when:
+        - data_symlinks_status.status is defined
+        - data_symlinks_status.status.ActiveState != "active"
+
     - name: Start c4_cloud_command.service
       ansible.builtin.systemd:
         name: c4_cloud_command.service
@@ -101,11 +168,53 @@
       register: start_cloud_command
       failed_when: false
 
+    - name: Check c4_cloud_command service status
+      ansible.builtin.systemd:
+        name: c4_cloud_command.service
+      register: cloud_command_status
+
+    - name: Get c4_cloud_command logs if not active
+      ansible.builtin.command: journalctl -u c4_cloud_command.service -n 30 --no-pager
+      register: cloud_command_logs
+      when:
+        - cloud_command_status.status is defined
+        - cloud_command_status.status.ActiveState != "active"
+      changed_when: false
+      failed_when: false
+
+    - name: Display c4_cloud_command logs on failure
+      ansible.builtin.debug:
+        msg: "{{ cloud_command_logs.stdout_lines }}"
+      when:
+        - cloud_command_logs is defined
+        - cloud_command_logs.stdout_lines is defined
+
     - name: Start c4.service (main Exasol database service)
       ansible.builtin.systemd:
         name: c4.service
         state: started
       register: start_c4
+
+    - name: Check c4.service status
+      ansible.builtin.systemd:
+        name: c4.service
+      register: c4_status
+
+    - name: Get c4.service logs if not active
+      ansible.builtin.command: journalctl -u c4.service -n 30 --no-pager
+      register: c4_logs
+      when:
+        - c4_status.status is defined
+        - c4_status.status.ActiveState != "active"
+      changed_when: false
+      failed_when: false
+
+    - name: Display c4.service logs on failure
+      ansible.builtin.debug:
+        msg: "{{ c4_logs.stdout_lines }}"
+      when:
+        - c4_logs is defined
+        - c4_logs.stdout_lines is defined
 
     - name: Wait for c4.service to be fully active
       ansible.builtin.wait_for:
@@ -127,8 +236,8 @@
       become_user: "{{ exa_user }}"
       register: stage_check
       until: stage_check.stdout | regex_search('true')
-      retries: 60
-      delay: 5
+      retries: 120
+      delay: 10
       changed_when: false
       failed_when: stage_check.stdout is not regex('true')
       run_once: true

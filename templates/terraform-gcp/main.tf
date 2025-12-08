@@ -41,7 +41,7 @@ resource "google_compute_network" "exasol" {
 }
 
 resource "google_compute_subnetwork" "exasol" {
-  name = "exasol-subnet"
+  name = "exasol-subnet-${random_id.instance.hex}"
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
   # Format: 10.X.0.0/16 where X is derived from cluster ID hex digits
   # Provides 254 possible unique networks
@@ -148,7 +148,7 @@ locals {
 
 resource "google_compute_instance" "exasol_node" {
   count          = var.node_count
-  name           = "n${count.index + 11}"
+  name           = "n${count.index + 11}-${random_id.instance.hex}"
   machine_type   = var.instance_type
   zone           = local.selected_gcp_zone
   desired_status = var.infra_desired_state == "stopped" ? "TERMINATED" : "RUNNING"
@@ -211,7 +211,7 @@ resource "google_compute_instance" "exasol_node" {
 
 resource "google_compute_disk" "data_volume" {
   count = var.node_count * var.data_volumes_per_node
-  name  = "exasol-data-${floor(count.index / var.data_volumes_per_node) + 11}-${(count.index % var.data_volumes_per_node) + 1}"
+  name  = "exasol-data-${random_id.instance.hex}-${floor(count.index / var.data_volumes_per_node) + 11}-${(count.index % var.data_volumes_per_node) + 1}"
   type  = "pd-ssd"
   zone  = local.selected_gcp_zone
   size  = var.data_volume_size

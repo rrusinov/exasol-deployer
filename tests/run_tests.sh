@@ -3,6 +3,13 @@
 
 set -euo pipefail
 
+# Check bash version (requires 4.0+ for associative arrays and mapfile)
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    echo "Error: This script requires Bash 4.0 or higher (current: ${BASH_VERSION})" >&2
+    echo "Please upgrade bash or use a system with bash 4.0+" >&2
+    exit 1
+fi
+
 # Get script directory
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -78,6 +85,7 @@ run_test_file "$TEST_DIR/test_e2e_framework.sh"
 run_test_file "$TEST_DIR/test_e2e_config.sh"
 run_test_file "$TEST_DIR/test_run_e2e.sh"
 run_test_file "$TEST_DIR/test_generate_limits_report.sh"
+run_test_file "$TEST_DIR/test_cleanup_resources.sh"
 
 # Overall summary
 echo -e "${BLUE}=========================================${NC}"

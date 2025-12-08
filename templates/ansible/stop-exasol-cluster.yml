@@ -148,7 +148,7 @@
       register: admin_ui_status
       until: admin_ui_status.status.ActiveState != "active"
       retries: 30
-      delay: 5
+      delay: 10
       failed_when: false
       when: stop_admin_ui.changed
 

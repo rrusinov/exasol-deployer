@@ -222,7 +222,7 @@ class HTMLReportGenerator:
             # Build parameters display
             params = result.get('parameters', {})
             params_items = [f"{k}={v}" for k, v in params.items()]
-            params_display_short = html.escape(', '.join(params_items[:5]))  # Show first 5 in table
+            params_display_short = html.escape(', '.join(params_items))  # Show all parameters in table
             params_display_full = html.escape(', '.join(params_items)) if params_items else 'N/A'  # Show all in details
             
             # Description from SUT
@@ -876,19 +876,22 @@ class E2ETestFramework:
                 completed += 1
                 status = 'PASS' if result['success'] else 'FAIL'
                 
-                # If test failed, try to clean up deployment to free resources
+                # If test failed, handle cleanup based on --stop-on-error flag
                 if not result['success']:
-                    self.logger.warning(f"Test {result['deployment_id']} FAILED - attempting cleanup")
-                    deploy_dir = Path(result.get('deployment_dir', ''))
-                    if deploy_dir.exists():
-                        try:
-                            self._cleanup_failed_deployment(deploy_dir, result['deployment_id'])
-                            self.logger.info(f"Cleanup completed for {result['deployment_id']}")
-                        except Exception as cleanup_err:
-                            self.logger.error(f"Cleanup failed for {result['deployment_id']}: {cleanup_err}")
+                    # Only cleanup if --stop-on-error is NOT set
+                    if not self.stop_on_error:
+                        self.logger.warning(f"Test {result['deployment_id']} FAILED - attempting cleanup")
+                        deploy_dir = Path(result.get('deployment_dir', ''))
+                        if deploy_dir.exists():
+                            try:
+                                self._cleanup_failed_deployment(deploy_dir, result['deployment_id'])
+                                self.logger.info(f"Cleanup completed for {result['deployment_id']}")
+                            except Exception as cleanup_err:
+                                self.logger.error(f"Cleanup failed for {result['deployment_id']}: {cleanup_err}")
                     
                     # Stop execution if --stop-on-error is set
                     if self.stop_on_error:
+                        self.logger.error(f"Test {result['deployment_id']} FAILED - preserving deployment for debugging (--stop-on-error)")
                         self.logger.error("Stopping execution due to test failure (--stop-on-error)")
                         # Cancel remaining futures
                         for remaining_future in future_to_test:
@@ -968,29 +971,32 @@ class E2ETestFramework:
                     
                     status = 'PASS' if result['success'] else 'FAIL'
                     
-                    # If test failed, try to clean up deployment to free resources
+                    # If test failed, handle cleanup based on --stop-on-error flag
                     if not result['success']:
-                        self.logger.warning(f"Test {result['deployment_id']} FAILED - attempting cleanup")
-                        deploy_dir = Path(result.get('deployment_dir', ''))
-                        if deploy_dir.exists():
-                            try:
-                                cleanup_info = self._cleanup_failed_deployment(
-                                    deploy_dir,
-                                    result['deployment_id'],
-                                    provider=result.get('provider'),
-                                    log_path=Path(result.get('log_file', '')) if result.get('log_file') else None
-                                )
-                                result['cleanup'] = cleanup_info
-                                if cleanup_info.get('status') == 'completed':
-                                    self.logger.info(f"Cleanup completed for {result['deployment_id']}")
-                                else:
-                                    self.logger.warning(f"Cleanup incomplete for {result['deployment_id']}: {cleanup_info.get('error')}")
-                            except Exception as cleanup_err:
-                                result['cleanup'] = {'status': 'failed', 'error': str(cleanup_err)}
-                                self.logger.error(f"Cleanup failed for {result['deployment_id']}: {cleanup_err}")
+                        # Only cleanup if --stop-on-error is NOT set
+                        if not self.stop_on_error:
+                            self.logger.warning(f"Test {result['deployment_id']} FAILED - attempting cleanup")
+                            deploy_dir = Path(result.get('deployment_dir', ''))
+                            if deploy_dir.exists():
+                                try:
+                                    cleanup_info = self._cleanup_failed_deployment(
+                                        deploy_dir,
+                                        result['deployment_id'],
+                                        provider=result.get('provider'),
+                                        log_path=Path(result.get('log_file', '')) if result.get('log_file') else None
+                                    )
+                                    result['cleanup'] = cleanup_info
+                                    if cleanup_info.get('status') == 'completed':
+                                        self.logger.info(f"Cleanup completed for {result['deployment_id']}")
+                                    else:
+                                        self.logger.warning(f"Cleanup incomplete for {result['deployment_id']}: {cleanup_info.get('error')}")
+                                except Exception as cleanup_err:
+                                    result['cleanup'] = {'status': 'failed', 'error': str(cleanup_err)}
+                                    self.logger.error(f"Cleanup failed for {result['deployment_id']}: {cleanup_err}")
                         
                         # Stop execution if --stop-on-error is set
                         if self.stop_on_error:
+                            self.logger.error(f"Test {result['deployment_id']} FAILED - preserving deployment for debugging (--stop-on-error)")
                             self.logger.error("Stopping execution due to test failure (--stop-on-error)")
                             # Cancel all pending tests
                             pending_tests.clear()
@@ -1047,6 +1053,26 @@ class E2ETestFramework:
                 except Exception:
                     pass
 
+        # Update health status before cleanup
+        health_cmd = [
+            './exasol', 'health',
+            '--deployment-dir', str(deploy_dir),
+            '--update'
+        ]
+        
+        try:
+            health_result = subprocess.run(
+                health_cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=self.repo_root
+            )
+            if health_result.returncode != 0:
+                log_msg(f"Health update failed (non-fatal): {health_result.stderr.strip()}")
+        except Exception as e:
+            log_msg(f"Health update failed (non-fatal): {e}")
+        
         # Try to run destroy command
         destroy_cmd = [
             './exasol', 'destroy',
@@ -1228,7 +1254,7 @@ class E2ETestFramework:
                     print(f"- {result['deployment_id']}: {result.get('error', 'Unknown error')}")
 
     def _extract_log_errors(self, log_file: Path, max_lines: int = 10) -> List[str]:
-        """Extract error-like lines from a log file for failed tests."""
+        """Extract error-like lines from a log file for failed tests (returns last N errors)."""
         if not log_file.exists():
             return []
         patterns = (r'\bERROR\b', r'\bFAILED\b', r'\bFATAL\b')
@@ -1241,11 +1267,9 @@ class E2ETestFramework:
                     if combined.search(line):
                         clean_line = ansi_re.sub('', line).strip()
                         errors.append(clean_line)
-                        if len(errors) >= max_lines:
-                            break
         except Exception:
-            return errors
-        return errors
+            return errors[-max_lines:] if errors else []
+        return errors[-max_lines:] if errors else []
 
     def _run_single_test(self, test_case: Dict[str, Any]) -> Dict[str, Any]:
         """Run a single test case using the workflow engine."""
@@ -1715,28 +1739,7 @@ class E2ETestFramework:
                 'error': str(e)
             })
 
-    def _cleanup_deployment(self, deploy_dir: Path, provider: str, log_file: Path, keep_artifacts: bool = False, suite_name: Optional[str] = None) -> Optional[Path]:
-        """Cleanup deployment resources."""
-        retained_path: Optional[Path] = None
-        if keep_artifacts and deploy_dir.exists():
-            # Use suite name for retained directory if provided, otherwise deployment dir name\n            dir_name = suite_name if suite_name else deploy_dir.name
-            retained_path = self.retained_root / dir_name
-            if retained_path.exists():
-                shutil.rmtree(retained_path)
-            shutil.copytree(str(deploy_dir), str(retained_path))
-            self._log_to_file(log_file, f"Retained deployment directory for investigation: {retained_path}")
 
-        if deploy_dir.exists():
-            cmd = ['./exasol', 'destroy', '--deployment-dir', str(deploy_dir), '--auto-approve']
-
-            result = self._run_command(cmd, log_file, cwd=self.repo_root)
-            if result.returncode != 0:
-                self._log_to_file(log_file, f"Warning: Cleanup failed for {deploy_dir}: {result.stderr}")
-
-            if not keep_artifacts:
-                shutil.rmtree(deploy_dir, ignore_errors=True)
-
-        return retained_path
 
     def _parse_inventory(self, inventory_file: Path, validation: Dict[str, Any]) -> Dict[str, Any]:
         inventory_data = {'hosts': [], 'sections': {}}
@@ -2205,8 +2208,8 @@ class E2ETestFramework:
         if hasattr(self, 'file_handler'):
             self.file_handler.close()
         
-        # Note: work_dir is now under results_dir/deployments and should be retained
-        # Individual deployment cleanup is handled by _cleanup_deployment()
+        # Note: work_dir is now under results_dir/deployments
+        # Individual deployment cleanup is handled by _cleanup_failed_deployment()
 
     def __enter__(self):
         """Context manager entry."""

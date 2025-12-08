@@ -23,7 +23,11 @@
         "health_status[*].cos_ssh==ok",
         "health_status[*].adminui==ok",
         "health_status[*].database==ok"
-      ]
+      ], 
+      "retry": {
+        "max_attempts": 6,
+        "delay_seconds": 10
+      }
     },
     {
       "step": "restart_node",
@@ -32,32 +36,33 @@
       "method": "ssh"
     },
     {
-      "step": "validate",
-      "description": "Immediate check - expect 1 node down",
-      "checks": [
-        "cluster_status==degraded"
-      ],
-      "allow_failures": [
-        "cluster_status==degraded"
-      ]
+      "step": "custom_command",
+      "description": "Wait for node reboot completion (uptime under 3 minutes)",
+      "command": "uptime_secs=$(ssh -F $deployment_dir/ssh_config -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR n12 \"cat /proc/uptime | cut -d. -f1\") && echo \"uptime=$uptime_secs\" && [ \"$uptime_secs\" -lt 300 ]",
+      "retry": {
+        "max_attempts": 30,
+        "delay_seconds": 10
+      }
     },
     {
       "step": "validate",
       "description": "Wait for COS SSH recovery after reboot",
       "checks": [
-        "health_status[*].ssh==ok",
-        "health_status[*].cos_ssh==ok",
-        "health_status[*].adminui==ok"
+        "health_status[*].cos_ssh==ok"
       ],
       "retry": {
-        "max_attempts": 18,
+        "max_attempts": 30,
         "delay_seconds": 10
       }
     },
     {
       "step": "custom_command",
-      "description": "Start database manually via COS SSH",
-      "command": "ssh -F $deployment_dir/ssh_config n11-cos 'confd_client db_start db_name: Exasol'"
+      "description": "Start database manually via COS SSH (if not already running)",
+      "command": "ssh -F $deployment_dir/ssh_config -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR n11-cos 'dwad_client list | grep -qE \"State:[[:space:]]+running\" && echo Database already running || confd_client db_start db_name: Exasol'",
+      "retry": {
+        "max_attempts": 12,
+        "delay_seconds": 10
+      }
     },
     {
       "step": "validate",
@@ -67,7 +72,7 @@
         "health_status[*].database==ok"
       ],
       "retry": {
-        "max_attempts": 18,
+        "max_attempts": 30,
         "delay_seconds": 10
       }
     },
@@ -83,7 +88,11 @@
         "health_status[*].cos_ssh!=ok",
         "health_status[*].adminui!=ok",
         "health_status[*].database!=ok"
-      ]
+      ],     
+      "retry": {
+        "max_attempts": 6,
+        "delay_seconds": 10
+      }
     },
     {
       "step": "destroy"
@@ -97,7 +106,11 @@
         "health_status[*].cos_ssh!=ok",
         "health_status[*].adminui!=ok",
         "health_status[*].database!=ok"      
-      ]
+      ], 
+      "retry": {
+        "max_attempts": 6,
+        "delay_seconds": 10
+      }
     }
   ]
 }

@@ -32,35 +32,78 @@ def find_all_results(base_dir: Path):
         
         # Find provider results
         providers = []
-        for provider_dir in sorted(exec_dir.iterdir()):
-            if not provider_dir.is_dir():
-                continue
+        
+        # Check if results are directly in the execution directory (single test run)
+        direct_results_json = exec_dir / "results.json"
+        direct_results_html = exec_dir / "results.html"
+        
+        if direct_results_json.exists() or direct_results_html.exists():
+            # Single test run - results are directly in exec_dir
+            provider_info = {
+                'name': 'test-run',  # Generic name for single test
+                'has_json': direct_results_json.exists(),
+                'has_html': direct_results_html.exists(),
+                'json_path': str(direct_results_json.relative_to(base_dir)) if direct_results_json.exists() else None,
+                'html_path': str(direct_results_html.relative_to(base_dir)) if direct_results_html.exists() else None,
+            }
             
-            results_json = provider_dir / "results.json"
-            results_html = provider_dir / "results.html"
+            # Extract summary from results.json if available
+            if direct_results_json.exists():
+                try:
+                    with open(direct_results_json, 'r') as f:
+                        data = json.load(f)
+                        provider_info['total'] = data.get('total_tests', 0)
+                        provider_info['passed'] = data.get('passed', 0)
+                        provider_info['failed'] = data.get('failed', 0)
+                        provider_info['duration'] = data.get('total_time', 0)
+                        
+                        # Extract provider name from top-level or from test results
+                        provider_name = data.get('provider')
+                        if provider_name:
+                            provider_info['name'] = provider_name
+                        else:
+                            # Fallback: try to extract from first test name
+                            test_results = data.get('results', [])
+                            if test_results and len(test_results) > 0:
+                                # Get provider from first test name (e.g., "hetzner-1n_simple" -> "hetzner")
+                                first_test = test_results[0].get('test_name', '')
+                                if '-' in first_test:
+                                    provider_info['name'] = first_test.split('-')[0]
+                except Exception:
+                    pass
             
-            if results_json.exists() or results_html.exists():
-                provider_info = {
-                    'name': provider_dir.name,
-                    'has_json': results_json.exists(),
-                    'has_html': results_html.exists(),
-                    'json_path': str(results_json.relative_to(base_dir)) if results_json.exists() else None,
-                    'html_path': str(results_html.relative_to(base_dir)) if results_html.exists() else None,
-                }
+            providers.append(provider_info)
+        else:
+            # Multi-provider run - results are in subdirectories
+            for provider_dir in sorted(exec_dir.iterdir()):
+                if not provider_dir.is_dir():
+                    continue
                 
-                # Extract summary from results.json if available
-                if results_json.exists():
-                    try:
-                        with open(results_json, 'r') as f:
-                            data = json.load(f)
-                            provider_info['total'] = data.get('total_tests', 0)
-                            provider_info['passed'] = data.get('passed', 0)
-                            provider_info['failed'] = data.get('failed', 0)
-                            provider_info['duration'] = data.get('total_time', 0)
-                    except Exception:
-                        pass
+                results_json = provider_dir / "results.json"
+                results_html = provider_dir / "results.html"
                 
-                providers.append(provider_info)
+                if results_json.exists() or results_html.exists():
+                    provider_info = {
+                        'name': provider_dir.name,
+                        'has_json': results_json.exists(),
+                        'has_html': results_html.exists(),
+                        'json_path': str(results_json.relative_to(base_dir)) if results_json.exists() else None,
+                        'html_path': str(results_html.relative_to(base_dir)) if results_html.exists() else None,
+                    }
+                    
+                    # Extract summary from results.json if available
+                    if results_json.exists():
+                        try:
+                            with open(results_json, 'r') as f:
+                                data = json.load(f)
+                                provider_info['total'] = data.get('total_tests', 0)
+                                provider_info['passed'] = data.get('passed', 0)
+                                provider_info['failed'] = data.get('failed', 0)
+                                provider_info['duration'] = data.get('total_time', 0)
+                        except Exception:
+                            pass
+                    
+                    providers.append(provider_info)
         
         if providers:
             results.append({

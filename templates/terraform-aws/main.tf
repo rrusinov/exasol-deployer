@@ -109,7 +109,7 @@ resource "aws_vpc" "exasol_vpc" {
   enable_dns_hostnames = true
 
   tags = {
-    Name = "exasol-vpc"
+    Name = "exasol-vpc-${random_id.instance.hex}"
   }
 }
 
@@ -121,13 +121,13 @@ resource "aws_subnet" "exasol_subnet" {
   availability_zone       = var.availability_zone
 
   tags = {
-    Name = "exasol-subnet"
+    Name = "exasol-subnet-${random_id.instance.hex}"
   }
 }
 
 # Security Group
 resource "aws_security_group" "exasol_cluster" {
-  name        = "exasol-cluster-sg"
+  name        = "exasol-cluster-sg-${random_id.instance.hex}"
   description = "Security group for Exasol cluster"
   vpc_id      = aws_vpc.exasol_vpc.id
 
@@ -172,7 +172,7 @@ resource "aws_security_group" "exasol_cluster" {
   }
 
   tags = {
-    Name = "exasol-cluster-sg"
+    Name = "exasol-cluster-sg-${random_id.instance.hex}"
   }
 }
 
@@ -181,7 +181,7 @@ resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.exasol_vpc.id
 
   tags = {
-    Name = "exasol-igw"
+    Name = "exasol-igw-${random_id.instance.hex}"
   }
 }
 
@@ -195,7 +195,7 @@ resource "aws_route_table" "public" {
   }
 
   tags = {
-    Name = "exasol-public-rt"
+    Name = "exasol-public-rt-${random_id.instance.hex}"
   }
 }
 
@@ -241,7 +241,7 @@ resource "aws_instance" "exasol_node" {
   }
 
   tags = {
-    Name    = "n${count.index + 11}"
+    Name    = "n${count.index + 11}-${random_id.instance.hex}"
     Role    = "worker"
     Cluster = "exasol-cluster"
   }
@@ -269,7 +269,7 @@ resource "aws_ebs_volume" "data_volume" {
   encrypted         = true
 
   tags = {
-    Name        = "n${floor(count.index / var.data_volumes_per_node) + 11}-data-${(count.index % var.data_volumes_per_node) + 1}"
+    Name        = "n${floor(count.index / var.data_volumes_per_node) + 11}-data-${(count.index % var.data_volumes_per_node) + 1}-${random_id.instance.hex}"
     Cluster     = "exasol-cluster"
     VolumeIndex = tostring((count.index % var.data_volumes_per_node) + 1)
     NodeIndex   = tostring(floor(count.index / var.data_volumes_per_node) + 11)

@@ -59,7 +59,7 @@ resource "azurerm_resource_group" "exasol" {
 # ==============================================================================
 
 resource "azurerm_virtual_network" "exasol" {
-  name = "exasol-vnet"
+  name = "exasol-vnet-${random_id.instance.hex}"
   # Use range derived from cluster ID to ensure uniqueness while being deterministic
   # Format: 10.X.0.0/16 where X is derived from cluster ID hex digits
   # Provides 254 possible unique networks
@@ -74,7 +74,7 @@ resource "azurerm_virtual_network" "exasol" {
 }
 
 resource "azurerm_subnet" "exasol" {
-  name                 = "exasol-subnet"
+  name                 = "exasol-subnet-${random_id.instance.hex}"
   resource_group_name  = azurerm_resource_group.exasol.name
   virtual_network_name = azurerm_virtual_network.exasol.name
   # Carve a /24 subnet from the VNet /16
@@ -86,7 +86,7 @@ resource "azurerm_subnet" "exasol" {
 # ==============================================================================
 
 resource "azurerm_network_security_group" "exasol" {
-  name                = "exasol-nsg"
+  name                = "exasol-nsg-${random_id.instance.hex}"
   location            = azurerm_resource_group.exasol.location
   resource_group_name = azurerm_resource_group.exasol.name
 
@@ -128,7 +128,7 @@ resource "azurerm_network_security_group" "exasol" {
 
 resource "azurerm_public_ip" "exasol_node" {
   count               = var.node_count
-  name                = "exasol-pip-${count.index + 11}"
+  name                = "exasol-pip-${count.index + 11}-${random_id.instance.hex}"
   location            = azurerm_resource_group.exasol.location
   resource_group_name = azurerm_resource_group.exasol.name
   allocation_method   = "Static"
@@ -145,7 +145,7 @@ resource "azurerm_public_ip" "exasol_node" {
 
 resource "azurerm_network_interface" "exasol_node" {
   count               = var.node_count
-  name                = "exasol-nic-${count.index + 11}"
+  name                = "exasol-nic-${count.index + 11}-${random_id.instance.hex}"
   location            = azurerm_resource_group.exasol.location
   resource_group_name = azurerm_resource_group.exasol.name
 
@@ -185,7 +185,7 @@ data "azurerm_platform_image" "ubuntu" {
 
 resource "azurerm_linux_virtual_machine" "exasol_node" {
   count               = var.node_count
-  name                = "n${count.index + 11}"
+  name                = "n${count.index + 11}-${random_id.instance.hex}"
   location            = azurerm_resource_group.exasol.location
   resource_group_name = azurerm_resource_group.exasol.name
   size                = var.instance_type
@@ -206,7 +206,7 @@ resource "azurerm_linux_virtual_machine" "exasol_node" {
   }
 
   os_disk {
-    name                 = "exasol-osdisk-${count.index + 11}"
+    name                 = "exasol-osdisk-${count.index + 11}-${random_id.instance.hex}"
     caching              = "ReadWrite"
     storage_account_type = "Premium_LRS"
     disk_size_gb         = var.root_volume_size
@@ -241,8 +241,12 @@ resource "azapi_resource_action" "vm_power_state" {
   method      = "POST"
   body        = jsonencode({})
 
-  # Ensure this action runs after the VM is created
-  depends_on = [azurerm_linux_virtual_machine.exasol_node]
+  # Ensure this action runs after the VM is created AND all disks are attached
+  # This prevents Azure API 409 Conflict errors from concurrent operations
+  depends_on = [
+    azurerm_linux_virtual_machine.exasol_node,
+    azurerm_virtual_machine_data_disk_attachment.data_attachment
+  ]
 }
 
 # ==============================================================================
@@ -251,7 +255,7 @@ resource "azapi_resource_action" "vm_power_state" {
 
 resource "azurerm_managed_disk" "data_volume" {
   count                = var.node_count * var.data_volumes_per_node
-  name                 = "exasol-data-${floor(count.index / var.data_volumes_per_node) + 11}-${(count.index % var.data_volumes_per_node) + 1}"
+  name                 = "exasol-data-${floor(count.index / var.data_volumes_per_node) + 11}-${(count.index % var.data_volumes_per_node) + 1}-${random_id.instance.hex}"
   location             = azurerm_resource_group.exasol.location
   resource_group_name  = azurerm_resource_group.exasol.name
   storage_account_type = "Premium_LRS"

@@ -9,6 +9,13 @@ fi
 
 set -euo pipefail
 
+# Check bash version (requires 4.0+ for associative arrays and mapfile)
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    echo "Error: This script requires Bash 4.0 or higher (current: ${BASH_VERSION})" >&2
+    echo "Please upgrade bash or use a system with bash 4.0+" >&2
+    exit 1
+fi
+
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -18,6 +25,9 @@ declare -a DEPLOYMENT_DIRS=()
 
 # shellcheck disable=SC2317
 cleanup_on_interrupt() {
+    # Disable trap to prevent recursive calls
+    trap - SIGINT SIGTERM
+    
     echo ""
     echo "=========================================="
     echo "Interrupt received - cleaning up..."
@@ -52,7 +62,8 @@ cleanup_on_interrupt() {
         for attempt in 1 2 3 4 5 6; do
             declare -a failed_dirs=()
             
-            # Launch destroy operations in parallel
+            # Launch destroy operations in parallel with timeout
+            declare -a destroy_pids=()
             for deploy_dir in "${DEPLOYMENT_DIRS[@]}"; do
                 if [[ -d "$deploy_dir" && -f "$deploy_dir/.exasol.json" ]]; then
                     if [[ $attempt -eq 1 ]]; then
@@ -62,19 +73,30 @@ cleanup_on_interrupt() {
                         sleep 10
                     fi
                     (
-                        output=$(./exasol destroy --auto-approve --deployment-dir "$deploy_dir" 2>&1)
-                        echo "$output" | grep -E "INFO|ERROR|Destroy" || true
-                        # Check if destroy failed
-                        if echo "$output" | grep -qE "ERROR|Another operation is in progress"; then
+                        output=$(timeout 300 ./exasol destroy --auto-approve --deployment-dir "$deploy_dir" 2>&1)
+                        exit_code=$?
+                        echo "$output" | grep -E "INFO|ERROR|WARN|Destroy" || true
+                        # Check if destroy failed or timed out
+                        if [[ $exit_code -eq 124 ]]; then
+                            echo "  ERROR: Destroy timed out after 300 seconds"
+                            exit 1
+                        elif echo "$output" | grep -qE "ERROR|Another operation is in progress"; then
                             exit 1
                         fi
                     ) &
+                    pid=$!
+                    destroy_pids+=("$pid")
+                    echo "    [PID: $pid]"
                 fi
             done
             
-            # Wait for all destroy operations
-            echo "  Waiting for destroy operations to complete..."
-            wait
+            # Wait for all destroy operations with timeout
+            if [[ ${#destroy_pids[@]} -gt 0 ]]; then
+                echo "  Waiting for destroy operations to complete..."
+                for pid in "${destroy_pids[@]}"; do
+                    wait "$pid" 2>/dev/null || true
+                done
+            fi
             
             # Check which deployments still exist
             for deploy_dir in "${DEPLOYMENT_DIRS[@]}"; do
@@ -514,12 +536,14 @@ else
         echo "Monitoring progress across ${#cfg_pids[@]} provider(s)..."
         echo "(Press Ctrl+C to interrupt and clean up all deployments)"
         echo ""
-        echo "View aggregated results: file://$(pwd)/tmp/tests/index.html"
+        echo "📊 View detailed results in your browser:"
+        echo "   file://$(pwd)/tmp/tests/index.html"
         echo ""
         
         # Track completion
         declare -A completed_pids=()
         total_providers=${#cfg_pids[@]}
+        first_iteration=1
         
         while [[ ${#completed_pids[@]} -lt $total_providers ]]; do
             # Update deployment directories list for cleanup
@@ -606,10 +630,11 @@ except:
             
             # Display progress - each provider on its own line
             if [[ ${#completed_pids[@]} -lt $total_providers ]]; then
-                # Move cursor up to overwrite previous lines
-                if [[ ${#progress_lines[@]} -gt 0 ]]; then
+                # Move cursor up to overwrite previous lines (skip on first iteration)
+                if [[ ${#progress_lines[@]} -gt 0 && $first_iteration -eq 0 ]]; then
                     printf "\033[%dA" "${#progress_lines[@]}"
                 fi
+                first_iteration=0
                 
                 # Display each provider status on its own line
                 for line in "${progress_lines[@]}"; do
@@ -669,6 +694,14 @@ echo ""
 echo "Generating results index..."
 if python3 "$SCRIPT_DIR/e2e/generate_results_index.py" ./tmp/tests 2>/dev/null; then
     echo "Results index: file://$(pwd)/tmp/tests/index.html"
+    echo ""
+    echo "=========================================="
+    echo "E2E Test Run Complete"
+    echo "=========================================="
+    echo ""
+    echo "📊 View detailed results in your browser:"
+    echo "   file://$(pwd)/tmp/tests/index.html"
+    echo ""
 else
     echo "Warning: Failed to generate results index" >&2
 fi

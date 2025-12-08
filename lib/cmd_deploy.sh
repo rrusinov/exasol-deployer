@@ -9,6 +9,8 @@ source "$LIB_DIR/common.sh"
 source "$LIB_DIR/state.sh"
 # shellcheck source=lib/versions.sh
 source "$LIB_DIR/versions.sh"
+# shellcheck source=lib/ssh_checks.sh
+source "$LIB_DIR/ssh_checks.sh"
 
 # Show help for deploy command
 show_deploy_help() {
@@ -135,36 +137,23 @@ cmd_deploy() {
         return 0
     fi
 
-    # Wait a bit for VMs to fully boot up and SSH to become available
-    log_info "Waiting for VMs to boot and SSH to become available..."
-    sleep 30
+    local ssh_attempts=10
+    local ssh_retry_delay=10
+    local ssh_timeout=10
+    ssh_parallelism="$cluster_size"
 
-    # Test SSH connectivity before running Ansible
     log_info "Testing SSH connectivity to all nodes..."
-    local ssh_test_success=true
-    for node_idx in $(seq 0 $((cluster_size - 1))); do
-        local node_name="n$((11 + node_idx))"
-        log_info "Testing SSH to $node_name..."
-        for i in $(seq 1 10); do
-            if ssh -F ssh_config -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$node_name" "echo 'SSH connection test successful'" 2>/dev/null; then
-                log_info "SSH connectivity to $node_name passed"
-                break
-            else
-                log_info "SSH connectivity to $node_name failed (attempt $i/10), retrying in 10 seconds..."
-                sleep 10
-                if [[ $i -eq 10 ]]; then
-                    log_warn "SSH connectivity to $node_name failed after 10 attempts"
-                    ssh_test_success=false
-                fi
-            fi
-        done
-    done
-    if [[ "$ssh_test_success" == false ]]; then
-        log_warn "Some SSH connectivity tests failed, proceeding with Ansible (it has built-in retry logic)"
+    if ! ssh_check_inventory_connectivity "inventory.ini" "ssh_config" 0 "$ssh_attempts" "$ssh_retry_delay" "$ssh_timeout" "$ssh_parallelism" ""; then
+        if [[ ${#SSH_CONNECTIVITY_FAILED_HOSTS[@]} -gt 0 ]]; then
+            log_warn "SSH pre-check failed for: ${SSH_CONNECTIVITY_FAILED_HOSTS[*]}"
+        fi
+        log_warn "Proceeding with Ansible; playbook includes additional retry logic"
     fi
 
     log_info "Configuring cluster with Ansible..."
-    if ! ansible-playbook -i inventory.ini .templates/setup-exasol-cluster.yml; then
+    # Ensure stdin is in blocking mode to avoid Ansible errors
+    # Redirect stdin from /dev/null to prevent non-blocking IO issues
+    if ! ansible-playbook -i inventory.ini .templates/setup-exasol-cluster.yml </dev/null; then
         state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
         die "Ansible configuration failed"
     fi
