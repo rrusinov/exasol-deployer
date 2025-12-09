@@ -44,6 +44,7 @@ Optional:
   --region <REGION>       AWS region (default: AWS_DEFAULT_REGION or us-east-1)
   --dry-run               Show what would be deleted without deleting
   --yes                   Skip confirmation prompt
+  --unused-vpc            Clean up unused/empty VPCs (AWS only)
   --help                  Show this help message
 
 Examples:
@@ -63,6 +64,9 @@ Examples:
   # Delete DigitalOcean resources with custom prefix
   $0 --provider digitalocean --prefix myapp
 
+  # Clean up unused VPCs in AWS (all regions)
+  $0 --provider aws --unused-vpc --yes
+
 EOF
     exit 0
 }
@@ -74,6 +78,7 @@ PREFIX_FILTER=""
 AWS_REGION=""
 DRY_RUN=false
 SKIP_CONFIRM=false
+CLEANUP_UNUSED_VPC=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -103,6 +108,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --yes)
             SKIP_CONFIRM=true
+            shift
+            ;;
+        --unused-vpc)
+            CLEANUP_UNUSED_VPC=true
             shift
             ;;
         --help)
@@ -135,6 +144,10 @@ fi
 
 if [[ "$TAG_FILTER" != "owner=exasol-deployer" && "$PROVIDER" != "aws" ]]; then
     die "--tag filtering is only supported for AWS provider (other providers use resource groups or global listing)"
+fi
+
+if [[ "$CLEANUP_UNUSED_VPC" == true && "$PROVIDER" != "aws" ]]; then
+    die "--unused-vpc is only supported for AWS provider"
 fi
 
 # Check required CLI tools
@@ -172,6 +185,192 @@ confirm_deletion() {
 
 
 # ============================================================================
+# AWS Unused VPC Detection and Cleanup
+# ============================================================================
+
+# Detect unused VPCs in a region and store them in global arrays
+detect_unused_aws_vpcs() {
+    local region="$1"
+    
+    log_info "Checking for unused VPCs in region: $region"
+    
+    # Get all VPCs in the region
+    local all_vpcs
+    # shellcheck disable=SC2016
+    all_vpcs=$(aws ec2 describe-vpcs --region "$region" \
+        --query 'Vpcs[].[VpcId,Tags[?Key==`Name`].Value|[0],IsDefault]' \
+        --output text 2>/dev/null || echo "")
+    
+    if [[ -z "$all_vpcs" ]]; then
+        return 0
+    fi
+    
+    # Process each VPC
+    while IFS=$'\t' read -r vpc_id vpc_name is_default; do
+        # Skip default VPCs
+        if [[ "$is_default" == "True" ]]; then
+            continue
+        fi
+        
+        # Check if VPC has any instances
+        local instance_count
+        instance_count=$(aws ec2 describe-instances --region "$region" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query 'length(Reservations[].Instances[])' \
+            --output text 2>/dev/null || echo "0")
+        
+        # Check if VPC has any network interfaces (excluding default ones)
+        local eni_count
+        # shellcheck disable=SC2016
+        eni_count=$(aws ec2 describe-network-interfaces --region "$region" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query 'length(NetworkInterfaces[?Attachment.InstanceId!=`null`])' \
+            --output text 2>/dev/null || echo "0")
+        
+        # VPC is unused if it has no instances and no attached network interfaces
+        if [[ "$instance_count" == "0" && "$eni_count" == "0" ]]; then
+            UNUSED_VPCS+=("$region:$vpc_id")
+            UNUSED_VPC_NAMES["$region:$vpc_id"]="${vpc_name:-<no name>}"
+        fi
+        
+    done <<< "$all_vpcs"
+}
+
+# Delete a VPC and all its dependencies
+delete_vpc_with_dependencies() {
+    local region="$1"
+    local vpc_id="$2"
+    
+    log_info "Deleting VPC: $vpc_id (region: $region)"
+    
+    # 1. Delete NAT Gateways
+    local nat_gateways
+    nat_gateways=$(aws ec2 describe-nat-gateways --region "$region" \
+        --filter "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available" \
+        --query 'NatGateways[].NatGatewayId' --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$nat_gateways" ]]; then
+        for nat_gw in $nat_gateways; do
+            log_info "  Deleting NAT Gateway: $nat_gw"
+            aws ec2 delete-nat-gateway --region "$region" --nat-gateway-id "$nat_gw" 2>/dev/null || true
+        done
+        
+        # Wait for NAT gateways to be deleted
+        if [[ -n "$nat_gateways" ]]; then
+            log_info "  Waiting for NAT Gateways to be deleted..."
+            sleep 10
+        fi
+    fi
+    
+    # 2. Release Elastic IPs associated with the VPC
+    local eips
+    # shellcheck disable=SC2016
+    eips=$(aws ec2 describe-addresses --region "$region" \
+        --filters "Name=domain,Values=vpc" \
+        --query 'Addresses[].AllocationId' --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$eips" ]]; then
+        for eip in $eips; do
+            log_info "  Releasing Elastic IP: $eip"
+            aws ec2 release-address --region "$region" --allocation-id "$eip" 2>/dev/null || true
+        done
+    fi
+    
+    # 3. Delete all network interfaces (except primary ones)
+    local enis
+    enis=$(aws ec2 describe-network-interfaces --region "$region" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query 'NetworkInterfaces[].NetworkInterfaceId' --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$enis" ]]; then
+        for eni in $enis; do
+            log_info "  Deleting network interface: $eni"
+            aws ec2 delete-network-interface --region "$region" --network-interface-id "$eni" 2>/dev/null || true
+        done
+    fi
+    
+    # 4. Delete Internet Gateways
+    local igws
+    igws=$(aws ec2 describe-internet-gateways --region "$region" \
+        --filters "Name=attachment.vpc-id,Values=$vpc_id" \
+        --query 'InternetGateways[].InternetGatewayId' --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$igws" ]]; then
+        for igw in $igws; do
+            log_info "  Detaching and deleting Internet Gateway: $igw"
+            aws ec2 detach-internet-gateway --region "$region" --internet-gateway-id "$igw" --vpc-id "$vpc_id" 2>/dev/null || true
+            aws ec2 delete-internet-gateway --region "$region" --internet-gateway-id "$igw" 2>/dev/null || true
+        done
+    fi
+    
+    # 5. Delete subnets
+    local subnets
+    subnets=$(aws ec2 describe-subnets --region "$region" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query 'Subnets[].SubnetId' --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$subnets" ]]; then
+        for subnet in $subnets; do
+            log_info "  Deleting subnet: $subnet"
+            aws ec2 delete-subnet --region "$region" --subnet-id "$subnet" 2>/dev/null || true
+        done
+    fi
+    
+    # 6. Delete route tables (non-main)
+    local route_tables
+    # shellcheck disable=SC2016
+    route_tables=$(aws ec2 describe-route-tables --region "$region" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' \
+        --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$route_tables" ]]; then
+        for rt in $route_tables; do
+            log_info "  Deleting route table: $rt"
+            aws ec2 delete-route-table --region "$region" --route-table-id "$rt" 2>/dev/null || true
+        done
+    fi
+    
+    # 7. Delete security groups (non-default)
+    local security_groups
+    # shellcheck disable=SC2016
+    security_groups=$(aws ec2 describe-security-groups --region "$region" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query 'SecurityGroups[?GroupName!=`default`].GroupId' \
+        --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$security_groups" ]]; then
+        for sg in $security_groups; do
+            log_info "  Deleting security group: $sg"
+            aws ec2 delete-security-group --region "$region" --group-id "$sg" 2>/dev/null || true
+        done
+    fi
+    
+    # 8. Delete network ACLs (non-default)
+    local network_acls
+    # shellcheck disable=SC2016
+    network_acls=$(aws ec2 describe-network-acls --region "$region" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query 'NetworkAcls[?IsDefault!=`true`].NetworkAclId' \
+        --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$network_acls" ]]; then
+        for acl in $network_acls; do
+            log_info "  Deleting network ACL: $acl"
+            aws ec2 delete-network-acl --region "$region" --network-acl-id "$acl" 2>/dev/null || true
+        done
+    fi
+    
+    # 9. Finally, delete the VPC
+    log_info "  Deleting VPC: $vpc_id"
+    if aws ec2 delete-vpc --region "$region" --vpc-id "$vpc_id" 2>/dev/null; then
+        log_info "  ✓ VPC deleted successfully: $vpc_id"
+    else
+        log_warn "  Failed to delete VPC: $vpc_id (may still have dependencies)"
+    fi
+}
+
+# ============================================================================
 # AWS Cleanup
 # ============================================================================
 cleanup_aws() {
@@ -179,6 +378,67 @@ cleanup_aws() {
     
     # Disable AWS CLI pager
     export AWS_PAGER=""
+    
+    # Get regions to scan
+    local regions
+    if [[ -n "$AWS_REGION" ]]; then
+        regions=("$AWS_REGION")
+        log_info "Using AWS region: $AWS_REGION"
+    else
+        regions=("us-east-1" "us-east-2" "us-west-1" "us-west-2" "eu-west-1" "eu-west-2" "eu-central-1" "ap-southeast-1" "ap-northeast-1")
+        log_info "Scanning all AWS regions..."
+    fi
+    
+    # If cleaning up unused VPCs, do that and exit
+    if [[ "$CLEANUP_UNUSED_VPC" == true ]]; then
+        log_info "Detecting unused AWS VPCs..."
+        
+        # Global arrays to collect unused VPCs across regions
+        declare -a UNUSED_VPCS=()
+        declare -A UNUSED_VPC_NAMES=()
+        
+        # Detect unused VPCs in all regions
+        for region in "${regions[@]}"; do
+            detect_unused_aws_vpcs "$region"
+        done
+        
+        if [[ ${#UNUSED_VPCS[@]} -eq 0 ]]; then
+            log_info "No unused VPCs found in any region"
+            return 0
+        fi
+        
+        # Display all unused VPCs
+        echo ""
+        echo "=== UNUSED VPCs ACROSS ALL REGIONS ==="
+        echo ""
+        printf "%-15s %-20s %-40s\n" "Region" "VPC ID" "Name"
+        printf "%-15s %-20s %-40s\n" "---------------" "--------------------" "----------------------------------------"
+        
+        for vpc_key in "${UNUSED_VPCS[@]}"; do
+            local region="${vpc_key%%:*}"
+            local vpc_id="${vpc_key#*:}"
+            printf "%-15s %-20s %-40s\n" "$region" "$vpc_id" "${UNUSED_VPC_NAMES[$vpc_key]}"
+        done
+        
+        echo ""
+        echo "Total unused VPCs: ${#UNUSED_VPCS[@]}"
+        
+        # Confirm deletion
+        if ! confirm_deletion "${#UNUSED_VPCS[@]} unused VPC(s)" "AWS"; then
+            return 0
+        fi
+        
+        # Delete all unused VPCs
+        log_info "Deleting unused VPCs..."
+        for vpc_key in "${UNUSED_VPCS[@]}"; do
+            local region="${vpc_key%%:*}"
+            local vpc_id="${vpc_key#*:}"
+            delete_vpc_with_dependencies "$region" "$vpc_id"
+        done
+        
+        log_info "Unused VPC cleanup completed"
+        return 0
+    fi
     
     log_info "Fetching AWS resources with tag '$TAG_FILTER' and prefix '$PREFIX_FILTER'..."
     

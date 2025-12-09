@@ -89,7 +89,9 @@
       failed_when: false
 
     - name: Wait for overlay service to be active
-      when: start_overlay is defined
+      when:
+        - start_overlay is defined
+        - not (start_overlay.skipped | default(false))
       ansible.builtin.systemd:
         name: exasol-overlay.service
       register: overlay_service_status
@@ -102,12 +104,17 @@
     - name: Display overlay service status
       ansible.builtin.debug:
         msg: "{{ inventory_hostname }}: exasol-overlay.service is {{ overlay_service_status.status.ActiveState }} ({{ overlay_service_status.status.SubState }})"
-      when: overlay_service_status.status is defined
+      when:
+        - start_overlay is defined
+        - not (start_overlay.skipped | default(false))
+        - overlay_service_status.status is defined
 
     - name: Get overlay service logs if not active
       ansible.builtin.command: journalctl -u exasol-overlay.service -n 100 --no-pager
       register: overlay_logs
       when:
+        - start_overlay is defined
+        - not (start_overlay.skipped | default(false))
         - overlay_service_status.status is defined
         - overlay_service_status.status.ActiveState != "active"
       changed_when: false
@@ -117,6 +124,8 @@
       ansible.builtin.debug:
         msg: "{{ overlay_logs.stdout_lines }}"
       when:
+        - start_overlay is defined
+        - not (start_overlay.skipped | default(false))
         - overlay_logs is defined
         - overlay_logs.stdout_lines is defined
 
@@ -128,7 +137,9 @@
       until: overlay_status.rc == 0
       changed_when: false
       failed_when: overlay_status.rc != 0
-      when: start_overlay is defined
+      when:
+        - start_overlay is defined
+        - not (start_overlay.skipped | default(false))
 
     - name: Start exasol-data-symlinks.service (if exists)
       ansible.builtin.systemd:

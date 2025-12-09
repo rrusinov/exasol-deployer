@@ -3,6 +3,13 @@
 
 set -euo pipefail
 
+# Check bash version (requires 4.0+ for associative arrays and mapfile)
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    echo "Error: This script requires Bash 4.0 or higher (current: ${BASH_VERSION})" >&2
+    echo "Please upgrade bash or use a system with bash 4.0+" >&2
+    exit 1
+fi
+
 # Get script directory
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

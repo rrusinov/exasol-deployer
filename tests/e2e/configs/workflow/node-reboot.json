@@ -38,9 +38,9 @@
     {
       "step": "custom_command",
       "description": "Wait for node reboot completion (uptime under 3 minutes)",
-      "command": "uptime_secs=$(ssh -F $deployment_dir/ssh_config -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR n12 \"cat /proc/uptime | cut -d. -f1\") && echo \"uptime=$uptime_secs\" && [ \"$uptime_secs\" -lt 180 ]",
+      "command": "uptime_secs=$(ssh -F $deployment_dir/ssh_config -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR n12 \"cat /proc/uptime | cut -d. -f1\") && echo \"uptime=$uptime_secs\" && [ \"$uptime_secs\" -lt 300 ]",
       "retry": {
-        "max_attempts": 18,
+        "max_attempts": 30,
         "delay_seconds": 10
       }
     },

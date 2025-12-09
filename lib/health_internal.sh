@@ -109,49 +109,8 @@ health_run_internal_checks() {
         health_require_tool "ssh"
 
         local -a host_entries=()
-
-        # Parse inventory file using awk to extract host entries (portable across BSD/GNU awk)
         if [[ -f "$inventory_file" ]]; then
-            while IFS= read -r entry; do
-                [[ -n "$entry" ]] && host_entries+=("$entry")
-            done < <(awk '
-            BEGIN { section = "" }
-            {
-                # Skip empty lines and comments
-                if (NF == 0 || $0 ~ /^[[:space:]]*#/) {
-                    next
-                }
-
-                # Check for section headers
-                if ($0 ~ /^\[/) {
-                    section = $0
-                    gsub(/^[[:space:]]*\[/, "", section)
-                    gsub(/\].*$/, "", section)
-                    next
-                }
-
-                # Only process lines in the exasol_nodes section
-                if (section != "exasol_nodes") {
-                    next
-                }
-
-                # Parse host entry
-                host = $1
-                ansible_host = ""
-
-                # Find ansible_host parameter
-                for (i = 2; i <= NF; i++) {
-                    if ($i ~ /^ansible_host=/) {
-                        split($i, kv, "=")
-                        ansible_host = kv[2]
-                        break
-                    }
-                }
-
-                # Output in format: host|ansible_host
-                print host "|" ansible_host
-            }
-            ' "$inventory_file")
+            mapfile -t host_entries < <(ssh_inventory_collect_host_entries "$inventory_file" 2>/dev/null || true)
         fi
 
         if [[ ${#host_entries[@]} -eq 0 ]]; then
