@@ -366,7 +366,7 @@ check_provider_requirements() {
                 if grep -qE "^dynamic_ownership\s*=\s*0" "$qemu_conf" 2>/dev/null; then
                     warnings+=("dynamic_ownership is disabled in $qemu_conf")
                     warnings+=("This may cause 'Permission denied' errors when creating VMs")
-                    warnings+=("See docs/CLOUD_SETUP_LIBVIRT.md for troubleshooting")
+                    warnings+=("See clouds/CLOUD_SETUP_LIBVIRT.md for troubleshooting")
                 fi
             fi
 
@@ -377,7 +377,7 @@ check_provider_requirements() {
                     warnings+=("AppArmor is enforcing libvirtd profile")
                     warnings+=("This may block QEMU from accessing base images (Permission denied)")
                     warnings+=("Recommended: Run 'sudo aa-complain /usr/sbin/libvirtd' for development")
-                    warnings+=("See docs/CLOUD_SETUP_LIBVIRT.md for details")
+                    warnings+=("See clouds/CLOUD_SETUP_LIBVIRT.md for details")
                 fi
             fi
             ;;
@@ -390,7 +390,7 @@ check_provider_requirements() {
         done
         log_error ""
         log_error "For libvirt/KVM setup instructions, see:"
-        log_error "  docs/CLOUD_SETUP_LIBVIRT.md"
+        log_error "  clouds/CLOUD_SETUP_LIBVIRT.md"
         die "Please install missing dependencies and try again."
     fi
 

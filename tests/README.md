@@ -1,4 +1,101 @@
-# Exasol E2E Test Framework
+# Exasol Testing Framework
+
+Comprehensive testing infrastructure for Exasol Deployer, including unit tests and end-to-end integration tests.
+
+## Quick Start
+
+```bash
+# Run all unit tests
+./tests/run_tests.sh
+
+# Run specific unit test
+./tests/test_common.sh
+
+# Run E2E tests for a provider
+./tests/run_e2e.sh --provider libvirt
+
+# List available E2E tests
+./tests/run_e2e.sh --list-tests
+```
+
+---
+
+# Unit Testing
+
+## Overview
+
+Unit tests validate individual components and functions of the Exasol Deployer without requiring cloud resources or actual deployments.
+
+## Running Unit Tests
+
+```bash
+# Run all unit tests
+./tests/run_tests.sh
+
+# Run specific test file
+./tests/test_common.sh
+./tests/test_state.sh
+./tests/test_versions.sh
+
+# Run with verbose output
+bash -x ./tests/test_common.sh
+```
+
+## Test Structure
+
+Unit tests are organized by component:
+
+- `test_common.sh` - Core utility functions (colors, logging, validation)
+- `test_state.sh` - State management and locking
+- `test_versions.sh` - Version parsing and validation
+- `test_init.sh` - Initialization command logic
+- `test_health.sh` - Health check functionality
+- `test_power_control.sh` - Start/stop operations
+- `test_libvirt.sh` - Libvirt provider specifics
+- `test_permissions.sh` - Permission analysis
+- `test_template_*.sh` - Terraform/Ansible template validation
+- `test_shellcheck.sh` - Shell script linting
+- `test_documentation.sh` - Documentation consistency checks
+
+## Writing Unit Tests
+
+Unit tests follow bash conventions:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Source test helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/test_helper.sh"
+
+# Test function
+test_my_feature() {
+    local result
+    result=$(my_function "input")
+    assert_equals "expected" "$result" "Feature should work"
+}
+
+# Run tests
+run_test test_my_feature
+```
+
+## Test Helpers
+
+The `test_helper.sh` library provides:
+
+- `assert_equals` - Compare values
+- `assert_contains` - Check substring
+- `assert_file_exists` - Verify file presence
+- `run_test` - Execute test with error handling
+- `setup_test_env` - Create temporary test directory
+- `cleanup_test_env` - Remove test artifacts
+
+---
+
+# E2E Testing
+
+## Overview
 
 A comprehensive end-to-end testing framework for Exasol deployments across multiple cloud providers.
 

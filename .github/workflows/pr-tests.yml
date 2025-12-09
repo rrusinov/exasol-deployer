@@ -22,6 +22,8 @@ jobs:
           - test_common
           - test_progress
           - test_versions
+          - test_version
+          - test_installer
           - test_state
           - test_init
           - test_power_control

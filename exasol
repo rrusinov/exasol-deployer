@@ -20,7 +20,13 @@ resolve_script_dir() {
 }
 
 # Script information
-readonly SCRIPT_VERSION="1.0.0"
+# Version is injected during build process, defaults to dev for local development
+readonly SCRIPT_VERSION_RAW="${EXASOL_VERSION:-__EXASOL_VERSION__}"
+if [[ "$SCRIPT_VERSION_RAW" =~ ^__.*__$ ]]; then
+    readonly SCRIPT_VERSION="dev"
+else
+    readonly SCRIPT_VERSION="$SCRIPT_VERSION_RAW"
+fi
 # Intentionally combine readonly+assignment to prevent set -e exit on command substitution failure
 # shellcheck disable=SC2155
 readonly SCRIPT_DIR="$(resolve_script_dir "${BASH_SOURCE[0]}")"
@@ -66,6 +72,10 @@ Available Commands:
   update-versions  Discover and append the latest DB/C4 release to versions.conf
   version          Print the program version and exit
   help             Show this help message
+
+Flags:
+  --version        Print the program version and exit
+  --help, -h       Show this help message
 
 Global Flags:
   --deployment-dir string   The directory to store deployment files (default ".")
@@ -168,7 +178,7 @@ main() {
     # Check dependencies early for commands that need them
     # Skip for help, version, and init --list-versions
     case "$command" in
-        help|--help|-h|version)
+        help|--help|-h|version|--version)
             # Skip dependency check for help and version
             ;;
         init)
@@ -234,7 +244,7 @@ main() {
             fi
             cmd_health --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
-        version)
+        version|--version)
             show_version
             ;;
         update-versions)

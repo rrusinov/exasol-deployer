@@ -9,7 +9,7 @@ source "$TEST_DIR/test_helper.sh"
 source "$SCRIPT_ROOT/lib/cmd_init.sh"
 
 README_FILE="$SCRIPT_ROOT/README.md"
-CLOUD_OVERVIEW_DOC="$SCRIPT_ROOT/docs/CLOUD_SETUP.md"
+CLOUD_OVERVIEW_DOC="$SCRIPT_ROOT/clouds/CLOUD_SETUP.md"
 README_CONTENT="$(cat "$README_FILE")"
 
 echo "Documentation validation"
@@ -51,7 +51,7 @@ test_cloud_provider_docs_linked() {
         local upper_provider
         upper_provider=$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')
         local doc_name="CLOUD_SETUP_${upper_provider}.md"
-        local doc_rel_path="docs/$doc_name"
+        local doc_rel_path="clouds/$doc_name"
         local doc_abs_path="$SCRIPT_ROOT/$doc_rel_path"
 
         assert_file_exists "$doc_abs_path" "Doc exists for provider $provider"
@@ -136,9 +136,31 @@ test_init_flags_documented() {
     done
 }
 
+test_readme_installation_examples() {
+    echo ""
+    echo "Test: README installation examples are valid"
+    
+    # Check that README contains the correct short URL
+    assert_contains "$README_CONTENT" "https://is.gd/exasol_deployer" "README contains short URL"
+    
+    # Check that README contains the correct GitHub URL
+    assert_contains "$README_CONTENT" "https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-installer.sh" "README contains GitHub release URL"
+    
+    # Check that curl|bash examples don't require --yes (fresh install should work)
+    if echo "$README_CONTENT" | grep -A2 "curl -fsSL https://is.gd/exasol_deployer" | grep -q "bash -s -- --yes"; then
+        assert_success 1 "README curl|bash example should not require --yes for fresh installs"
+    else
+        assert_success 0 "README curl|bash example works for fresh installs"
+    fi
+    
+    # Check that note about --yes for overwrites exists
+    assert_contains "$README_CONTENT" "overwrite an existing installation" "README mentions --yes for overwrites"
+}
+
 # Execute tests
 test_cloud_provider_docs_linked
 test_commands_documented_in_readme
 test_init_flags_documented
+test_readme_installation_examples
 
 test_summary
