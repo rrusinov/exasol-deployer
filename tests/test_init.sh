@@ -859,14 +859,14 @@ test_gcp_zone_configuration() {
 
     cmd_init --cloud-provider gcp --deployment-dir "$default_dir" --gcp-project "test-project-123"
 
-    if grep -q 'gcp_zone = "us-central1-a"' "$default_dir/variables.auto.tfvars"; then
+    if grep -q 'gcp_zone = "europe-west4-a"' "$default_dir/variables.auto.tfvars"; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "${GREEN}✓${NC} Defaults to <region>-a when zone not specified"
     else
         TESTS_TOTAL=$((TESTS_TOTAL + 1))
         TESTS_FAILED=$((TESTS_FAILED + 1))
-        echo -e "${RED}✗${NC} Should default gcp_zone to us-central1-a"
+        echo -e "${RED}✗${NC} Should default gcp_zone to europe-west4-a"
     fi
 
     cleanup_test_dir "$default_dir"
