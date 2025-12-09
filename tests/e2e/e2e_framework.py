@@ -234,6 +234,17 @@ class HTMLReportGenerator:
                 snippets = ''.join(f"<div class='error-line'>{html.escape(line)}</div>" for line in log_errors)
                 log_errors_html = f"<div class='config-section'><strong>Error snippets:</strong>{snippets}</div>"
 
+            terraform_warnings = result.get('terraform_warnings') or []
+            terraform_warnings_html = ''
+            if terraform_warnings:
+                warning_items = ''.join(f"<li>{html.escape(warning)}</li>" for warning in terraform_warnings)
+                terraform_warnings_html = (
+                    "<div class='config-section warnings'>"
+                    "<strong>Terraform warnings:</strong>"
+                    f"<ul class='warning-list'>{warning_items}</ul>"
+                    "</div>"
+                )
+
             cleanup_html = ''
             cleanup_info = result.get('cleanup')
             if not result.get('success') and cleanup_info:
@@ -255,6 +266,7 @@ class HTMLReportGenerator:
                 "</tr>"
                 f"<tr class='{row_class}-details'><td colspan='7'><details><summary>Steps & Config</summary>"
                 f"<div class='config-section'><strong>Parameters:</strong> {params_display_full}</div>"
+                f"{terraform_warnings_html}"
                 f"{cleanup_html}"
                 f"{log_errors_html}"
                 f"{steps_display}</details></td></tr>"
@@ -283,6 +295,9 @@ summary {{ cursor: pointer; font-weight: bold; padding: 0.5rem; background: #f0f
 .summary-box h2 {{ margin-top: 0; }}
 .config-section {{ background: #f9f9f9; padding: 0.5rem; margin: 0.3rem 0; border-radius: 3px; }}
 .error-line {{ font-family: monospace; color: #a8071a; padding: 0.2rem 0; }}
+.warnings {{ border-left: 3px solid #faad14; }}
+.warning-list {{ margin: 0.3rem 0 0.3rem 1.2rem; padding: 0; }}
+.warning-list li {{ color: #ad6800; margin: 0.2rem 0; }}
 </style>
 </head>
 <body>
@@ -1053,25 +1068,30 @@ class E2ETestFramework:
                 except Exception:
                     pass
 
-        # Update health status before cleanup
-        health_cmd = [
-            './exasol', 'health',
-            '--deployment-dir', str(deploy_dir),
-            '--update'
-        ]
-        
-        try:
-            health_result = subprocess.run(
-                health_cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                cwd=self.repo_root
-            )
-            if health_result.returncode != 0:
-                log_msg(f"Health update failed (non-fatal): {health_result.stderr.strip()}")
-        except Exception as e:
-            log_msg(f"Health update failed (non-fatal): {e}")
+        # Kill any stale processes holding locks
+        lock_file = deploy_dir / '.exasolLock.json'
+        if lock_file.exists():
+            try:
+                import json
+                with open(lock_file, 'r') as f:
+                    lock_data = json.load(f)
+                    pid = lock_data.get('pid')
+                    if pid:
+                        try:
+                            import os
+                            import signal
+                            os.kill(pid, signal.SIGTERM)
+                            log_msg(f"Killed stale process {pid} holding lock")
+                            import time
+                            time.sleep(1)
+                        except ProcessLookupError:
+                            log_msg(f"Process {pid} already dead")
+                        except Exception as e:
+                            log_msg(f"Failed to kill process {pid}: {e}")
+                lock_file.unlink()
+                log_msg("Removed stale lock file")
+            except Exception as e:
+                log_msg(f"Failed to process lock file: {e}")
         
         # Try to run destroy command
         destroy_cmd = [
@@ -1096,25 +1116,57 @@ class E2ETestFramework:
                 log_err(f"Destroy STDERR:\n{result.stderr.strip()}")
 
             if result.returncode != 0:
-                cleanup_info['status'] = 'failed'
-                cleanup_info['error'] = f"Destroy returned {result.returncode}"
-                log_err(
-                    f"Destroy command returned {result.returncode}, "
-                    f"resources may not be fully cleaned up"
-                )
+                log_err(f"Destroy command returned {result.returncode}, trying tofu fallback")
+                # Fallback to direct tofu destroy
+                if self._tofu_destroy_fallback(deploy_dir, log_msg, log_err):
+                    cleanup_info['status'] = 'completed'
+                    cleanup_info['return_code'] = 0
+                else:
+                    cleanup_info['status'] = 'failed'
+                    cleanup_info['error'] = f"Both destroy and tofu fallback failed"
             else:
                 cleanup_info['status'] = 'completed'
         
         except subprocess.TimeoutExpired:
             cleanup_info['status'] = 'timeout'
             cleanup_info['error'] = 'Destroy command timed out'
-            log_err(f"Destroy command timed out for {deployment_id}")
+            log_err(f"Destroy command timed out, trying tofu fallback")
+            if self._tofu_destroy_fallback(deploy_dir, log_msg, log_err):
+                cleanup_info['status'] = 'completed'
         except Exception as e:
             cleanup_info['status'] = 'failed'
             cleanup_info['error'] = str(e)
-            log_err(f"Destroy command failed for {deployment_id}: {e}")
+            log_err(f"Destroy command failed: {e}, trying tofu fallback")
+            if self._tofu_destroy_fallback(deploy_dir, log_msg, log_err):
+                cleanup_info['status'] = 'completed'
 
         return cleanup_info
+
+    def _tofu_destroy_fallback(self, deploy_dir: Path, log_msg, log_err) -> bool:
+        """Fallback to direct tofu destroy when exasol destroy fails."""
+        try:
+            log_msg("Attempting direct tofu destroy as fallback")
+            result = subprocess.run(
+                ['tofu', 'destroy', '-auto-approve'],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                cwd=deploy_dir
+            )
+            if result.stdout:
+                log_msg(f"Tofu destroy STDOUT:\n{result.stdout.strip()}")
+            if result.stderr:
+                log_err(f"Tofu destroy STDERR:\n{result.stderr.strip()}")
+            
+            if result.returncode == 0:
+                log_msg("Tofu destroy fallback succeeded")
+                return True
+            else:
+                log_err(f"Tofu destroy fallback failed with code {result.returncode}")
+                return False
+        except Exception as e:
+            log_err(f"Tofu destroy fallback exception: {e}")
+            return False
 
     def _render_progress(self, completed: int, total: int, current_deployment: Optional[str] = None, current_step: Optional[str] = None):
         """Render an enhanced progress bar with deployment and step information."""
@@ -1270,6 +1322,41 @@ class E2ETestFramework:
         except Exception:
             return errors[-max_lines:] if errors else []
         return errors[-max_lines:] if errors else []
+
+    def _extract_terraform_warnings(self, deploy_dir: Path, log_file: Path, max_warnings: int = 10) -> List[str]:
+        """Collect terraform warnings from terraform.log or the workflow log."""
+        sources = []
+        tf_log = deploy_dir / 'terraform.log'
+        if tf_log.exists():
+            sources.append(tf_log)
+        if log_file.exists():
+            sources.append(log_file)
+
+        ansi_re = re.compile(r"\x1B\[[0-9;]*[A-Za-z]")
+        warnings: List[str] = []
+        seen: Set[str] = set()
+
+        for source in sources:
+            try:
+                with source.open('r', encoding='utf-8', errors='ignore') as handle:
+                    for raw_line in handle:
+                        clean_line = ansi_re.sub('', raw_line).strip()
+                        warning_idx = clean_line.lower().find('warning:')
+                        if warning_idx == -1:
+                            continue
+
+                        message = clean_line[warning_idx:].strip()
+                        if not message or message in seen:
+                            continue
+
+                        warnings.append(message)
+                        seen.add(message)
+                        if len(warnings) >= max_warnings:
+                            return warnings
+            except Exception:
+                continue
+
+        return warnings[:max_warnings]
 
     def _run_single_test(self, test_case: Dict[str, Any]) -> Dict[str, Any]:
         """Run a single test case using the workflow engine."""
@@ -1461,6 +1548,7 @@ class E2ETestFramework:
                 result['log_errors'] = []
             if 'cleanup' not in result:
                 result['cleanup'] = None
+            result['terraform_warnings'] = self._extract_terraform_warnings(deploy_dir, log_file)
 
         return result
 

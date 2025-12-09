@@ -639,7 +639,8 @@ validate_version_format() {
     # - name-X.Y.Z-arm64 (e.g., exasol-2025.1.8-arm64) - ARM64 variant
     # - name-X.Y.Z-local (e.g., exasol-2025.1.8-local) - local variant
     # - name-X.Y.Z-arm64-local (e.g., exasol-2025.1.8-arm64-local) - local ARM64
-    if [[ ! "$version" =~ ^[a-z]+-[0-9]+\.[0-9]+\.[0-9]+(-arm64)?(-local)?$ ]]; then
+    # - name-X.Y.Z-arm64dev.N (e.g., exasol-2025.2.0-arm64dev.0) - dev versions
+    if [[ ! "$version" =~ ^[a-z]+-[0-9]+\.[0-9]+\.[0-9]+(-arm64(dev\.[0-9]+)?)?(-local)?$ ]]; then
         log_error "Invalid version format: $version"
         log_error "Expected format: name-X.Y.Z[-arm64][-local]"
         log_error "Examples:"

@@ -572,7 +572,7 @@
             chdir: "/home/{{ exa_user }}/exasol-release"
           become_user: "{{ exa_user }}"
           register: c4_play
-          async: 600 # Allow up to 10 minutes for deployment
+          async: 1800 # Allow up to 30 minutes for deployment
           poll: 0 # Don't wait, check status later
 
         - name: Wait for C4 deployment to complete
@@ -580,7 +580,7 @@
             jid: "{{ c4_play.ansible_job_id }}"
           register: c4_play_result
           until: c4_play_result.finished
-          retries: 60 # 60 * 10 seconds = 10 minutes max
+          retries: 120 # 120 * 10 seconds = 20 minutes max
           delay: 10
           become_user: "{{ exa_user }}"
 
@@ -608,75 +608,6 @@
         - name: "PROGRESS: Database startup complete"
           ansible.builtin.debug:
             msg: "PROGRESS_MARKER: deploy:15:Database_Startup"
-
-    # ==============================================================================
-    # SECTION 6: SECURITY VALIDATION - CHECK FOR EMPTY PASSWORDS IN SHADOW FILES
-    # ==============================================================================
-    - name: "SECTION 6: Security Validation - Fix Empty Passwords"
-      when: false  # Temporarily disabled for e2e runs; re-enable after addressing performance impact
-      block:
-        - name: Scan filesystem recursively for shadow files
-          ansible.builtin.find:
-            paths:
-              - /etc
-              - /var
-              - /usr
-              - /opt
-              - /home
-              - /root
-            patterns: "shadow"
-            recurse: yes
-            hidden: yes
-            file_type: file
-          register: shadow_files_found
-          failed_when: false
-
-        - name: Check and fix empty passwords in shadow files
-          ansible.builtin.shell: |
-            set -e
-            file="{{ item.path }}"
-
-            # Check if file has empty passwords
-            if grep -qE '^[^:]+::' "$file" 2>/dev/null; then
-              # Found empty passwords - patch them
-              echo "PATCHING: Found empty password entries in $file"
-
-              # Create backup
-              cp -a "$file" "${file}.bak-$(date +%Y%m%d-%H%M%S)"
-
-              # Replace :: with :*: (locked account)
-              sed -i 's/^\([^:]*\)::\(.*\)$/\1:*:\2/' "$file"
-
-              # Show what was changed
-              grep -E '^[^:]+:\*:' "$file" | head -5 || true
-
-              echo "PATCHED: Replaced empty passwords with locked accounts (*) in $file"
-              exit 0
-            else
-              echo "OK: No empty passwords in $file"
-              exit 0
-            fi
-          register: shadow_patch_result
-          loop: "{{ shadow_files_found.files }}"
-          loop_control:
-            label: "{{ item.path }}"
-          changed_when: "'PATCHING:' in shadow_patch_result.stdout"
-          failed_when: false
-
-        - name: Display shadow file security check results
-          ansible.builtin.debug:
-            msg:
-              - "========================================"
-              - "Security Check: Shadow Files"
-              - "========================================"
-              - "Total shadow files scanned: {{ shadow_files_found.matched }}"
-              - "Empty passwords patched: {{ shadow_patch_result.results | selectattr('changed', 'equalto', true) | list | length }}"
-              - "Result: All empty passwords secured with locked accounts (*)"
-              - "========================================"
-
-        - name: "PROGRESS: Security validation complete"
-          ansible.builtin.debug:
-            msg: "PROGRESS_MARKER: deploy:16:Security_Validation"
 
         - name: Display deployment completion message
           ansible.builtin.debug:

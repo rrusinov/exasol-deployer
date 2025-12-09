@@ -23,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 declare -a BACKGROUND_PIDS=()
 declare -a DEPLOYMENT_DIRS=()
 
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 cleanup_on_interrupt() {
     # Disable trap to prevent recursive calls
     trap - SIGINT SIGTERM

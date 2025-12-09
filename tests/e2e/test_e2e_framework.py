@@ -357,13 +357,19 @@ class TestE2EFrameworkUtilities(unittest.TestCase):
                     'test_type': 'workflow',
                     'duration': 12.5,
                     'success': True,
-                    'error': None
+                    'error': None,
+                    'terraform_warnings': ['Warning: deprecated instance type']
                 }
             ]
         }
         generator.generate(summary, 'report.html')
-        self.assertTrue((temp_dir / 'report.html').exists())
-        self.assertTrue((temp_dir / 'latest_results.html').exists())
+        report_file = temp_dir / 'report.html'
+        latest_file = temp_dir / 'latest_results.html'
+        self.assertTrue(report_file.exists())
+        self.assertTrue(latest_file.exists())
+        content = report_file.read_text()
+        self.assertIn('Terraform warnings', content)
+        self.assertIn('Warning: deprecated instance type', content)
 
 
 class TestE2EFrameworkLogging(unittest.TestCase):
@@ -588,6 +594,25 @@ class TestE2EFrameworkLogging(unittest.TestCase):
         import re
         timestamp_pattern = r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}'
         self.assertTrue(re.search(timestamp_pattern, log_content), "Log should have correct timestamp format")
+
+    def test_extract_terraform_warnings_reads_logs(self):
+        """Ensure terraform warnings are collected from terraform and workflow logs."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        framework = E2ETestFramework(str(self.config_file), results_dir)
+
+        deploy_dir = results_dir / 'deploy'
+        deploy_dir.mkdir(parents=True, exist_ok=True)
+        tf_log = deploy_dir / 'terraform.log'
+        tf_log.write_text(
+            "Some info\nWarning: deprecated instance type\n  will be removed soon\n\n"
+        )
+        log_file = results_dir / 'demo.log'
+        log_file.write_text("Warning: secondary warning\nDetails follow\n")
+
+        warnings = framework._extract_terraform_warnings(deploy_dir, log_file, max_warnings=5)
+        self.assertIn("Warning: deprecated instance type", warnings)
+        self.assertIn("Warning: secondary warning", warnings)
 
     def test_logging_during_framework_execution(self):
         """Test that logging works during actual framework operations."""
