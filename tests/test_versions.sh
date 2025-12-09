@@ -273,6 +273,7 @@ test_discover_latest_version() {
     original_probe_version_url=$(declare -f probe_version_url)
 
     # Mock probe_version_url to succeed only for patch 6 and 7
+    # shellcheck disable=SC2329
     probe_version_url() {
         case "$1" in
             *2025.1.6*|*2025.1.7*) return 0 ;;
@@ -296,6 +297,7 @@ test_discover_latest_version_for_c4() {
     local original_probe_version_url
     original_probe_version_url=$(declare -f probe_version_url)
 
+    # shellcheck disable=SC2329
     probe_version_url() {
         case "$1" in
             *4.28.5/c4) return 0 ;;
