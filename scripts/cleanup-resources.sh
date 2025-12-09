@@ -88,8 +88,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --tag)
-            [[ -z "${2:-}" ]] && die "--tag requires a value"
-            TAG_FILTER="$2"
+            TAG_FILTER="${2:-}"
             shift 2
             ;;
         --prefix)
@@ -219,16 +218,54 @@ detect_unused_aws_vpcs() {
             --query 'length(Reservations[].Instances[])' \
             --output text 2>/dev/null || echo "0")
         
-        # Check if VPC has any network interfaces (excluding default ones)
+        # Check if VPC has any network interfaces (all types, not just instance-attached)
         local eni_count
-        # shellcheck disable=SC2016
         eni_count=$(aws ec2 describe-network-interfaces --region "$region" \
             --filters "Name=vpc-id,Values=$vpc_id" \
-            --query 'length(NetworkInterfaces[?Attachment.InstanceId!=`null`])' \
+            --query 'length(NetworkInterfaces[])' \
             --output text 2>/dev/null || echo "0")
         
-        # VPC is unused if it has no instances and no attached network interfaces
-        if [[ "$instance_count" == "0" && "$eni_count" == "0" ]]; then
+        # Check RDS instances
+        local rds_count
+        rds_count=$(aws rds describe-db-instances --region "$region" \
+            --query "length(DBInstances[?DBSubnetGroup.VpcId=='$vpc_id'])" \
+            --output text 2>/dev/null || echo "0")
+        
+        # Check Lambda functions
+        local lambda_count
+        lambda_count=$(aws lambda list-functions --region "$region" \
+            --query "length(Functions[?VpcConfig.VpcId=='$vpc_id'])" \
+            --output text 2>/dev/null || echo "0")
+        
+        # Check Load Balancers
+        local lb_count
+        lb_count=$(aws elbv2 describe-load-balancers --region "$region" \
+            --query "length(LoadBalancers[?VpcId=='$vpc_id'])" \
+            --output text 2>/dev/null || echo "0")
+        
+        # Check NAT Gateways
+        local nat_count
+        nat_count=$(aws ec2 describe-nat-gateways --region "$region" \
+            --filter "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available" \
+            --query 'length(NatGateways[])' \
+            --output text 2>/dev/null || echo "0")
+        
+        # Check VPC Endpoints
+        local vpce_count
+        vpce_count=$(aws ec2 describe-vpc-endpoints --region "$region" \
+            --filters "Name=vpc-id,Values=$vpc_id" \
+            --query 'length(VpcEndpoints[])' \
+            --output text 2>/dev/null || echo "0")
+        
+        # Check EFS File Systems (they create ENIs but good to check explicitly)
+        local efs_count
+        efs_count=$(aws efs describe-mount-targets --region "$region" 2>/dev/null | \
+            jq "[.MountTargets[] | select(.VpcId==\"$vpc_id\")] | length" 2>/dev/null || echo "0")
+        
+        # VPC is unused if it has no resources
+        if [[ "$instance_count" == "0" && "$eni_count" == "0" && "$rds_count" == "0" && \
+              "$lambda_count" == "0" && "$lb_count" == "0" && "$nat_count" == "0" && \
+              "$vpce_count" == "0" && "$efs_count" == "0" ]]; then
             UNUSED_VPCS+=("$region:$vpc_id")
             UNUSED_VPC_NAMES["$region:$vpc_id"]="${vpc_name:-<no name>}"
         fi
@@ -243,7 +280,20 @@ delete_vpc_with_dependencies() {
     
     log_info "Deleting VPC: $vpc_id (region: $region)"
     
-    # 1. Delete NAT Gateways
+    # 1. Delete VPC Endpoints
+    local vpc_endpoints
+    vpc_endpoints=$(aws ec2 describe-vpc-endpoints --region "$region" \
+        --filters "Name=vpc-id,Values=$vpc_id" \
+        --query 'VpcEndpoints[].VpcEndpointId' --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$vpc_endpoints" ]]; then
+        for vpce in $vpc_endpoints; do
+            log_info "  Deleting VPC Endpoint: $vpce"
+            aws ec2 delete-vpc-endpoints --region "$region" --vpc-endpoint-ids "$vpce" >/dev/null 2>&1 || true
+        done
+    fi
+    
+    # 2. Delete NAT Gateways
     local nat_gateways
     nat_gateways=$(aws ec2 describe-nat-gateways --region "$region" \
         --filter "Name=vpc-id,Values=$vpc_id" "Name=state,Values=available" \
@@ -262,21 +312,28 @@ delete_vpc_with_dependencies() {
         fi
     fi
     
-    # 2. Release Elastic IPs associated with the VPC
+    # 3. Release Elastic IPs associated with the VPC
     local eips
-    # shellcheck disable=SC2016
     eips=$(aws ec2 describe-addresses --region "$region" \
         --filters "Name=domain,Values=vpc" \
-        --query 'Addresses[].AllocationId' --output text 2>/dev/null || echo "")
+        --query "Addresses[?NetworkInterfaceOwnerId!=null].AllocationId" --output text 2>/dev/null || echo "")
     
     if [[ -n "$eips" ]]; then
         for eip in $eips; do
-            log_info "  Releasing Elastic IP: $eip"
-            aws ec2 release-address --region "$region" --allocation-id "$eip" 2>/dev/null || true
+            # Check if EIP is associated with this VPC
+            local eip_vpc
+            eip_vpc=$(aws ec2 describe-network-interfaces --region "$region" \
+                --filters "Name=addresses.allocation-id,Values=$eip" \
+                --query 'NetworkInterfaces[0].VpcId' --output text 2>/dev/null || echo "")
+            
+            if [[ "$eip_vpc" == "$vpc_id" ]]; then
+                log_info "  Releasing Elastic IP: $eip"
+                aws ec2 release-address --region "$region" --allocation-id "$eip" 2>/dev/null || true
+            fi
         done
     fi
     
-    # 3. Delete all network interfaces (except primary ones)
+    # 4. Delete all network interfaces (except primary ones)
     local enis
     enis=$(aws ec2 describe-network-interfaces --region "$region" \
         --filters "Name=vpc-id,Values=$vpc_id" \
@@ -289,7 +346,7 @@ delete_vpc_with_dependencies() {
         done
     fi
     
-    # 4. Delete Internet Gateways
+    # 5. Delete Internet Gateways
     local igws
     igws=$(aws ec2 describe-internet-gateways --region "$region" \
         --filters "Name=attachment.vpc-id,Values=$vpc_id" \
@@ -303,7 +360,7 @@ delete_vpc_with_dependencies() {
         done
     fi
     
-    # 5. Delete subnets
+    # 6. Delete subnets
     local subnets
     subnets=$(aws ec2 describe-subnets --region "$region" \
         --filters "Name=vpc-id,Values=$vpc_id" \
@@ -316,7 +373,7 @@ delete_vpc_with_dependencies() {
         done
     fi
     
-    # 6. Delete route tables (non-main)
+    # 7. Delete route tables (non-main)
     local route_tables
     # shellcheck disable=SC2016
     route_tables=$(aws ec2 describe-route-tables --region "$region" \
@@ -331,7 +388,7 @@ delete_vpc_with_dependencies() {
         done
     fi
     
-    # 7. Delete security groups (non-default)
+    # 8. Delete security groups (non-default)
     local security_groups
     # shellcheck disable=SC2016
     security_groups=$(aws ec2 describe-security-groups --region "$region" \
@@ -342,11 +399,11 @@ delete_vpc_with_dependencies() {
     if [[ -n "$security_groups" ]]; then
         for sg in $security_groups; do
             log_info "  Deleting security group: $sg"
-            aws ec2 delete-security-group --region "$region" --group-id "$sg" 2>/dev/null || true
+            aws ec2 delete-security-group --region "$region" --group-id "$sg" >/dev/null 2>&1 || true
         done
     fi
     
-    # 8. Delete network ACLs (non-default)
+    # 9. Delete network ACLs (non-default)
     local network_acls
     # shellcheck disable=SC2016
     network_acls=$(aws ec2 describe-network-acls --region "$region" \
@@ -361,7 +418,7 @@ delete_vpc_with_dependencies() {
         done
     fi
     
-    # 9. Finally, delete the VPC
+    # 10. Finally, delete the VPC
     log_info "  Deleting VPC: $vpc_id"
     if aws ec2 delete-vpc --region "$region" --vpc-id "$vpc_id" 2>/dev/null; then
         log_info "  ✓ VPC deleted successfully: $vpc_id"
@@ -455,7 +512,7 @@ cleanup_aws() {
     local found_resources=false
     
     # Parse tag filter (format: key=value)
-    local tag_key tag_value
+    local tag_key="" tag_value=""
     if [[ -n "$TAG_FILTER" && "$TAG_FILTER" == *"="* ]]; then
         tag_key="${TAG_FILTER%%=*}"
         tag_value="${TAG_FILTER#*=}"
@@ -673,6 +730,11 @@ cleanup_gcp() {
     networks=$(gcloud compute networks list --filter="name~^${PREFIX_FILTER}" \
         --format="table(name,mode)" 2>/dev/null || echo "")
     
+    # List subnets
+    local subnets
+    subnets=$(gcloud compute networks subnets list --filter="name~^${PREFIX_FILTER}" \
+        --format="table(name,region,network,ipCidrRange)" 2>/dev/null || echo "")
+    
     # List firewall rules
     local firewalls
     firewalls=$(gcloud compute firewall-rules list --filter="name~^${PREFIX_FILTER}" \
@@ -699,6 +761,12 @@ cleanup_gcp() {
         echo "$networks"
     fi
     
+    if [[ -n "$subnets" ]]; then
+        echo ""
+        echo "Subnets:"
+        echo "$subnets"
+    fi
+    
     if [[ -n "$firewalls" ]]; then
         echo ""
         echo "Firewall Rules:"
@@ -712,8 +780,10 @@ cleanup_gcp() {
     disk_count=$(gcloud compute disks list --filter="name~^${PREFIX_FILTER}" --format="value(name)" 2>/dev/null | wc -l)
     local network_count
     network_count=$(gcloud compute networks list --filter="name~^${PREFIX_FILTER}" --format="value(name)" 2>/dev/null | wc -l)
+    local subnet_count
+    subnet_count=$(gcloud compute networks subnets list --filter="name~^${PREFIX_FILTER}" --format="value(name)" 2>/dev/null | wc -l)
     
-    local total_count=$((instance_count + disk_count + network_count))
+    local total_count=$((instance_count + disk_count + network_count + subnet_count))
     
     if [[ $total_count -eq 0 ]]; then
         log_info "No GCP resources found with prefix '$PREFIX_FILTER'"
@@ -721,7 +791,7 @@ cleanup_gcp() {
     fi
     
     echo ""
-    echo "Total: $instance_count instance(s), $disk_count disk(s), $network_count network(s)"
+    echo "Total: $instance_count instance(s), $disk_count disk(s), $subnet_count subnet(s), $network_count network(s)"
     
     if ! confirm_deletion "$total_count" "GCP"; then
         return 0
@@ -761,6 +831,17 @@ cleanup_gcp() {
                 log_warn "  Failed to delete firewall rule: $name"
         fi
     done <<< "$firewall_list"
+    
+    # Delete subnets (must be before networks)
+    local subnet_list
+    subnet_list=$(gcloud compute networks subnets list --filter="name~^${PREFIX_FILTER}" --format="value(name,region)" 2>/dev/null || echo "")
+    while IFS=$'\t' read -r name region; do
+        if [[ -n "$name" && -n "$region" ]]; then
+            log_info "  Deleting subnet: $name (region: $region)"
+            gcloud compute networks subnets delete "$name" --region="$region" --quiet 2>/dev/null || \
+                log_warn "  Failed to delete subnet: $name"
+        fi
+    done <<< "$subnet_list"
     
     # Delete networks (must be last)
     local network_list
@@ -928,9 +1009,9 @@ cleanup_digitalocean() {
     local volumes
     volumes=$(doctl compute volume list --format Name,Size,DropletIDs --no-header 2>/dev/null | grep "^${PREFIX_FILTER}" || echo "")
     
-    # List VPCs
+    # List VPCs (excluding default VPCs which cannot be deleted)
     local vpcs
-    vpcs=$(doctl vpcs list --format Name,Region --no-header 2>/dev/null | grep "^${PREFIX_FILTER}" || echo "")
+    vpcs=$(doctl vpcs list --format Name,Region,Default --no-header 2>/dev/null | grep "^${PREFIX_FILTER}" | grep -v "true$" || echo "")
     
     # List firewalls
     local firewalls
@@ -1028,10 +1109,10 @@ cleanup_digitalocean() {
         fi
     done <<< "$firewall_list"
     
-    # Delete VPCs (must be last)
+    # Delete VPCs (must be last, skip default VPCs)
     local vpc_list
-    vpc_list=$(doctl vpcs list --format ID,Name --no-header 2>/dev/null | awk "\$2 ~ /^${PREFIX_FILTER}/" || echo "")
-    while read -r id name; do
+    vpc_list=$(doctl vpcs list --format ID,Name,Default --no-header 2>/dev/null | awk "\$2 ~ /^${PREFIX_FILTER}/ && \$3 != \"true\"" || echo "")
+    while read -r id name default; do
         if [[ -n "$id" && -n "$name" ]]; then
             log_info "  Deleting VPC: $name (ID: $id)"
             doctl vpcs delete "$id" --force 2>/dev/null || \
