@@ -1,7 +1,7 @@
 {
   "provider": "gcp",
   "description": "GCP E2E test configurations combining different SUTs and workflows",
-  "max_concurrent_nodes": 8,
+  "max_concurrent_nodes": 5,
   "test_suites": [
     {
       "sut": "sut/gcp-1n.json",

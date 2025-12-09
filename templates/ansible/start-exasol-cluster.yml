@@ -194,6 +194,9 @@
         name: c4.service
         state: started
       register: start_c4
+      when:
+        - c4_service_status.status is not defined
+          or c4_service_status.status.ActiveState != "active"
 
     - name: Check c4.service status
       ansible.builtin.systemd:
@@ -219,7 +222,9 @@
     - name: Wait for c4.service to be fully active
       ansible.builtin.wait_for:
         timeout: 60
-      when: start_c4.changed
+      when:
+        - start_c4 is defined
+        - start_c4.changed
       failed_when: false
 
     - name: "PROGRESS: Service startup complete"
