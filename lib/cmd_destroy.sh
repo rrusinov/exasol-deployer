@@ -157,16 +157,19 @@ cmd_destroy_execute() {
     local destroy_max_attempts=2
     local destroy_sleep=200  # Azure NIC reservations can take up to 180s to clear
     while (( destroy_attempt <= destroy_max_attempts )); do
-        local destroy_output
-        if destroy_output=$(tofu destroy -auto-approve 2>&1); then
+        local destroy_output destroy_tmpfile
+        destroy_tmpfile=$(mktemp)
+        if tofu destroy -auto-approve 2>&1 | tee "$destroy_tmpfile"; then
             destroy_rc=0
+            destroy_output=$(cat "$destroy_tmpfile")
+            rm -f "$destroy_tmpfile"
             log_info "Terraform destroy succeeded on attempt ${destroy_attempt}"
-            log_debug "${destroy_output}"
             break
         else
             destroy_rc=$?
+            destroy_output=$(cat "$destroy_tmpfile")
+            rm -f "$destroy_tmpfile"
             log_error "Terraform destroy failed (attempt ${destroy_attempt}/${destroy_max_attempts})"
-            log_error "${destroy_output}"
             # Retry once if NICs are reserved for another VM (Azure transient condition)
             if (( destroy_attempt < destroy_max_attempts )) && [[ "${destroy_output}" == *"NicReservedForAnotherVm"* ]]; then
                 log_warn "NIC reserved error detected; waiting ${destroy_sleep}s before retrying destroy"
