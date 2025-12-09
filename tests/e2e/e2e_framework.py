@@ -387,6 +387,15 @@ class E2ETestFramework:
             self.extra_env['TF_REGISTRY_CLIENT_RETRY_MAX'] = '6'
         if 'TF_REGISTRY_CLIENT_TIMEOUT' not in os.environ:
             self.extra_env['TF_REGISTRY_CLIENT_TIMEOUT'] = '30'
+        
+        # Build and install release artifact (cached for all tests)
+        self.logger.info("Using release testing workflow")
+        self.installer_path = self._build_release()
+        
+        # Install release to test directory
+        install_dir = self.results_dir / 'install'
+        self.exasol_bin = self._install_release(self.installer_path, install_dir)
+        self.logger.info(f"Using installed exasol binary: {self.exasol_bin}")
 
     def _resolve_db_version(self, suite_db_version: Optional[Union[str, List[str]]]) -> Optional[str]:
         """Resolve database version with fallback support.
@@ -397,21 +406,23 @@ class E2ETestFramework:
         3. None (uses exasol CLI default)
         
         If suite_db_version is a list, check each version in order and use the first that exists.
-        
-        Special handling for 'default-local' alias:
-        - If 'default-local' exists, extract the actual version name from the output
         """
         # CLI argument has highest priority (but still needs alias resolution)
         if self.db_version:
-            return self._resolve_version_alias(self.db_version)
+            resolved = self._resolve_version_alias(self.db_version)
+            self.logger.info(f"Using CLI database version: {self.db_version} -> {resolved}")
+            return resolved
         
         # No SUT config db_version specified
         if not suite_db_version:
+            self.logger.debug("No database version specified, using exasol CLI default")
             return None
         
         # Single version string
         if isinstance(suite_db_version, str):
-            return self._resolve_version_alias(suite_db_version)
+            resolved = self._resolve_version_alias(suite_db_version)
+            self.logger.info(f"Using SUT database version: {suite_db_version} -> {resolved}")
+            return resolved
         
         # List of versions with fallback
         if isinstance(suite_db_version, list):
@@ -419,7 +430,7 @@ class E2ETestFramework:
             for version in suite_db_version:
                 if self._check_version_exists(version):
                     resolved = self._resolve_version_alias(version)
-                    self.logger.info(f"Using database version: {resolved}")
+                    self.logger.info(f"Using database version from fallback list: {version} -> {resolved}")
                     return resolved
             
             # If no version found, use the last one as fallback
@@ -430,17 +441,17 @@ class E2ETestFramework:
         return None
     
     def _resolve_version_alias(self, version: str) -> str:
-        """Resolve version aliases like 'default-local' to actual version names.
+        """Resolve version aliases like 'default', 'default-local', 'default-arm64' to actual version names.
         
-        If version is 'default-local', extract the actual version from the
-        --list-versions output by finding the line with (default-local) marker.
+        If version starts with 'default', extract the actual version from the
+        --list-versions output by finding the line with the corresponding marker.
         """
-        if version != 'default-local':
+        if not version.startswith('default'):
             return version
         
         try:
             result = subprocess.run(
-                ['./exasol', 'init', '--list-versions'],
+                [str(self.exasol_bin), 'init', '--list-versions'],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -448,10 +459,11 @@ class E2ETestFramework:
             )
             if result.returncode == 0:
                 output = result.stdout + result.stderr
-                # Look for line with (default-local) marker
+                # Look for line with the version alias marker
                 # Format: "[INFO]   [+] exasol-2025.1.8-local [x86_64] (default-local)"
+                marker = f'({version})'
                 for line in output.split('\n'):
-                    if '(default-local)' in line:
+                    if marker in line:
                         # Extract version name
                         import re
                         # Remove ANSI color codes
@@ -460,10 +472,10 @@ class E2ETestFramework:
                         match = re.search(r'\[([\+x])\]\s+(\S+)', clean_line)
                         if match:
                             actual_version = match.group(2)
-                            self.logger.debug(f"Resolved 'default-local' to '{actual_version}'")
+                            self.logger.debug(f"Resolved '{version}' to '{actual_version}'")
                             return actual_version
         except Exception as e:
-            self.logger.debug(f"Failed to resolve default-local alias: {e}")
+            self.logger.debug(f"Failed to resolve {version} alias: {e}")
         
         # Fallback: return as-is
         return version
@@ -471,12 +483,12 @@ class E2ETestFramework:
     def _check_version_exists(self, version: str) -> bool:
         """Check if a database version exists using exasol CLI.
         
-        Also handles special aliases like 'default-local' by looking for
-        the (default-local) marker in the output.
+        Also handles special aliases like 'default', 'default-local', 'default-arm64' by looking for
+        the corresponding marker in the output.
         """
         try:
             result = subprocess.run(
-                ['./exasol', 'init', '--list-versions'],
+                [str(self.exasol_bin), 'init', '--list-versions'],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -485,10 +497,11 @@ class E2ETestFramework:
             if result.returncode == 0:
                 output = result.stdout + result.stderr
                 
-                # Special handling for 'default-local' alias
-                # Look for "(default-local)" marker in the output
-                if version == 'default-local':
-                    return '(default-local)' in output
+                # Special handling for 'default*' aliases
+                # Look for "(default*)" marker in the output
+                if version.startswith('default'):
+                    marker = f'({version})'
+                    return marker in output
                 
                 # For regular versions, check if version name appears in output
                 return version in output
@@ -496,6 +509,142 @@ class E2ETestFramework:
             self.logger.debug(f"Failed to check version {version}: {e}")
         
         return False
+
+    def _build_release(self) -> Path:
+        """Build release artifact using create_release.sh
+        
+        Returns:
+            Path to the generated installer script
+            
+        Raises:
+            RuntimeError: If build fails
+        """
+        self.logger.info("Building release artifact...")
+        build_script = self.repo_root / 'build' / 'create_release.sh'
+        
+        if not build_script.exists():
+            raise RuntimeError(f"Build script not found: {build_script}")
+        
+        try:
+            result = subprocess.run(
+                [str(build_script)],
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minute timeout
+                cwd=self.repo_root
+            )
+            
+            # Log build output
+            if result.stdout:
+                self.logger.info(f"Build STDOUT:\n{result.stdout.strip()}")
+            if result.stderr:
+                self.logger.info(f"Build STDERR:\n{result.stderr.strip()}")
+            
+            if result.returncode != 0:
+                error_msg = f"Release build failed with exit code {result.returncode}"
+                if result.stdout or result.stderr:
+                    error_msg += f"\nOutput:\n{result.stdout}\n{result.stderr}"
+                raise RuntimeError(error_msg)
+            
+            # Verify installer artifact exists
+            installer_path = self.repo_root / 'build' / 'exasol-installer.sh'
+            if not installer_path.exists():
+                raise RuntimeError(
+                    f"Installer artifact not found: {installer_path}\n"
+                    f"The build script completed but did not produce the expected installer."
+                )
+            
+            if not os.access(installer_path, os.X_OK):
+                raise RuntimeError(f"Installer artifact is not executable: {installer_path}")
+            
+            self.logger.info(f"Release build complete: {installer_path}")
+            return installer_path
+            
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Release build timed out after 300 seconds")
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                raise
+            raise RuntimeError(f"Release build failed: {e}")
+
+    def _install_release(self, installer_path: Path, install_dir: Path) -> Path:
+        """Install release artifact to test directory
+        
+        Args:
+            installer_path: Path to the installer script
+            install_dir: Directory to install into (installer will create subdirectory)
+            
+        Returns:
+            Path to the installed exasol symlink
+            
+        Raises:
+            RuntimeError: If installation fails
+        """
+        self.logger.info(f"Installing release to: {install_dir}")
+        
+        # Create install directory
+        install_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Use absolute path to bash to avoid PATH issues
+            # Convert paths to absolute to avoid issues with relative paths
+            abs_installer_path = installer_path.resolve()
+            abs_install_dir = install_dir.resolve()
+            
+            result = subprocess.run(
+                ['/usr/bin/env', 'bash', str(abs_installer_path), '--install', str(abs_install_dir), '--yes'],
+                capture_output=True,
+                text=True,
+                timeout=60,  # 1 minute timeout
+                cwd=self.repo_root
+            )
+            
+            # Log installation output
+            if result.stdout:
+                self.logger.info(f"Install STDOUT:\n{result.stdout.strip()}")
+            if result.stderr:
+                self.logger.info(f"Install STDERR:\n{result.stderr.strip()}")
+            
+            if result.returncode != 0:
+                error_msg = f"Installation failed with exit code {result.returncode}"
+                if result.stdout or result.stderr:
+                    error_msg += f"\nOutput:\n{result.stdout}\n{result.stderr}"
+                raise RuntimeError(error_msg)
+            
+            # Verify symlink exists
+            exasol_symlink = install_dir / 'exasol'
+            if not exasol_symlink.exists():
+                raise RuntimeError(
+                    f"Symlink not found: {exasol_symlink}\n"
+                    f"Installation completed but did not create expected symlink."
+                )
+            
+            # Verify required files exist in subdirectory
+            exasol_deployer_dir = install_dir / 'exasol-deployer'
+            required_files = ['exasol', 'lib', 'templates', 'versions.conf', 'instance-types.conf']
+            missing_files = []
+            
+            for file_name in required_files:
+                file_path = exasol_deployer_dir / file_name
+                if not file_path.exists():
+                    missing_files.append(file_name)
+            
+            if missing_files:
+                raise RuntimeError(
+                    f"Installation incomplete\n"
+                    f"Install directory: {exasol_deployer_dir}\n"
+                    f"Missing files: {', '.join(missing_files)}"
+                )
+            
+            self.logger.info(f"Installation complete: {exasol_symlink}")
+            return exasol_symlink
+            
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Installation timed out after 60 seconds")
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                raise
+            raise RuntimeError(f"Installation failed: {e}")
 
     def _setup_logging(self):
         """Setup logging configuration."""
@@ -1095,7 +1244,7 @@ class E2ETestFramework:
         
         # Try to run destroy command
         destroy_cmd = [
-            './exasol', 'destroy',
+            str(self.exasol_bin), 'destroy',
             '--deployment-dir', str(deploy_dir),
             '--auto-approve'
         ]
@@ -1452,7 +1601,8 @@ class E2ETestFramework:
                 provider=provider,
                 logger=self.logger,
                 log_callback=log_callback,
-                db_version=resolved_db_version
+                db_version=resolved_db_version,
+                exasol_bin=self.exasol_bin
             )
 
             # Execute workflow
@@ -1555,7 +1705,7 @@ class E2ETestFramework:
     def _init_deployment(self, deploy_dir: Path, provider: str, params: Dict[str, Any], log_file: Path):
         """Initialize deployment using exasol CLI."""
         cmd = [
-            './exasol', 'init',
+            str(self.exasol_bin), 'init',
             '--cloud-provider', provider,
             '--deployment-dir', str(deploy_dir)
         ]
@@ -1589,7 +1739,7 @@ class E2ETestFramework:
 
     def _deploy(self, deploy_dir: Path, params: Dict[str, Any], log_file: Path):
         """Deploy using exasol CLI."""
-        cmd = ['./exasol', 'deploy', '--deployment-dir', str(deploy_dir)]
+        cmd = [str(self.exasol_bin), 'deploy', '--deployment-dir', str(deploy_dir)]
 
         result = self._run_command(cmd, log_file, cwd=self.repo_root)
         if result.returncode != 0:

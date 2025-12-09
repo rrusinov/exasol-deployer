@@ -106,10 +106,11 @@ class WorkflowStep:
 class ValidationRegistry:
     """Registry of validation check functions"""
 
-    def __init__(self, deploy_dir: Path, provider: str, logger: logging.Logger):
+    def __init__(self, deploy_dir: Path, provider: str, logger: logging.Logger, exasol_bin: Optional[Path] = None):
         self.deploy_dir = deploy_dir
         self.provider = provider
         self.logger = logger
+        self.exasol_bin = exasol_bin or Path('./exasol')  # Use installed binary or fallback to source
         self.checks: Dict[str, ValidationCheck] = {}
         self._register_default_checks()
 
@@ -162,7 +163,7 @@ class ValidationRegistry:
 
     def _run_exasol_command(self, command: str, *args) -> subprocess.CompletedProcess:
         """Run exasol CLI command"""
-        cmd = ['./exasol', command, '--deployment-dir', str(self.deploy_dir)]
+        cmd = [str(self.exasol_bin), command, '--deployment-dir', str(self.deploy_dir)]
         cmd.extend(args)
         return subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
@@ -403,12 +404,14 @@ class WorkflowExecutor:
     """Executes workflow-based test scenarios"""
 
     def __init__(self, deploy_dir: Path, provider: str, logger: logging.Logger,
-                 log_callback: Optional[Callable] = None, db_version: Optional[str] = None):
+                 log_callback: Optional[Callable] = None, db_version: Optional[str] = None,
+                 exasol_bin: Optional[Path] = None):
         self.deploy_dir = deploy_dir
         self.provider = provider
         self.logger = logger
         self.log_callback = log_callback or (lambda msg: logger.info(msg))
-        self.validation_registry = ValidationRegistry(deploy_dir, provider, logger)
+        self.exasol_bin = exasol_bin or Path('./exasol')  # Use installed binary or fallback to source
+        self.validation_registry = ValidationRegistry(deploy_dir, provider, logger, self.exasol_bin)
         self.context: Dict[str, Any] = {}
         self.db_version = db_version  # Optional database version override
 
@@ -579,7 +582,7 @@ class WorkflowExecutor:
         See tests/e2e/config_schema.py SUT_PARAMETERS for the complete list of supported parameters.
         """
         cmd = [
-            './exasol', 'init',
+            str(self.exasol_bin), 'init',
             '--cloud-provider', self.provider,
             '--deployment-dir', str(self.deploy_dir)
         ]
@@ -629,7 +632,7 @@ class WorkflowExecutor:
 
     def _execute_deploy(self, step: WorkflowStep):
         """Execute deploy step"""
-        cmd = ['./exasol', 'deploy', '--deployment-dir', str(self.deploy_dir)]
+        cmd = [str(self.exasol_bin), 'deploy', '--deployment-dir', str(self.deploy_dir)]
         
         result = self._run_command_with_streaming(cmd, timeout=3600)
         
@@ -688,7 +691,7 @@ class WorkflowExecutor:
 
     def _execute_stop_cluster(self, step: WorkflowStep):
         """Execute cluster stop"""
-        cmd = ['./exasol', 'stop', '--deployment-dir', str(self.deploy_dir)]
+        cmd = [str(self.exasol_bin), 'stop', '--deployment-dir', str(self.deploy_dir)]
         
         result = self._run_command_with_streaming(cmd, timeout=600)
         
@@ -699,7 +702,7 @@ class WorkflowExecutor:
 
     def _execute_start_cluster(self, step: WorkflowStep):
         """Execute cluster start"""
-        cmd = ['./exasol', 'start', '--deployment-dir', str(self.deploy_dir)]
+        cmd = [str(self.exasol_bin), 'start', '--deployment-dir', str(self.deploy_dir)]
         
         result = self._run_command_with_streaming(cmd, timeout=600)
         
@@ -710,7 +713,7 @@ class WorkflowExecutor:
 
     def _execute_destroy(self, step: WorkflowStep):
         """Execute destroy step to tear down the cluster"""
-        cmd = ['./exasol', 'destroy', '--deployment-dir', str(self.deploy_dir), '--auto-approve']
+        cmd = [str(self.exasol_bin), 'destroy', '--deployment-dir', str(self.deploy_dir), '--auto-approve']
         
         result = self._run_command_with_streaming(cmd, timeout=600)
         

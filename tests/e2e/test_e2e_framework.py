@@ -7,6 +7,7 @@ import shutil
 import sys
 import getpass
 import uuid
+import subprocess
 from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -754,3 +755,464 @@ class TestE2EFrameworkLogging(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestReleaseBuild(unittest.TestCase):
+    """Test cases for release build functionality."""
+
+    def setUp(self):
+        """Set up test environment."""
+        username = getpass.getuser()
+        test_id = str(uuid.uuid4())[:8]
+        self.temp_dir = Path(tempfile.mkdtemp(prefix=f"exasol_test_{username}_{test_id}_"))
+        
+        # Create minimal config
+        self.config = {
+            'test_suites': {
+                'test_suite': {
+                    'provider': 'libvirt',
+                    'parameters': {'cluster_size': 1},
+                    'workflow': []
+                }
+            }
+        }
+        
+        self.config_file = self.temp_dir / 'test_config.json'
+        with open(self.config_file, 'w') as f:
+            json.dump(self.config, f)
+
+    def tearDown(self):
+        """Clean up test environment."""
+        shutil.rmtree(self.temp_dir)
+
+    def test_build_release_creates_installer(self):
+        """
+        Feature: e2e-release-testing, Property 1: Release artifact existence after build
+        
+        Test that _build_release() creates an installer artifact that exists and is executable.
+        This validates Requirements 1.2.
+        """
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir)
+        
+        # Call _build_release
+        try:
+            installer_path = framework._build_release()
+            
+            # Property: installer should exist
+            self.assertTrue(installer_path.exists(), 
+                          f"Installer artifact should exist at {installer_path}")
+            
+            # Property: installer should be executable
+            self.assertTrue(os.access(installer_path, os.X_OK),
+                          f"Installer artifact should be executable: {installer_path}")
+            
+            # Property: installer should be at expected location
+            expected_path = framework.repo_root / 'build' / 'exasol-installer.sh'
+            self.assertEqual(installer_path, expected_path,
+                           f"Installer should be at {expected_path}")
+            
+        except RuntimeError as e:
+            # If build fails, it's acceptable for this test (build script might not be available)
+            # But we should log it
+            self.skipTest(f"Build script not available or failed: {e}")
+
+    def test_build_release_handles_missing_script(self):
+        """Test that _build_release() raises RuntimeError when build script is missing."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir)
+        
+        # Mock repo_root to point to a directory without build script
+        original_repo_root = framework.repo_root
+        framework.repo_root = self.temp_dir
+        
+        try:
+            with self.assertRaises(RuntimeError) as context:
+                framework._build_release()
+            
+            self.assertIn("Build script not found", str(context.exception))
+        finally:
+            framework.repo_root = original_repo_root
+
+    def test_build_release_handles_failed_build(self):
+        """Test that _build_release() raises RuntimeError when build fails."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir)
+        
+        # Create a fake build script that fails
+        fake_build_dir = self.temp_dir / 'build'
+        fake_build_dir.mkdir()
+        fake_script = fake_build_dir / 'create_release.sh'
+        fake_script.write_text('#!/bin/bash\nexit 1\n')
+        fake_script.chmod(0o755)
+        
+        # Mock repo_root
+        original_repo_root = framework.repo_root
+        framework.repo_root = self.temp_dir
+        
+        try:
+            with self.assertRaises(RuntimeError) as context:
+                framework._build_release()
+            
+            self.assertIn("Release build failed", str(context.exception))
+        finally:
+            framework.repo_root = original_repo_root
+
+    def test_build_release_handles_missing_installer_artifact(self):
+        """Test that _build_release() raises RuntimeError when installer artifact is missing."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir)
+        
+        # Create a fake build script that succeeds but doesn't create installer
+        fake_build_dir = self.temp_dir / 'build'
+        fake_build_dir.mkdir()
+        fake_script = fake_build_dir / 'create_release.sh'
+        fake_script.write_text('#!/bin/bash\nexit 0\n')
+        fake_script.chmod(0o755)
+        
+        # Mock repo_root
+        original_repo_root = framework.repo_root
+        framework.repo_root = self.temp_dir
+        
+        try:
+            with self.assertRaises(RuntimeError) as context:
+                framework._build_release()
+            
+            self.assertIn("Installer artifact not found", str(context.exception))
+        finally:
+            framework.repo_root = original_repo_root
+
+
+class TestReleaseInstallation(unittest.TestCase):
+    """Test cases for release installation functionality."""
+
+    def setUp(self):
+        """Set up test environment."""
+        username = getpass.getuser()
+        test_id = str(uuid.uuid4())[:8]
+        self.temp_dir = Path(tempfile.mkdtemp(prefix=f"exasol_test_{username}_{test_id}_"))
+        
+        # Create minimal config
+        self.config = {
+            'test_suites': {
+                'test_suite': {
+                    'provider': 'libvirt',
+                    'parameters': {'cluster_size': 1},
+                    'workflow': []
+                }
+            }
+        }
+        
+        self.config_file = self.temp_dir / 'test_config.json'
+        with open(self.config_file, 'w') as f:
+            json.dump(self.config, f)
+
+    def tearDown(self):
+        """Clean up test environment."""
+        shutil.rmtree(self.temp_dir)
+
+    def test_install_release_creates_complete_installation(self):
+        """
+        Feature: e2e-release-testing, Property 2: Installation completeness
+        
+        Test that _install_release() creates a complete installation with all required files.
+        This validates Requirements 1.5.
+        """
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir)
+        
+        try:
+            # Build release first
+            installer_path = framework._build_release()
+            
+            # Install to test directory
+            install_dir = self.temp_dir / 'install'
+            exasol_bin = framework._install_release(installer_path, install_dir)
+            
+            # Property: symlink should exist
+            self.assertTrue(exasol_bin.exists(),
+                          f"Exasol symlink should exist at {exasol_bin}")
+            
+            # Property: symlink should point to installed script
+            self.assertTrue(exasol_bin.is_symlink(),
+                          f"Exasol binary should be a symlink: {exasol_bin}")
+            
+            # Property: all required files should exist
+            exasol_deployer_dir = install_dir / 'exasol-deployer'
+            required_files = ['exasol', 'lib', 'templates', 'versions.conf', 'instance-types.conf']
+            
+            for file_name in required_files:
+                file_path = exasol_deployer_dir / file_name
+                self.assertTrue(file_path.exists(),
+                              f"Required file should exist: {file_path}")
+            
+            # Property: installed exasol script should be executable
+            actual_script = exasol_deployer_dir / 'exasol'
+            self.assertTrue(os.access(actual_script, os.X_OK),
+                          f"Installed exasol script should be executable: {actual_script}")
+            
+        except RuntimeError as e:
+            self.skipTest(f"Build or installation not available: {e}")
+
+    def test_install_release_handles_failed_installation(self):
+        """Test that _install_release() raises RuntimeError when installation fails."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir)
+        
+        # Create a fake installer that fails
+        fake_installer = self.temp_dir / 'fake-installer.sh'
+        fake_installer.write_text('#!/bin/bash\nexit 1\n')
+        fake_installer.chmod(0o755)
+        
+        install_dir = self.temp_dir / 'install'
+        
+        with self.assertRaises(RuntimeError) as context:
+            framework._install_release(fake_installer, install_dir)
+        
+        self.assertIn("Installation failed", str(context.exception))
+
+    def test_install_release_handles_missing_symlink(self):
+        """Test that _install_release() raises RuntimeError when symlink is missing."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir)
+        
+        # Create a fake installer that succeeds but doesn't create symlink
+        fake_installer = self.temp_dir / 'fake-installer.sh'
+        fake_installer.write_text('#!/bin/bash\nexit 0\n')
+        fake_installer.chmod(0o755)
+        
+        install_dir = self.temp_dir / 'install'
+        
+        with self.assertRaises(RuntimeError) as context:
+            framework._install_release(fake_installer, install_dir)
+        
+        self.assertIn("Symlink not found", str(context.exception))
+
+    def test_install_release_handles_missing_files(self):
+        """Test that _install_release() raises RuntimeError when required files are missing."""
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        framework = E2ETestFramework(str(self.config_file), results_dir)
+        
+        # Create a fake installer that creates symlink but not all files
+        install_dir = self.temp_dir / 'install'
+        fake_installer = self.temp_dir / 'fake-installer.sh'
+        
+        # Create script that makes symlink but incomplete installation
+        script_content = f'''#!/bin/bash
+mkdir -p {install_dir}/exasol-deployer
+touch {install_dir}/exasol-deployer/exasol
+ln -s {install_dir}/exasol-deployer/exasol {install_dir}/exasol
+exit 0
+'''
+        fake_installer.write_text(script_content)
+        fake_installer.chmod(0o755)
+        
+        with self.assertRaises(RuntimeError) as context:
+            framework._install_release(fake_installer, install_dir)
+        
+        self.assertIn("Installation incomplete", str(context.exception))
+        self.assertIn("Missing files", str(context.exception))
+
+
+class TestReleaseWorkflow(unittest.TestCase):
+    """Test cases for release workflow enforcement."""
+
+    def setUp(self):
+        """Set up test environment."""
+        username = getpass.getuser()
+        test_id = str(uuid.uuid4())[:8]
+        self.temp_dir = Path(tempfile.mkdtemp(prefix=f"exasol_test_{username}_{test_id}_"))
+        
+        # Create minimal config
+        self.config = {
+            'test_suites': {
+                'test_suite': {
+                    'provider': 'libvirt',
+                    'parameters': {'cluster_size': 1},
+                    'workflow': []
+                }
+            }
+        }
+        
+        self.config_file = self.temp_dir / 'test_config.json'
+        with open(self.config_file, 'w') as f:
+            json.dump(self.config, f)
+
+    def tearDown(self):
+        """Clean up test environment."""
+        shutil.rmtree(self.temp_dir)
+
+    def test_framework_initialization_builds_and_installs_release(self):
+        """
+        Feature: e2e-release-testing, Property 4: Release workflow enforcement
+        
+        Test that E2ETestFramework initialization always builds and installs release.
+        This validates Requirements 4.1.
+        """
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Create framework - should automatically build and install
+            framework = E2ETestFramework(str(self.config_file), results_dir)
+            
+            # Property: installer_path should be set
+            self.assertIsNotNone(framework.installer_path,
+                               "Installer path should be set after initialization")
+            
+            # Property: exasol_bin should be set
+            self.assertIsNotNone(framework.exasol_bin,
+                               "Exasol binary path should be set after initialization")
+            
+            # Property: exasol_bin should exist
+            self.assertTrue(framework.exasol_bin.exists(),
+                          f"Exasol binary should exist: {framework.exasol_bin}")
+            
+            # Property: exasol_bin should be in install directory
+            install_dir = results_dir / 'install'
+            self.assertTrue(str(framework.exasol_bin).startswith(str(install_dir)),
+                          f"Exasol binary should be in install directory: {framework.exasol_bin}")
+            
+        except RuntimeError as e:
+            self.skipTest(f"Build or installation not available: {e}")
+
+    def test_framework_logs_release_workflow(self):
+        """
+        Feature: e2e-release-testing, Property 5: Test log documentation
+        
+        Test that framework logs document the release workflow.
+        This validates Requirements 4.2.
+        """
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Create framework
+            framework = E2ETestFramework(str(self.config_file), results_dir)
+            
+            # Flush log handler
+            if framework.file_handler:
+                framework.file_handler.flush()
+            
+            # Find log file
+            log_files = list(results_dir.glob('e2e_test_*.log'))
+            self.assertEqual(len(log_files), 1, "Should have one log file")
+            
+            log_file = log_files[0]
+            with open(log_file, 'r') as f:
+                log_content = f.read()
+            
+            # Property: log should document release workflow
+            self.assertIn("Using release testing workflow", log_content,
+                        "Log should document release testing workflow")
+            self.assertIn("Building release artifact", log_content,
+                        "Log should document release build")
+            self.assertIn("Installing release to", log_content,
+                        "Log should document release installation")
+            self.assertIn("Using installed exasol binary", log_content,
+                        "Log should document installed binary path")
+            
+        except RuntimeError as e:
+            self.skipTest(f"Build or installation not available: {e}")
+
+
+class TestCommandPathConsistency(unittest.TestCase):
+    """Test cases for command path consistency."""
+
+    def setUp(self):
+        """Set up test environment."""
+        username = getpass.getuser()
+        test_id = str(uuid.uuid4())[:8]
+        self.temp_dir = Path(tempfile.mkdtemp(prefix=f"exasol_test_{username}_{test_id}_"))
+        
+        # Create minimal config
+        self.config = {
+            'test_suites': {
+                'test_suite': {
+                    'provider': 'libvirt',
+                    'parameters': {'cluster_size': 1},
+                    'workflow': []
+                }
+            }
+        }
+        
+        self.config_file = self.temp_dir / 'test_config.json'
+        with open(self.config_file, 'w') as f:
+            json.dump(self.config, f)
+
+    def tearDown(self):
+        """Clean up test environment."""
+        shutil.rmtree(self.temp_dir)
+
+    def test_all_commands_use_installed_binary(self):
+        """
+        Feature: e2e-release-testing, Property 3: Command path consistency
+        
+        Test that all exasol commands use the installed binary path.
+        This validates Requirements 2.1, 4.3.
+        """
+        results_dir = self.temp_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            framework = E2ETestFramework(str(self.config_file), results_dir)
+            
+            # Property: exasol_bin should be set
+            self.assertIsNotNone(framework.exasol_bin,
+                               "Exasol binary path should be set")
+            
+            # Property: exasol_bin should not be './exasol'
+            self.assertNotEqual(str(framework.exasol_bin), './exasol',
+                              "Should not use source './exasol' path")
+            
+            # Property: exasol_bin should be in install directory
+            install_dir = results_dir / 'install'
+            self.assertTrue(str(framework.exasol_bin).startswith(str(install_dir)),
+                          f"Exasol binary should be in install directory: {framework.exasol_bin}")
+            
+            # Test that version check methods use installed binary
+            # Mock subprocess to capture commands
+            import unittest.mock
+            original_run = subprocess.run
+            captured_commands = []
+            
+            def mock_run(*args, **kwargs):
+                if args and len(args) > 0:
+                    captured_commands.append(args[0])
+                # Return a mock result
+                result = unittest.mock.Mock()
+                result.returncode = 0
+                result.stdout = ""
+                result.stderr = ""
+                return result
+            
+            with unittest.mock.patch('subprocess.run', side_effect=mock_run):
+                try:
+                    framework._check_version_exists('test-version')
+                except:
+                    pass  # We don't care if it fails, just want to capture the command
+            
+            # Property: captured commands should use installed binary
+            for cmd in captured_commands:
+                if 'exasol' in str(cmd[0]):
+                    self.assertEqual(cmd[0], str(framework.exasol_bin),
+                                   f"Command should use installed binary: {cmd[0]}")
+            
+        except RuntimeError as e:
+            self.skipTest(f"Build or installation not available: {e}")

@@ -661,14 +661,17 @@ except:
         echo ""
 
         # Wait for jobs and aggregate status
+        # Important: We must wait for each PID to properly reap the process
+        # and get its exit status, even though kill -0 already detected they exited
         for pid in "${!cfg_pids[@]}"; do
             cfg="${cfg_pids[$pid]}"
             cfg_results_dir="${cfg_results[$pid]}"
-            if wait "$pid"; then
-                status=0
-            else
-                status=1
-            fi
+            
+            # Wait for the process to finish and capture exit status
+            # This is necessary even if kill -0 already detected the process exited
+            # to properly reap the zombie process and get the exit code
+            wait "$pid" 2>/dev/null
+            status=$?
 
             results_file="$cfg_results_dir/results.json"
             if [[ -f "$results_file" ]]; then

@@ -118,6 +118,10 @@ list_versions_with_availability() {
     # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
     # shellcheck disable=SC2155
     local default_local_version=$(parse_config_file "$config_file" "default-local" "VERSION")
+    
+    # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
+    # shellcheck disable=SC2155
+    local default_arm64_version=$(parse_config_file "$config_file" "default-arm64" "VERSION")
 
     # Intentionally combine local+assignment to prevent set -e exit on command substitution failure
     # shellcheck disable=SC2155
@@ -177,6 +181,8 @@ list_versions_with_availability() {
             suffix=" (default)"
         elif [[ -n "$default_local_version" && "$version" == "$default_local_version" ]]; then
             suffix=" (default-local)"
+        elif [[ -n "$default_arm64_version" && "$version" == "$default_arm64_version" ]]; then
+            suffix=" (default-arm64)"
         fi
 
         local arch_display="$architecture"
