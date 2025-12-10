@@ -143,6 +143,7 @@ Usage: tests/run_e2e.sh [options]
 
 Options:
   --provider <name[,name...]>   Run only tests for the specified cloud provider(s)
+  --configs <name[,name...]>    Run only the specified config files (e.g. aws,libvirt,aws-arm64)
   --parallel <n>                Override parallelism (0 = auto/all tests)
   --stop-on-error               Stop execution on first test failure (for debugging)
   --db-version <version>        Database version to use (e.g. 8.0.0-x86_64, overrides config)
@@ -154,6 +155,7 @@ Options:
 
 Examples:
   tests/run_e2e.sh --provider aws
+  tests/run_e2e.sh --configs libvirt,aws-arm64
   tests/run_e2e.sh --db-version 8.0.0-x86_64
   tests/run_e2e.sh --rerun ./tmp/tests/e2e-20251203-120000 aws-1n_basic
   tests/run_e2e.sh --list-tests
@@ -165,6 +167,8 @@ EOF
 RESULTS_DIR=""
 PROVIDER_FILTER=""
 PROVIDER_SPECIFIED=0
+CONFIGS_FILTER=""
+CONFIGS_SPECIFIED=0
 PARALLEL=0
 STOP_ON_ERROR=0
 DB_VERSION=""
@@ -181,13 +185,38 @@ while [[ $# -gt 0 ]]; do
                 usage
                 exit 1
             fi
+            if [[ -z "$2" || "$2" =~ ^[[:space:]]*$ ]]; then
+                echo "Error: --provider cannot be empty" >&2
+                usage
+                exit 1
+            fi
             PROVIDER_FILTER="$2"
             PROVIDER_SPECIFIED=1
+            shift 2
+            ;;
+        --configs)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: Missing value for --configs" >&2
+                usage
+                exit 1
+            fi
+            if [[ -z "$2" || "$2" =~ ^[[:space:]]*$ ]]; then
+                echo "Error: --configs cannot be empty" >&2
+                usage
+                exit 1
+            fi
+            CONFIGS_FILTER="$2"
+            CONFIGS_SPECIFIED=1
             shift 2
             ;;
         --parallel)
             if [[ $# -lt 2 ]]; then
                 echo "Error: Missing value for --parallel" >&2
+                usage
+                exit 1
+            fi
+            if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                echo "Error: --parallel must be a non-negative integer (got: $2)" >&2
                 usage
                 exit 1
             fi
@@ -260,9 +289,20 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Validate mutually exclusive options
+if [[ "$PROVIDER_SPECIFIED" -eq 1 && "$CONFIGS_SPECIFIED" -eq 1 ]]; then
+    echo "Error: --provider and --configs cannot be used together" >&2
+    exit 1
+fi
+
 # Normalize provider filter
 if [[ -n "$PROVIDER_FILTER" && "${PROVIDER_FILTER,,}" == "all" ]]; then
     PROVIDER_FILTER=""
+fi
+
+# Normalize configs filter
+if [[ -n "$CONFIGS_FILTER" && "${CONFIGS_FILTER,,}" == "all" ]]; then
+    CONFIGS_FILTER=""
 fi
 
 # Only create results directory if explicitly provided
@@ -337,7 +377,7 @@ resolve_selected_tests() {
 overall_status=0
 
 # Check if no arguments provided - show help and exit
-if [[ "$LIST_TESTS" -eq 0 && -z "$RUN_TEST_IDS" && -z "$RERUN_EXEC_DIR" && -z "$PROVIDER_FILTER" && "$PROVIDER_SPECIFIED" -eq 0 ]]; then
+if [[ "$LIST_TESTS" -eq 0 && -z "$RUN_TEST_IDS" && -z "$RERUN_EXEC_DIR" && -z "$PROVIDER_FILTER" && "$PROVIDER_SPECIFIED" -eq 0 && "$CONFIGS_SPECIFIED" -eq 0 ]]; then
     usage
     exit 0
 fi
@@ -349,7 +389,94 @@ if [[ "$LIST_TESTS" -eq 1 ]]; then
         echo "No e2e configuration files found." >&2
         exit 1
     fi
-    list_tests_for_configs "$RESULTS_DIR" "$PROVIDER_FILTER" "${configs[@]}"
+    
+    # Apply same filtering logic as main execution
+    filtered_configs=("${configs[@]}")
+    if [[ -n "$PROVIDER_FILTER" ]]; then
+        IFS=',' read -ra provider_list <<< "$PROVIDER_FILTER"
+        filtered_configs=()
+        missing_providers=()
+        
+        # Get list of available providers
+        available_providers=()
+        for cfg in "${configs[@]}"; do
+            cfg_provider=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('provider', ''))" "$cfg")
+            if [[ -n "$cfg_provider" ]]; then
+                # Check if provider is already in array
+                provider_exists=0
+                for existing in "${available_providers[@]}"; do
+                    if [[ "$existing" == "$cfg_provider" ]]; then
+                        provider_exists=1
+                        break
+                    fi
+                done
+                if [[ $provider_exists -eq 0 ]]; then
+                    available_providers+=("$cfg_provider")
+                fi
+            fi
+        done
+        
+        # Validate that all requested providers exist
+        for requested_provider in "${provider_list[@]}"; do
+            found=0
+            for cfg in "${configs[@]}"; do
+                cfg_provider=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('provider', ''))" "$cfg")
+                if [[ "$cfg_provider" == "$requested_provider" ]]; then
+                    filtered_configs+=("$cfg")
+                    found=1
+                    break
+                fi
+            done
+            if [[ $found -eq 0 ]]; then
+                missing_providers+=("$requested_provider")
+            fi
+        done
+        
+        # Report missing providers and exit
+        if [[ ${#missing_providers[@]} -gt 0 ]]; then
+            echo "Error: The following providers do not exist: ${missing_providers[*]}" >&2
+            echo "Available providers: ${available_providers[*]}" >&2
+            exit 1
+        fi
+    elif [[ -n "$CONFIGS_FILTER" ]]; then
+        IFS=',' read -ra config_list <<< "$CONFIGS_FILTER"
+        filtered_configs=()
+        missing_configs=()
+        
+        # Validate that all requested configs exist
+        for requested_config in "${config_list[@]}"; do
+            found=0
+            for cfg in "${configs[@]}"; do
+                cfg_basename=$(basename "$cfg" .json)
+                if [[ "$cfg_basename" == "$requested_config" ]]; then
+                    filtered_configs+=("$cfg")
+                    found=1
+                    break
+                fi
+            done
+            if [[ $found -eq 0 ]]; then
+                missing_configs+=("$requested_config")
+            fi
+        done
+        
+        # Report missing configs and exit
+        if [[ ${#missing_configs[@]} -gt 0 ]]; then
+            echo "Error: The following config files do not exist: ${missing_configs[*]}" >&2
+            available_configs=""
+            for cfg in "${configs[@]}"; do
+                available_configs+="$(basename "$cfg" .json) "
+            done
+            echo "Available configs: ${available_configs% }" >&2
+            exit 1
+        fi
+    fi
+    
+    if [[ ${#filtered_configs[@]} -eq 0 ]]; then
+        echo "No e2e configuration files match the specified filter." >&2
+        exit 1
+    fi
+    
+    list_tests_for_configs "$RESULTS_DIR" "$PROVIDER_FILTER" "${filtered_configs[@]}"
     exit 0
 fi
 
@@ -442,17 +569,94 @@ else
         provider_args=(--providers "$PROVIDER_FILTER")
         IFS=',' read -ra provider_list <<< "$PROVIDER_FILTER"
         filtered_configs=()
+        missing_providers=()
+        
+        # Get list of available providers
+        available_providers=()
         for cfg in "${configs[@]}"; do
             cfg_provider=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('provider', ''))" "$cfg")
-            for p in "${provider_list[@]}"; do
-                if [[ "$cfg_provider" == "$p" ]]; then
+            if [[ -n "$cfg_provider" ]]; then
+                # Check if provider is already in array
+                provider_exists=0
+                for existing in "${available_providers[@]}"; do
+                    if [[ "$existing" == "$cfg_provider" ]]; then
+                        provider_exists=1
+                        break
+                    fi
+                done
+                if [[ $provider_exists -eq 0 ]]; then
+                    available_providers+=("$cfg_provider")
+                fi
+            fi
+        done
+        
+        # Validate that all requested providers exist
+        for requested_provider in "${provider_list[@]}"; do
+            found=0
+            for cfg in "${configs[@]}"; do
+                cfg_provider=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('provider', ''))" "$cfg")
+                if [[ "$cfg_provider" == "$requested_provider" ]]; then
                     filtered_configs+=("$cfg")
+                    found=1
                     break
                 fi
             done
+            if [[ $found -eq 0 ]]; then
+                missing_providers+=("$requested_provider")
+            fi
         done
+        
+        # Report missing providers and exit before starting any tests
+        if [[ ${#missing_providers[@]} -gt 0 ]]; then
+            echo "Error: The following providers do not exist: ${missing_providers[*]}" >&2
+            echo "Available providers: ${available_providers[*]}" >&2
+            exit 1
+        fi
+        
         if [[ ${#filtered_configs[@]} -eq 0 ]]; then
             echo "No e2e configuration files match provider filter: $PROVIDER_FILTER" >&2
+            echo "Available providers: ${available_providers[*]}" >&2
+            exit 1
+        fi
+    elif [[ -n "$CONFIGS_FILTER" ]]; then
+        IFS=',' read -ra config_list <<< "$CONFIGS_FILTER"
+        filtered_configs=()
+        missing_configs=()
+        
+        # Validate that all requested configs exist before starting any tests
+        for requested_config in "${config_list[@]}"; do
+            found=0
+            for cfg in "${configs[@]}"; do
+                cfg_basename=$(basename "$cfg" .json)
+                if [[ "$cfg_basename" == "$requested_config" ]]; then
+                    filtered_configs+=("$cfg")
+                    found=1
+                    break
+                fi
+            done
+            if [[ $found -eq 0 ]]; then
+                missing_configs+=("$requested_config")
+            fi
+        done
+        
+        # Report missing configs and exit before starting any tests
+        if [[ ${#missing_configs[@]} -gt 0 ]]; then
+            echo "Error: The following config files do not exist: ${missing_configs[*]}" >&2
+            available_configs=""
+            for cfg in "${configs[@]}"; do
+                available_configs+="$(basename "$cfg" .json) "
+            done
+            echo "Available configs: ${available_configs% }" >&2
+            exit 1
+        fi
+        
+        if [[ ${#filtered_configs[@]} -eq 0 ]]; then
+            echo "No e2e configuration files match config filter: $CONFIGS_FILTER" >&2
+            available_configs=""
+            for cfg in "${configs[@]}"; do
+                available_configs+="$(basename "$cfg" .json) "
+            done
+            echo "Available configs: ${available_configs% }" >&2
             exit 1
         fi
     fi
@@ -541,6 +745,10 @@ else
         echo ""
         
         # Track completion
+        # CRITICAL: This monitoring loop has a common failure mode where processes
+        # crash early (e.g., during E2ETestFramework.__init__) but get marked as
+        # "COMPLETE" instead of "FAILED". Always check run.log for errors when
+        # kill -0 returns false to distinguish between success and crash.
         declare -A completed_pids=()
         total_providers=${#cfg_pids[@]}
         first_iteration=1
@@ -579,7 +787,15 @@ else
                 # Check if process is still running
                 if ! kill -0 "$pid" 2>/dev/null; then
                     completed_pids["$pid"]=1
-                    progress_lines+=("  $cfg_name: COMPLETE")
+                    
+                    # CRITICAL: Check if process failed by examining run.log for errors
+                    # This prevents false "COMPLETE" status when processes crash early
+                    run_log="$cfg_results_dir/run.log"
+                    if [[ -f "$run_log" ]] && grep -q "Traceback\|Error:\|RuntimeError\|Exception:" "$run_log" 2>/dev/null; then
+                        progress_lines+=("  $cfg_name: FAILED (process crashed)")
+                    else
+                        progress_lines+=("  $cfg_name: COMPLETE")
+                    fi
                     continue
                 fi
                 
@@ -661,8 +877,12 @@ except:
         echo ""
 
         # Wait for jobs and aggregate status
-        # Important: We must wait for each PID to properly reap the process
-        # and get its exit status, even though kill -0 already detected they exited
+        # CRITICAL: This section determines the final exit status of the script
+        # Common failure modes to avoid:
+        # 1. Process crashes early -> wait returns non-zero exit code
+        # 2. Process succeeds but tests fail -> check results.json for failures
+        # 3. Process hangs -> timeout handling in monitoring loop above
+        # 4. Log file indicates errors -> check run.log for Python tracebacks
         for pid in "${!cfg_pids[@]}"; do
             cfg="${cfg_pids[$pid]}"
             cfg_results_dir="${cfg_results[$pid]}"
@@ -671,8 +891,21 @@ except:
             # This is necessary even if kill -0 already detected the process exited
             # to properly reap the zombie process and get the exit code
             wait "$pid" 2>/dev/null
-            status=$?
+            process_exit_code=$?
+            
+            # Initialize status as the process exit code
+            status=$process_exit_code
+            
+            # Additional error detection: Check run.log for Python crashes
+            # This catches cases where the process exits with code 0 but had internal errors
+            run_log="$cfg_results_dir/run.log"
+            if [[ -f "$run_log" ]] && grep -q "Traceback\|RuntimeError\|Exception:" "$run_log" 2>/dev/null; then
+                echo "Detected Python error in $run_log:"
+                grep -A3 -B1 "Traceback\|RuntimeError\|Exception:" "$run_log" | head -10
+                status=1
+            fi
 
+            # Check results.json for test failures (if it exists)
             results_file="$cfg_results_dir/results.json"
             if [[ -f "$results_file" ]]; then
                 failures="$(print_failures "$results_file")"
@@ -680,11 +913,18 @@ except:
                     status=1
                     tail_failed_logs "$results_file" || true
                 fi
+            elif [[ $process_exit_code -eq 0 ]]; then
+                # Process exited successfully but no results.json - this is suspicious
+                echo "Warning: Process exited with code 0 but no results.json found for $cfg"
+                echo "This usually indicates the process crashed during initialization"
+                status=1
             fi
 
             if [[ $status -ne 0 ]]; then
                 overall_status=1
                 echo "Config failed: $cfg (results: $cfg_results_dir)"
+                echo "  Process exit code: $process_exit_code"
+                echo "  Check logs: $run_log"
             else
                 echo "Config succeeded: $cfg (results: $cfg_results_dir)"
             fi

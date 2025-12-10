@@ -389,12 +389,11 @@ class E2ETestFramework:
             self.extra_env['TF_REGISTRY_CLIENT_TIMEOUT'] = '30'
         
         # Build and install release artifact (cached for all tests)
+        # CRITICAL: Use shared locking for both build and install to prevent race conditions
+        # where one process builds while another installs a partially written file
         self.logger.info("Using release testing workflow")
-        self.installer_path = self._build_release()
-        
-        # Install release to test directory
         install_dir = self.results_dir / 'install'
-        self.exasol_bin = self._install_release(self.installer_path, install_dir)
+        self.installer_path, self.exasol_bin = self._build_and_install_release(install_dir)
         self.logger.info(f"Using installed exasol binary: {self.exasol_bin}")
 
     def _resolve_db_version(self, suite_db_version: Optional[Union[str, List[str]]]) -> Optional[str]:
@@ -510,8 +509,132 @@ class E2ETestFramework:
         
         return False
 
+    def _build_and_install_release(self, install_dir: Path) -> tuple[Path, Path]:
+        """Build and install release artifact with proper locking
+        
+        CRITICAL: This method uses file locking to prevent race conditions where:
+        1. Multiple processes build the installer simultaneously (corrupting the file)
+        2. One process builds while another installs (reading partial file)
+        
+        Args:
+            install_dir: Directory to install into
+            
+        Returns:
+            Tuple of (installer_path, exasol_bin_path)
+            
+        Raises:
+            RuntimeError: If build or install fails
+        """
+        import fcntl
+        
+        self.logger.info("Building and installing release artifact...")
+        build_script = self.repo_root / 'build' / 'create_release.sh'
+        installer_path = self.repo_root / 'build' / 'exasol-installer.sh'
+        lock_file = self.repo_root / 'build' / '.build-install.lock'
+        
+        if not build_script.exists():
+            raise RuntimeError(f"Build script not found: {build_script}")
+        
+        # Create build directory if it doesn't exist
+        build_dir = self.repo_root / 'build'
+        build_dir.mkdir(exist_ok=True)
+        
+        # Use file locking for the entire build+install process
+        # This prevents race conditions where one process builds while another installs
+        try:
+            with open(lock_file, 'w') as lock:
+                self.logger.info("Acquiring build+install lock to prevent race conditions...")
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                
+                # Check if we need to build
+                need_build = True
+                if installer_path.exists() and os.access(installer_path, os.X_OK):
+                    # Quick validation - check if it starts with proper shebang and isn't corrupted
+                    try:
+                        with open(installer_path, 'r') as f:
+                            first_line = f.readline().strip()
+                            # Read a bit more to check for corruption
+                            f.seek(0)
+                            content_sample = f.read(1000)
+                            if (first_line.startswith('#!/') and 
+                                'base64' not in content_sample[:500] and  # No base64 in shell code
+                                'AAAA' not in content_sample[:500]):      # No base64 data in shell code
+                                self.logger.info(f"Using existing valid installer: {installer_path}")
+                                need_build = False
+                    except Exception:
+                        pass  # Fall through to rebuild
+                
+                if need_build:
+                    self.logger.info("Building new installer...")
+                    result = subprocess.run(
+                        [str(build_script)],
+                        capture_output=True,
+                        text=True,
+                        timeout=300,  # 5 minute timeout
+                        cwd=self.repo_root
+                    )
+                    
+                    # Log build output
+                    if result.stdout:
+                        self.logger.info(f"Build STDOUT:\n{result.stdout.strip()}")
+                    if result.stderr:
+                        self.logger.info(f"Build STDERR:\n{result.stderr.strip()}")
+                    
+                    if result.returncode != 0:
+                        error_msg = f"Release build failed with exit code {result.returncode}"
+                        if result.stdout or result.stderr:
+                            error_msg += f"\nOutput:\n{result.stdout}\n{result.stderr}"
+                        raise RuntimeError(error_msg)
+                    
+                    # Verify installer artifact exists and is valid
+                    if not installer_path.exists():
+                        raise RuntimeError(
+                            f"Installer artifact not found: {installer_path}\n"
+                            f"The build script completed but did not produce the expected installer."
+                        )
+                    
+                    if not os.access(installer_path, os.X_OK):
+                        raise RuntimeError(f"Installer artifact is not executable: {installer_path}")
+                    
+                    # Validate installer content (prevent corrupted files)
+                    try:
+                        with open(installer_path, 'r') as f:
+                            first_line = f.readline().strip()
+                            if not first_line.startswith('#!/'):
+                                raise RuntimeError(
+                                    f"Installer appears corrupted - invalid shebang: {first_line[:50]}..."
+                                )
+                            # Check for corruption in first part of file
+                            f.seek(0)
+                            content_sample = f.read(1000)
+                            if 'AAAA' in content_sample[:500]:  # Base64 data in shell code indicates corruption
+                                raise RuntimeError(
+                                    f"Installer appears corrupted - base64 data in shell code section"
+                                )
+                    except Exception as e:
+                        raise RuntimeError(f"Failed to validate installer: {e}")
+                    
+                    self.logger.info(f"Release build complete: {installer_path}")
+                
+                # Now install under the same lock to prevent reading partial files
+                exasol_bin = self._install_release_locked(installer_path, install_dir)
+                
+                return installer_path, exasol_bin
+                
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Release build timed out after 300 seconds")
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                raise
+            raise RuntimeError(f"Release build+install failed: {e}")
+
     def _build_release(self) -> Path:
         """Build release artifact using create_release.sh
+        
+        CRITICAL: This method uses file locking to prevent race conditions when multiple
+        e2e processes run in parallel. Without locking, concurrent builds corrupt the
+        installer file by writing to it simultaneously, causing base64 content to appear
+        as shell commands and resulting in syntax errors.
         
         Returns:
             Path to the generated installer script
@@ -519,53 +642,107 @@ class E2ETestFramework:
         Raises:
             RuntimeError: If build fails
         """
+        import fcntl
+        import time
+        
         self.logger.info("Building release artifact...")
         build_script = self.repo_root / 'build' / 'create_release.sh'
+        installer_path = self.repo_root / 'build' / 'exasol-installer.sh'
+        lock_file = self.repo_root / 'build' / '.build.lock'
         
         if not build_script.exists():
             raise RuntimeError(f"Build script not found: {build_script}")
         
+        # Create build directory if it doesn't exist
+        build_dir = self.repo_root / 'build'
+        build_dir.mkdir(exist_ok=True)
+        
+        # Use file locking to prevent concurrent builds that corrupt the installer
+        # This is critical for parallel e2e execution - without this, multiple processes
+        # write to the same installer file simultaneously, causing corruption
         try:
-            result = subprocess.run(
-                [str(build_script)],
-                capture_output=True,
-                text=True,
-                timeout=300,  # 5 minute timeout
-                cwd=self.repo_root
-            )
-            
-            # Log build output
-            if result.stdout:
-                self.logger.info(f"Build STDOUT:\n{result.stdout.strip()}")
-            if result.stderr:
-                self.logger.info(f"Build STDERR:\n{result.stderr.strip()}")
-            
-            if result.returncode != 0:
-                error_msg = f"Release build failed with exit code {result.returncode}"
-                if result.stdout or result.stderr:
-                    error_msg += f"\nOutput:\n{result.stdout}\n{result.stderr}"
-                raise RuntimeError(error_msg)
-            
-            # Verify installer artifact exists
-            installer_path = self.repo_root / 'build' / 'exasol-installer.sh'
-            if not installer_path.exists():
-                raise RuntimeError(
-                    f"Installer artifact not found: {installer_path}\n"
-                    f"The build script completed but did not produce the expected installer."
+            with open(lock_file, 'w') as lock:
+                self.logger.info("Acquiring build lock to prevent concurrent builds...")
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                
+                # Check if installer already exists and is valid (built by another process)
+                if installer_path.exists() and os.access(installer_path, os.X_OK):
+                    # Quick validation - check if it starts with proper shebang
+                    try:
+                        with open(installer_path, 'r') as f:
+                            first_line = f.readline().strip()
+                            if first_line.startswith('#!/'):
+                                self.logger.info(f"Using existing installer: {installer_path}")
+                                return installer_path
+                    except Exception:
+                        pass  # Fall through to rebuild
+                
+                self.logger.info("Building new installer...")
+                result = subprocess.run(
+                    [str(build_script)],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,  # 5 minute timeout
+                    cwd=self.repo_root
                 )
-            
-            if not os.access(installer_path, os.X_OK):
-                raise RuntimeError(f"Installer artifact is not executable: {installer_path}")
-            
-            self.logger.info(f"Release build complete: {installer_path}")
-            return installer_path
-            
+                
+                # Log build output
+                if result.stdout:
+                    self.logger.info(f"Build STDOUT:\n{result.stdout.strip()}")
+                if result.stderr:
+                    self.logger.info(f"Build STDERR:\n{result.stderr.strip()}")
+                
+                if result.returncode != 0:
+                    error_msg = f"Release build failed with exit code {result.returncode}"
+                    if result.stdout or result.stderr:
+                        error_msg += f"\nOutput:\n{result.stdout}\n{result.stderr}"
+                    raise RuntimeError(error_msg)
+                
+                # Verify installer artifact exists and is valid
+                if not installer_path.exists():
+                    raise RuntimeError(
+                        f"Installer artifact not found: {installer_path}\n"
+                        f"The build script completed but did not produce the expected installer."
+                    )
+                
+                if not os.access(installer_path, os.X_OK):
+                    raise RuntimeError(f"Installer artifact is not executable: {installer_path}")
+                
+                # Validate installer content (prevent corrupted files)
+                try:
+                    with open(installer_path, 'r') as f:
+                        first_line = f.readline().strip()
+                        if not first_line.startswith('#!/'):
+                            raise RuntimeError(
+                                f"Installer appears corrupted - invalid shebang: {first_line[:50]}..."
+                            )
+                except Exception as e:
+                    raise RuntimeError(f"Failed to validate installer: {e}")
+                
+                self.logger.info(f"Release build complete: {installer_path}")
+                return installer_path
+                
         except subprocess.TimeoutExpired:
             raise RuntimeError("Release build timed out after 300 seconds")
         except Exception as e:
             if isinstance(e, RuntimeError):
                 raise
             raise RuntimeError(f"Release build failed: {e}")
+
+    def _install_release_locked(self, installer_path: Path, install_dir: Path) -> Path:
+        """Install release artifact (called under lock from _build_and_install_release)
+        
+        Args:
+            installer_path: Path to the installer script
+            install_dir: Directory to install into
+            
+        Returns:
+            Path to the installed exasol symlink
+            
+        Raises:
+            RuntimeError: If installation fails
+        """
+        return self._install_release(installer_path, install_dir)
 
     def _install_release(self, installer_path: Path, install_dir: Path) -> Path:
         """Install release artifact to test directory
@@ -591,12 +768,18 @@ class E2ETestFramework:
             abs_installer_path = installer_path.resolve()
             abs_install_dir = install_dir.resolve()
             
+            # Ensure bash environment to prevent shell detection issues
+            # The installer uses $SHELL to detect shell type, so we must set it explicitly
+            env = os.environ.copy()
+            env['SHELL'] = '/bin/bash'
+            
             result = subprocess.run(
                 ['/usr/bin/env', 'bash', str(abs_installer_path), '--install', str(abs_install_dir), '--yes'],
                 capture_output=True,
                 text=True,
                 timeout=60,  # 1 minute timeout
-                cwd=self.repo_root
+                cwd=self.repo_root,
+                env=env
             )
             
             # Log installation output

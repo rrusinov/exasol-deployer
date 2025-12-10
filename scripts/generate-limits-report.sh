@@ -162,7 +162,10 @@ EOF
 # Parallel wrapper for AWS regions
 collect_aws_data_parallel() {
     local temp_dir="$1"
-    local regions=("us-east-1" "us-east-2" "us-west-1" "us-west-2" "eu-west-1" "eu-west-2" "eu-central-1" "ap-southeast-1" "ap-northeast-1")
+    local regions=("us-east-1" "us-east-2" "us-west-1" "us-west-2" 
+                   "eu-west-1" "eu-west-2" "eu-west-3" "eu-central-1" "eu-north-1"
+                   "ap-southeast-1" "ap-southeast-2" "ap-northeast-1" "ap-northeast-2" "ap-northeast-3" "ap-south-1"
+                   "ca-central-1" "sa-east-1")
     
     for region in "${regions[@]}"; do
         {
@@ -243,7 +246,10 @@ EOF
 # Parallel wrapper for Azure locations
 collect_azure_data_parallel() {
     local temp_dir="$1"
-    local locations=("eastus" "eastus2" "westus" "westus2" "westeurope" "northeurope")
+    local locations=("eastus" "eastus2" "westus" "westus2" "centralus" 
+                     "westeurope" "northeurope" "uksouth" "swedencentral"
+                     "southeastasia" "eastasia" "japaneast" "australiaeast" 
+                     "canadacentral" "southafricanorth" "centralindia")
     
     for location in "${locations[@]}"; do
         {
@@ -282,11 +288,11 @@ EOF
     quotas=$(gcloud compute regions describe "$region" --format=json 2>/dev/null)
     
     local cpu_current cpu_limit inst_current inst_limit ip_current ip_limit
-    cpu_current=$(echo "$quotas" | jq -r '.quotas[] | select(.metric=="CPUS") | .usage' 2>/dev/null || echo "0")
+    cpu_current=$(echo "$quotas" | jq -r '.quotas[] | select(.metric=="CPUS") | .usage' 2>/dev/null | awk '{print int($1+0)}' || echo "0")
     cpu_limit=$(echo "$quotas" | jq -r '.quotas[] | select(.metric=="CPUS") | .limit' 2>/dev/null || echo "N/A")
-    inst_current=$(echo "$quotas" | jq -r '.quotas[] | select(.metric=="INSTANCES") | .usage' 2>/dev/null || echo "0")
+    inst_current=$(echo "$quotas" | jq -r '.quotas[] | select(.metric=="INSTANCES") | .usage' 2>/dev/null | awk '{print int($1+0)}' || echo "0")
     inst_limit=$(echo "$quotas" | jq -r '.quotas[] | select(.metric=="INSTANCES") | .limit' 2>/dev/null || echo "N/A")
-    ip_current=$(echo "$quotas" | jq -r '.quotas[] | select(.metric=="STATIC_ADDRESSES") | .usage' 2>/dev/null || echo "0")
+    ip_current=$(echo "$quotas" | jq -r '.quotas[] | select(.metric=="STATIC_ADDRESSES") | .usage' 2>/dev/null | awk '{print int($1+0)}' || echo "0")
     ip_limit=$(echo "$quotas" | jq -r '.quotas[] | select(.metric=="STATIC_ADDRESSES") | .limit' 2>/dev/null || echo "N/A")
     
     # Calculate percentages
@@ -329,7 +335,10 @@ EOF
 # Parallel wrapper for GCP regions
 collect_gcp_data_parallel() {
     local temp_dir="$1"
-    local regions=("us-central1" "us-east1" "us-west1" "europe-west1" "europe-west2" "asia-southeast1")
+    local regions=("us-central1" "us-east1" "us-east4" "us-west1" "us-west2" "us-west3" "us-west4" 
+                   "europe-west1" "europe-west2" "europe-west3" "europe-west4" "europe-west6" "europe-north1"
+                   "asia-east1" "asia-east2" "asia-northeast1" "asia-northeast2" "asia-northeast3"
+                   "asia-south1" "asia-southeast1" "asia-southeast2" "australia-southeast1")
     
     for region in "${regions[@]}"; do
         {
@@ -553,7 +562,10 @@ EOF
                 if command -v aws &>/dev/null; then
                     local total_instances=0
                     local total_ips=0
-                    for region in us-east-1 us-east-2 us-west-1 us-west-2 eu-west-1 eu-west-2 eu-central-1 ap-southeast-1 ap-northeast-1; do
+                    for region in us-east-1 us-east-2 us-west-1 us-west-2 \
+                                  eu-west-1 eu-west-2 eu-west-3 eu-central-1 eu-north-1 \
+                                  ap-southeast-1 ap-southeast-2 ap-northeast-1 ap-northeast-2 ap-northeast-3 ap-south-1 \
+                                  ca-central-1 sa-east-1; do
                         if [[ -f "$temp_dir/aws-$region.html" ]]; then
                             local inst=$(grep -o "Running Instances</td><td>[0-9]*" "$temp_dir/aws-$region.html" | grep -o "[0-9]*$" || echo "0")
                             local ips=$(grep -o "Public IPs (Elastic)</td><td>[0-9]*" "$temp_dir/aws-$region.html" | grep -o "[0-9]*$" || echo "0")
@@ -571,7 +583,10 @@ EOF
                 if command -v az &>/dev/null; then
                     local vm_count=0
                     local ip_count=0
-                    for location in eastus eastus2 westus westus2 westeurope northeurope; do
+                    for location in eastus eastus2 westus westus2 centralus \
+                                    westeurope northeurope uksouth swedencentral \
+                                    southeastasia eastasia japaneast australiaeast \
+                                    canadacentral southafricanorth centralindia; do
                         if [[ -f "$temp_dir/azure-$location.html" ]]; then
                             local vms=$(grep -o "Running Instances</td><td>[0-9]*" "$temp_dir/azure-$location.html" | grep -o "[0-9]*$" || echo "0")
                             local ips=$(grep -o "Public IPs</td><td>[0-9]*" "$temp_dir/azure-$location.html" | grep -o "[0-9]*$" || echo "0")
@@ -589,7 +604,10 @@ EOF
                 if command -v gcloud &>/dev/null; then
                     local inst_count=0
                     local ip_count=0
-                    for region in us-central1 us-east1 us-west1 europe-west1 europe-west2 asia-southeast1; do
+                    for region in us-central1 us-east1 us-east4 us-west1 us-west2 us-west3 us-west4 \
+                                  europe-west1 europe-west2 europe-west3 europe-west4 europe-west6 europe-north1 \
+                                  asia-east1 asia-east2 asia-northeast1 asia-northeast2 asia-northeast3 \
+                                  asia-south1 asia-southeast1 asia-southeast2 australia-southeast1; do
                         if [[ -f "$temp_dir/gcp-$region.html" ]]; then
                             local insts=$(grep -o "Running Instances</td><td>[0-9]*" "$temp_dir/gcp-$region.html" | grep -o "[0-9]*$" || echo "0")
                             local ips=$(grep -o "Public IPs (Static)</td><td>[0-9]*" "$temp_dir/gcp-$region.html" | grep -o "[0-9]*$" || echo "0")
@@ -662,21 +680,30 @@ EOF
         
         case "$prov" in
             aws)
-                for region in us-east-1 us-east-2 us-west-1 us-west-2 eu-west-1 eu-west-2 eu-central-1 ap-southeast-1 ap-northeast-1; do
+                for region in us-east-1 us-east-2 us-west-1 us-west-2 \
+                              eu-west-1 eu-west-2 eu-west-3 eu-central-1 eu-north-1 \
+                              ap-southeast-1 ap-southeast-2 ap-northeast-1 ap-northeast-2 ap-northeast-3 ap-south-1 \
+                              ca-central-1 sa-east-1; do
                     if [[ -f "$temp_dir/aws-$region.html" ]]; then
                         cat "$temp_dir/aws-$region.html" >> "$output_file"
                     fi
                 done
                 ;;
             azure)
-                for location in eastus eastus2 westus westus2 westeurope northeurope; do
+                for location in eastus eastus2 westus westus2 centralus \
+                                westeurope northeurope uksouth swedencentral \
+                                southeastasia eastasia japaneast australiaeast \
+                                canadacentral southafricanorth centralindia; do
                     if [[ -f "$temp_dir/azure-$location.html" ]]; then
                         cat "$temp_dir/azure-$location.html" >> "$output_file"
                     fi
                 done
                 ;;
             gcp)
-                for region in us-central1 us-east1 us-west1 europe-west1 europe-west2 asia-southeast1; do
+                for region in us-central1 us-east1 us-east4 us-west1 us-west2 us-west3 us-west4 \
+                              europe-west1 europe-west2 europe-west3 europe-west4 europe-west6 europe-north1 \
+                              asia-east1 asia-east2 asia-northeast1 asia-northeast2 asia-northeast3 \
+                              asia-south1 asia-southeast1 asia-southeast2 australia-southeast1; do
                     if [[ -f "$temp_dir/gcp-$region.html" ]]; then
                         cat "$temp_dir/gcp-$region.html" >> "$output_file"
                     fi

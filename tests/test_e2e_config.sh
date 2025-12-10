@@ -234,7 +234,7 @@ else
     test_fail "Framework loading failed"
 fi
 
-# Test 8: Verify all providers have matching provider field
+# Test 8: Verify all providers have matching provider field (except aws-arm64)
 test_config_structure "Provider configs have matching provider field"
 provider_field_valid=true
 for provider_file in "$CONFIGS_DIR"/{aws,azure,gcp,libvirt,hetzner,digitalocean}.json; do
@@ -249,6 +249,79 @@ for provider_file in "$CONFIGS_DIR"/{aws,azure,gcp,libvirt,hetzner,digitalocean}
     fi
 done
 if $provider_field_valid; then
+    test_pass
+fi
+
+# Test 9: Test framework loading for aws-arm64.json
+test_config_structure "Framework loading for aws-arm64.json"
+if [[ ! -f "$CONFIGS_DIR/aws-arm64.json" ]]; then
+    echo "  ⊘ SKIP: aws-arm64.json not present"
+    test_pass
+elif python3 <<EOF
+import sys
+import os
+from pathlib import Path
+sys.path.insert(0, '$E2E_DIR')
+os.chdir('$SCRIPT_DIR/..')
+
+try:
+    from e2e_framework import E2ETestFramework
+
+    results_dir = Path('$SCRIPT_DIR/tmp/test-results')
+    results_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create framework instance
+    framework = E2ETestFramework('$CONFIGS_DIR/aws-arm64.json', results_dir)
+    
+    # Try to generate test plan
+    test_plan = framework.generate_test_plan(dry_run=True)
+    
+    # Validate we got some test cases
+    if len(test_plan) == 0:
+        raise ValueError("No test cases generated")
+    
+    # Validate structure and ARM64 specifics
+    for test_case in test_plan:
+        if 'deployment_id' not in test_case:
+            raise ValueError("Test case missing deployment_id")
+        if 'provider' not in test_case:
+            raise ValueError("Test case missing provider")
+        if test_case['provider'] != 'aws':
+            raise ValueError(f"Expected provider 'aws', got '{test_case['provider']}'")
+        # Check for ARM64 instance types
+        params = test_case.get('parameters', {})
+        instance_type = params.get('instance_type', '')
+        if not instance_type.startswith('t4g'):
+            raise ValueError(f"Expected ARM64 instance type (t4g.*), got '{instance_type}'")
+    
+    print(f"✓ Generated {len(test_plan)} ARM64 test cases")
+    sys.exit(0)
+except Exception as e:
+    print(f"✗ Error: {e}", file=sys.stderr)
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+EOF
+then
+    test_pass
+else
+    test_fail "Framework loading failed for aws-arm64.json"
+fi
+
+# Test 10: Verify ARM64 SUT configs have correct db_version
+test_config_structure "ARM64 SUT configs have default-arm64 db_version"
+arm64_db_version_valid=true
+for sut_file in "$CONFIGS_DIR"/sut/aws-arm64-*.json; do
+    if [[ -f "$sut_file" ]]; then
+        db_version=$(python3 -c "import json; print(json.load(open('$sut_file')).get('db_version', ''))")
+        if [[ "$db_version" != "default-arm64" ]]; then
+            arm64_db_version_valid=false
+            test_fail "ARM64 SUT $sut_file has wrong db_version: expected 'default-arm64', got '$db_version'"
+            break
+        fi
+    fi
+done
+if $arm64_db_version_valid; then
     test_pass
 fi
 

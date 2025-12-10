@@ -133,8 +133,8 @@ class TestVersionFallback(unittest.TestCase):
             # Test with fallback list where first doesn't exist but second does
             resolved = framework._resolve_db_version(['default-local', 'default'])
             
-            # Should use second version (default)
-            self.assertEqual(resolved, 'default')
+            # Should use second version (default) and resolve it
+            self.assertEqual(resolved, 'exasol-2025.1.8')
         finally:
             framework._check_version_exists = original_check
 
@@ -1121,7 +1121,7 @@ class TestReleaseWorkflow(unittest.TestCase):
             # Property: log should document release workflow
             self.assertIn("Using release testing workflow", log_content,
                         "Log should document release testing workflow")
-            self.assertIn("Building release artifact", log_content,
+            self.assertIn("Building and installing release artifact", log_content,
                         "Log should document release build")
             self.assertIn("Installing release to", log_content,
                         "Log should document release installation")

@@ -715,29 +715,35 @@ cleanup_gcp() {
     
     log_info "Using GCP project: $project"
     
+    # Build filter based on prefix
+    local filter_args=()
+    if [[ -n "$PREFIX_FILTER" ]]; then
+        filter_args=("--filter=name~^${PREFIX_FILTER}")
+    fi
+    
     # List instances
     local instances
-    instances=$(gcloud compute instances list --filter="name~^${PREFIX_FILTER}" \
+    instances=$(gcloud compute instances list "${filter_args[@]}" \
         --format="table(name,zone,status)" 2>/dev/null || echo "")
     
     # List disks
     local disks
-    disks=$(gcloud compute disks list --filter="name~^${PREFIX_FILTER}" \
+    disks=$(gcloud compute disks list "${filter_args[@]}" \
         --format="table(name,zone,sizeGb,status)" 2>/dev/null || echo "")
     
     # List networks
     local networks
-    networks=$(gcloud compute networks list --filter="name~^${PREFIX_FILTER}" \
+    networks=$(gcloud compute networks list "${filter_args[@]}" \
         --format="table(name,mode)" 2>/dev/null || echo "")
     
     # List subnets
     local subnets
-    subnets=$(gcloud compute networks subnets list --filter="name~^${PREFIX_FILTER}" \
+    subnets=$(gcloud compute networks subnets list "${filter_args[@]}" \
         --format="table(name,region,network,ipCidrRange)" 2>/dev/null || echo "")
     
     # List firewall rules
     local firewalls
-    firewalls=$(gcloud compute firewall-rules list --filter="name~^${PREFIX_FILTER}" \
+    firewalls=$(gcloud compute firewall-rules list "${filter_args[@]}" \
         --format="table(name,network,direction)" 2>/dev/null || echo "")
     
     echo ""
@@ -775,13 +781,13 @@ cleanup_gcp() {
     
     # Count resources
     local instance_count
-    instance_count=$(gcloud compute instances list --filter="name~^${PREFIX_FILTER}" --format="value(name)" 2>/dev/null | wc -l)
+    instance_count=$(gcloud compute instances list "${filter_args[@]}" --format="value(name)" 2>/dev/null | wc -l)
     local disk_count
-    disk_count=$(gcloud compute disks list --filter="name~^${PREFIX_FILTER}" --format="value(name)" 2>/dev/null | wc -l)
+    disk_count=$(gcloud compute disks list "${filter_args[@]}" --format="value(name)" 2>/dev/null | wc -l)
     local network_count
-    network_count=$(gcloud compute networks list --filter="name~^${PREFIX_FILTER}" --format="value(name)" 2>/dev/null | wc -l)
+    network_count=$(gcloud compute networks list "${filter_args[@]}" --format="value(name)" 2>/dev/null | wc -l)
     local subnet_count
-    subnet_count=$(gcloud compute networks subnets list --filter="name~^${PREFIX_FILTER}" --format="value(name)" 2>/dev/null | wc -l)
+    subnet_count=$(gcloud compute networks subnets list "${filter_args[@]}" --format="value(name)" 2>/dev/null | wc -l)
     
     local total_count=$((instance_count + disk_count + network_count + subnet_count))
     
@@ -801,7 +807,7 @@ cleanup_gcp() {
     
     # Delete instances first
     local instance_list
-    instance_list=$(gcloud compute instances list --filter="name~^${PREFIX_FILTER}" --format="value(name,zone)" 2>/dev/null || echo "")
+    instance_list=$(gcloud compute instances list "${filter_args[@]}" --format="value(name,zone)" 2>/dev/null || echo "")
     while IFS=$'\t' read -r name zone; do
         if [[ -n "$name" && -n "$zone" ]]; then
             log_info "  Deleting instance: $name (zone: $zone)"
@@ -812,7 +818,7 @@ cleanup_gcp() {
     
     # Delete disks
     local disk_list
-    disk_list=$(gcloud compute disks list --filter="name~^${PREFIX_FILTER}" --format="value(name,zone)" 2>/dev/null || echo "")
+    disk_list=$(gcloud compute disks list "${filter_args[@]}" --format="value(name,zone)" 2>/dev/null || echo "")
     while IFS=$'\t' read -r name zone; do
         if [[ -n "$name" && -n "$zone" ]]; then
             log_info "  Deleting disk: $name (zone: $zone)"
@@ -823,7 +829,7 @@ cleanup_gcp() {
     
     # Delete firewall rules
     local firewall_list
-    firewall_list=$(gcloud compute firewall-rules list --filter="name~^${PREFIX_FILTER}" --format="value(name)" 2>/dev/null || echo "")
+    firewall_list=$(gcloud compute firewall-rules list "${filter_args[@]}" --format="value(name)" 2>/dev/null || echo "")
     while IFS= read -r name; do
         if [[ -n "$name" ]]; then
             log_info "  Deleting firewall rule: $name"
@@ -834,7 +840,7 @@ cleanup_gcp() {
     
     # Delete subnets (must be before networks)
     local subnet_list
-    subnet_list=$(gcloud compute networks subnets list --filter="name~^${PREFIX_FILTER}" --format="value(name,region)" 2>/dev/null || echo "")
+    subnet_list=$(gcloud compute networks subnets list "${filter_args[@]}" --format="value(name,region)" 2>/dev/null || echo "")
     while IFS=$'\t' read -r name region; do
         if [[ -n "$name" && -n "$region" ]]; then
             log_info "  Deleting subnet: $name (region: $region)"
@@ -845,7 +851,7 @@ cleanup_gcp() {
     
     # Delete networks (must be last)
     local network_list
-    network_list=$(gcloud compute networks list --filter="name~^${PREFIX_FILTER}" --format="value(name)" 2>/dev/null || echo "")
+    network_list=$(gcloud compute networks list "${filter_args[@]}" --format="value(name)" 2>/dev/null || echo "")
     while IFS= read -r name; do
         if [[ -n "$name" ]]; then
             log_info "  Deleting network: $name"

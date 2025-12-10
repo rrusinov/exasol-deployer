@@ -1,5 +1,6 @@
 AGENTS.md
 build/exasol-installer.sh
+build/.build*.lock
 *.html
 tmp*
 .cloude*

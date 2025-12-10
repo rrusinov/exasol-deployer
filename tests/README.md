@@ -118,16 +118,20 @@ tests/e2e/
 ├── e2e_framework.py              # Main framework (uses workflow engine)
 ├── workflow_engine.py            # Workflow execution engine
 ├── configs/                      # Test configuration files
-│   ├── aws.jso   n               # AWS provider test suite
+│   ├── aws.json                  # AWS provider test suite (x86_64)
+│   ├── aws-arm64.json            # AWS ARM64 provider test suite
 │   ├── azure.json                # Azure provider test suite
-│   ├── gcp.jso   n               # GCP provider test suite
+│   ├── gcp.json                  # GCP provider test suite
 │   ├── hetzner.json              # Hetzner provider test suite
 │   ├── digitalocean.json         # DigitalOcean provider test suite
 │   ├── libvirt.json              # Libvirt provider test suite
 │   ├── sut/                      # System Under Test definitions
-│   │   ├── aws-1n.json           # AWS single node
-│   │   ├── aws-4n.json           # AWS 4-node cluster
-│   │   ├── aws-8n-vx-spot.json   # AWS 8-node with VXLAN & spot
+│   │   ├── aws-1n.json           # AWS single node (x86_64)
+│   │   ├── aws-4n.json           # AWS 4-node cluster (x86_64)
+│   │   ├── aws-8n-vx-spot.json   # AWS 8-node with VXLAN & spot (x86_64)
+│   │   ├── aws-arm64-1n.json     # AWS single node (ARM64)
+│   │   ├── aws-arm64-4n.json     # AWS 4-node cluster (ARM64)
+│   │   ├── aws-arm64-8n-vx-spot.json # AWS 8-node ARM64 with VXLAN & spot
 │   │   ├── azure-1n.json         # Azure configurations
 │   │   ├── gcp-1n.json           # GCP configurations
 │   │   ├── hetzner-1n.json       # Hetzner configurations
@@ -153,6 +157,9 @@ Results are stored in `./tmp/tests/e2e-YYYYMMDD-HHMMSS/` with auto-generated exe
 # Run tests for specific provider
 ./tests/run_e2e.sh --provider aws
 
+# Run specific config files
+./tests/run_e2e.sh --configs libvirt,aws-arm64
+
 # Run tests with parallelism
 ./tests/run_e2e.sh --provider libvirt --parallel 2
 
@@ -162,8 +169,14 @@ Results are stored in `./tmp/tests/e2e-YYYYMMDD-HHMMSS/` with auto-generated exe
 # Specify database version
 ./tests/run_e2e.sh --db-version exasol-2025.1.8
 
+# Use ARM64 database version
+./tests/run_e2e.sh --configs aws-arm64 --db-version default-arm64
+
 # Re-run specific suite from execution directory
 ./tests/run_e2e.sh --rerun ./tmp/tests/e2e-20251203-120000 aws-1n_basic
+
+# Run specific test by suite name
+./tests/run_e2e.sh --run-tests libvirt-3n_basic,aws-arm64-1n_simple
 
 # Run specific test by suite name
 ./tests/run_e2e.sh --run-tests libvirt-3n_basic

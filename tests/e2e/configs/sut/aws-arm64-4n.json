@@ -1,0 +1,12 @@
+{
+  "description": "AWS 4-node ARM64 cluster configuration",
+  "provider": "aws",
+  "db_version": "default-arm64",
+  "parameters": {
+    "cluster_size": 4,
+    "instance_type": "t4g.large",
+    "data_volumes_per_node": 2,
+    "data_volume_size": 20,
+    "root_volume_size": 55
+  }
+}

@@ -48,6 +48,69 @@ else
     test_fail "Help not shown when no arguments provided"
 fi
 
+# Test 2: Non-existent config validation
+test_feature "Non-existent config validation"
+output=$("${RUN_E2E_BASE[@]}" --configs nonexistent 2>&1 || true)
+if echo "$output" | grep -q "The following config files do not exist: nonexistent"; then
+    test_pass
+else
+    test_fail "Non-existent config not detected. Output: $output"
+fi
+
+# Test 3: Non-existent provider validation
+test_feature "Non-existent provider validation"
+output=$("${RUN_E2E_BASE[@]}" --provider nonexistent 2>&1 || true)
+if echo "$output" | grep -q "The following providers do not exist: nonexistent"; then
+    test_pass
+else
+    test_fail "Non-existent provider not detected. Output: $output"
+fi
+
+# Test 4: Empty config validation
+test_feature "Empty config validation"
+output=$("${RUN_E2E_BASE[@]}" --configs "" 2>&1 || true)
+if echo "$output" | grep -q "Error: --configs cannot be empty"; then
+    test_pass
+else
+    test_fail "Empty config not detected. Output: $output"
+fi
+
+# Test 5: Empty provider validation
+test_feature "Empty provider validation"
+output=$("${RUN_E2E_BASE[@]}" --provider "" 2>&1 || true)
+if echo "$output" | grep -q "Error: --provider cannot be empty"; then
+    test_pass
+else
+    test_fail "Empty provider not detected. Output: $output"
+fi
+
+# Test 6: Invalid parallel value validation
+test_feature "Invalid parallel value validation"
+output=$("${RUN_E2E_BASE[@]}" --parallel abc 2>&1 || true)
+if echo "$output" | grep -q "Error: --parallel must be a non-negative integer"; then
+    test_pass
+else
+    test_fail "Invalid parallel value not detected. Output: $output"
+fi
+
+# Test 7: Multiple non-existent configs validation
+test_feature "Multiple non-existent configs validation"
+output=$("${RUN_E2E_BASE[@]}" --configs aws,nonexistent1,nonexistent2 2>&1 || true)
+if echo "$output" | grep -q "The following config files do not exist: nonexistent1 nonexistent2"; then
+    test_pass
+else
+    test_fail "Multiple non-existent configs not detected properly. Output: $output"
+fi
+
+# Test 8: Mixed valid and invalid configs validation
+test_feature "Mixed valid and invalid configs validation"
+output=$("${RUN_E2E_BASE[@]}" --configs aws,badconfig 2>&1 || true)
+if echo "$output" | grep -q "The following config files do not exist: badconfig" && echo "$output" | grep -q "Available configs:"; then
+    test_pass
+else
+    test_fail "Mixed valid/invalid configs not handled properly"
+fi
+
 # Test 2: --list-tests shows all providers
 test_feature "--list-tests shows all providers"
 output=$("${RUN_E2E_BASE[@]}" --list-tests 2>&1)
@@ -109,13 +172,63 @@ fi
 # Test 7: --list-tests with invalid provider shows error
 test_feature "--list-tests with invalid provider shows error"
 output=$("${RUN_E2E_BASE[@]}" --list-tests nonexistent 2>&1 || true)
-if echo "$output" | grep -q "No tests found for provider"; then
+if echo "$output" | grep -q "The following providers do not exist: nonexistent"; then
     test_pass
 else
-    test_fail "--list-tests didn't show error for invalid provider"
+    test_fail "--list-tests didn't show error for invalid provider. Output: $output"
 fi
 
-# Test 8: Suite names can be resolved via e2e_framework
+# Test 8: --configs option filters correctly
+test_feature "--configs option filters correctly"
+output=$("${RUN_E2E_BASE[@]}" --configs libvirt --list-tests 2>&1)
+if echo "$output" | grep -q "Provider: LIBVIRT" && \
+   echo "$output" | grep -q "libvirt-" && \
+   ! echo "$output" | grep -q "Provider: AWS"; then
+    test_pass
+else
+    test_fail "--configs libvirt didn't filter correctly"
+fi
+
+# Test 9: --configs with multiple configs
+test_feature "--configs with multiple configs"
+output=$("${RUN_E2E_BASE[@]}" --configs libvirt,aws --list-tests 2>&1)
+if echo "$output" | grep -q "Provider: LIBVIRT" && \
+   echo "$output" | grep -q "Provider: AWS"; then
+    test_pass
+else
+    test_fail "--configs libvirt,aws didn't show both providers"
+fi
+
+# Test 10: --configs with invalid config shows error
+test_feature "--configs with invalid config shows error"
+output=$("${RUN_E2E_BASE[@]}" --configs nonexistent 2>&1 || true)
+if echo "$output" | grep -q "The following config files do not exist: nonexistent" && \
+   echo "$output" | grep -q "Available configs:"; then
+    test_pass
+else
+    test_fail "--configs didn't show error for invalid config. Output: $output"
+fi
+
+# Test 11: --provider and --configs mutual exclusion
+test_feature "--provider and --configs mutual exclusion"
+output=$("${RUN_E2E_BASE[@]}" --provider aws --configs libvirt 2>&1 || true)
+if echo "$output" | grep -q "Error: --provider and --configs cannot be used together"; then
+    test_pass
+else
+    test_fail "--provider and --configs didn't show mutual exclusion error"
+fi
+
+# Test 12: --configs aws-arm64 shows ARM64 tests
+test_feature "--configs aws-arm64 shows ARM64 tests"
+output=$("${RUN_E2E_BASE[@]}" --configs aws-arm64 --list-tests 2>&1)
+if echo "$output" | grep -q "aws-arm64-" && \
+   echo "$output" | grep -q "t4g"; then
+    test_pass
+else
+    test_fail "--configs aws-arm64 didn't show ARM64 tests"
+fi
+
+# Test 13: Suite names can be resolved via e2e_framework
 test_feature "Suite names resolve correctly via framework"
 output=$(python3 -c "
 import sys
