@@ -26,9 +26,9 @@ fi
 
 # Always rebuild installer to test latest changes
 echo "Building installer..."
-./build/create_release.sh >/dev/null 2>&1
+./scripts/create-release.sh >/dev/null 2>&1
 
-INSTALLER="$PROJECT_ROOT/build/exasol-installer.sh"
+INSTALLER="$PROJECT_ROOT/build/exasol-deployer.sh"
 
 # Test environments for containerized testing
 declare -A TEST_ENVIRONMENTS=(
@@ -194,7 +194,7 @@ run_containerized_test() {
     
     local dockerfile_path
     dockerfile_path=$(create_test_dockerfile "$env_name" "$base_image")
-    local image_name="exasol-installer-test-${env_name}"
+    local image_name="exasol_deployer-test-${env_name}"
     
     # Skip environments that are fundamentally incompatible
     if [[ "$env_name" == "busybox-minimal" ]]; then
@@ -218,7 +218,7 @@ run_containerized_test() {
     
     local result=0
     $CONTAINER_CMD run --rm \
-        -v "$INSTALLER:/home/testuser/exasol-installer.sh:ro" \
+        -v "$INSTALLER:/home/testuser/exasol-deployer.sh:ro" \
         -v "$test_script:/home/testuser/test_script.sh:ro" \
         "$image_name" \
         $shell_cmd /home/testuser/test_script.sh || result=$?
@@ -239,12 +239,12 @@ set -eu
 
 # Copy installer to writable location
 if [[ -w /home/testuser ]]; then
-    cp /home/testuser/exasol-installer.sh /home/testuser/installer
+    cp /home/testuser/exasol-deployer.sh /home/testuser/installer
     chmod +x /home/testuser/installer
     INSTALLER="/home/testuser/installer"
 else
     # Handle read-only home directory
-    cp /home/testuser/exasol-installer.sh /tmp/installer
+    cp /home/testuser/exasol-deployer.sh /tmp/installer
     chmod +x /tmp/installer
     INSTALLER="/tmp/installer"
 fi

@@ -528,8 +528,8 @@ class E2ETestFramework:
         import fcntl
         
         self.logger.info("Building and installing release artifact...")
-        build_script = self.repo_root / 'build' / 'create_release.sh'
-        installer_path = self.repo_root / 'build' / 'exasol-installer.sh'
+        build_script = self.repo_root / 'scripts' / 'create-release.sh'
+        installer_path = self.repo_root / 'build' / 'exasol-deployer.sh'
         lock_file = self.repo_root / 'build' / '.build-install.lock'
         
         if not build_script.exists():
@@ -646,8 +646,8 @@ class E2ETestFramework:
         import time
         
         self.logger.info("Building release artifact...")
-        build_script = self.repo_root / 'build' / 'create_release.sh'
-        installer_path = self.repo_root / 'build' / 'exasol-installer.sh'
+        build_script = self.repo_root / 'scripts' / 'create-release.sh'
+        installer_path = self.repo_root / 'build' / 'exasol-deployer.sh'
         lock_file = self.repo_root / 'build' / '.build.lock'
         
         if not build_script.exists():

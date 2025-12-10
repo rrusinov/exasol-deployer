@@ -810,7 +810,7 @@ class TestReleaseBuild(unittest.TestCase):
                           f"Installer artifact should be executable: {installer_path}")
             
             # Property: installer should be at expected location
-            expected_path = framework.repo_root / 'build' / 'exasol-installer.sh'
+            expected_path = framework.repo_root / 'build' / 'exasol-deployer.sh'
             self.assertEqual(installer_path, expected_path,
                            f"Installer should be at {expected_path}")
             
@@ -846,9 +846,9 @@ class TestReleaseBuild(unittest.TestCase):
         framework = E2ETestFramework(str(self.config_file), results_dir)
         
         # Create a fake build script that fails
-        fake_build_dir = self.temp_dir / 'build'
-        fake_build_dir.mkdir()
-        fake_script = fake_build_dir / 'create_release.sh'
+        fake_scripts_dir = self.temp_dir / 'scripts'
+        fake_scripts_dir.mkdir()
+        fake_script = fake_scripts_dir / 'create-release.sh'
         fake_script.write_text('#!/bin/bash\nexit 1\n')
         fake_script.chmod(0o755)
         
@@ -872,9 +872,9 @@ class TestReleaseBuild(unittest.TestCase):
         framework = E2ETestFramework(str(self.config_file), results_dir)
         
         # Create a fake build script that succeeds but doesn't create installer
-        fake_build_dir = self.temp_dir / 'build'
-        fake_build_dir.mkdir()
-        fake_script = fake_build_dir / 'create_release.sh'
+        fake_scripts_dir = self.temp_dir / 'scripts'
+        fake_scripts_dir.mkdir()
+        fake_script = fake_scripts_dir / 'create-release.sh'
         fake_script.write_text('#!/bin/bash\nexit 0\n')
         fake_script.chmod(0o755)
         

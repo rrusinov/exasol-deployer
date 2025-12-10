@@ -93,7 +93,7 @@ fi
 # Test 7: Build injects version
 echo "TEST: Build process injects version into exasol script"
 TESTS_RUN=$((TESTS_RUN + 1))
-if [[ ! -f "build/exasol-installer.sh" ]]; then
+if [[ ! -f "build/exasol-deployer.sh" ]]; then
     echo "  (Skipping - no pre-built installer found)"
 else
     temp_dir=$(mktemp -d)
@@ -101,7 +101,7 @@ else
     trap "rm -rf '$temp_dir'" EXIT
     
     extract_dir="$temp_dir/extract"
-    if ./build/exasol-installer.sh --extract-only "$extract_dir" >/dev/null 2>&1; then
+    if ./build/exasol-deployer.sh --extract-only "$extract_dir" >/dev/null 2>&1; then
         version_line=$(grep "readonly SCRIPT_VERSION_RAW=" "$extract_dir/exasol" || true)
         if [[ "$version_line" == *"__EXASOL_VERSION__"* ]]; then
             fail "Version placeholder not replaced"

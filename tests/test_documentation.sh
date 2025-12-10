@@ -144,7 +144,7 @@ test_readme_installation_examples() {
     assert_contains "$README_CONTENT" "https://is.gd/exasol_deployer" "README contains short URL"
     
     # Check that README contains the correct GitHub URL
-    assert_contains "$README_CONTENT" "https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-installer.sh" "README contains GitHub release URL"
+    assert_contains "$README_CONTENT" "https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh" "README contains GitHub release URL"
     
     # Check that curl|bash examples don't require --yes (fresh install should work)
     if echo "$README_CONTENT" | grep -A2 "curl -fsSL https://is.gd/exasol_deployer" | grep -q "bash -s -- --yes"; then

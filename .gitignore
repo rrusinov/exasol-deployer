@@ -1,9 +1,8 @@
 AGENTS.md
-build/exasol-installer.sh
-build/.build*.lock
 *.html
 tmp*
 .cloude*
 .venv
 .vscode
 __pycache__
+build/

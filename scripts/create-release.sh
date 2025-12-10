@@ -6,7 +6,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC2155
 readonly PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly BUILD_DIR="$PROJECT_ROOT/build"
-readonly OUTPUT_NAME="exasol-installer.sh"
+readonly OUTPUT_NAME="exasol-deployer.sh"
 
 # Generate version from git or fallback to timestamp
 generate_version() {
@@ -118,18 +118,18 @@ Installation paths (auto-detected):
 
 Examples:
   # Download and install
-  curl -fsSL URL -o exasol-installer.sh
-  chmod +x exasol-installer.sh
-  ./exasol-installer.sh
+  curl -fsSL URL -o exasol-deployer.sh
+  chmod +x exasol-deployer.sh
+  ./exasol-deployer.sh
 
   # Install to specific path
-  ./exasol-installer.sh --install ~/.local/bin
+  ./exasol-deployer.sh --install ~/.local/bin
 
   # Force reinstall
-  ./exasol-installer.sh --yes
+  ./exasol-deployer.sh --yes
 
   # Uninstall
-  ./exasol-installer.sh --uninstall
+  ./exasol-deployer.sh --uninstall
 
   # One-liner (download, execute, cleanup)
   curl -fsSL URL -o /tmp/install.sh && bash /tmp/install.sh --yes && rm /tmp/install.sh

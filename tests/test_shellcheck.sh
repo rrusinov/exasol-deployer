@@ -41,7 +41,7 @@ for script in "${shell_scripts[@]}"; do
         continue
     fi
     # Skip generated installer (contains base64 payload that shellcheck can't parse)
-    if [[ "$script" == "build/exasol-installer.sh" ]]; then
+    if [[ "$script" == "build/exasol-deployer.sh" ]]; then
         echo ""
         echo "Skipping (generated): $script"
         continue

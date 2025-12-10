@@ -35,23 +35,23 @@ curl -fsSL https://is.gd/exasol_deployer | bash
 Or using the full URL:
 
 ```bash
-curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-installer.sh | bash
+curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh | bash
 ```
 
 Or download and run manually:
 
 ```bash
 # Download the installer (short URL)
-curl -fsSL https://is.gd/exasol_deployer -o exasol-installer.sh
+curl -fsSL https://is.gd/exasol_deployer -o exasol-deployer.sh
 
 # Or use the full URL
-curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-installer.sh -o exasol-installer.sh
+curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh -o exasol-deployer.sh
 
 # Make it executable
-chmod +x exasol-installer.sh
+chmod +x exasol-deployer.sh
 
 # Run the installer
-./exasol-installer.sh
+./exasol-deployer.sh
 ```
 
 The installer will:
@@ -67,13 +67,13 @@ The installer will:
 For automation or CI/CD:
 
 ```bash
-curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-installer.sh | bash -s -- --yes
+curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh | bash -s -- --yes
 ```
 
 ### Custom Installation Path
 
 ```bash
-./exasol-installer.sh --prefix /opt/exasol --yes
+./exasol-deployer.sh --prefix /opt/exasol --yes
 ```
 
 ### Verify Installation
@@ -82,7 +82,7 @@ curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/
 exasol version
 ```
 
-For detailed build and installation documentation, see [Build System Documentation](build/README.md).
+For detailed build and installation documentation, see [Scripts and Build System Documentation](scripts/README.md).
 
 ## Prerequisites
 
@@ -837,7 +837,7 @@ This is expected behavior for Hetzner, DigitalOcean, and libvirt. Follow the man
 
 ## Documentation
 
-- **[Build System](build/README.md)** - Release build system and installer
+- **[Scripts and Build System](scripts/README.md)** - Build system and utility scripts
 - **[Cloud Setup](clouds/README.md)** - Cloud provider setup guides
 - **[Testing](tests/README.md)** - Unit and E2E testing framework
 - **[Templates](templates/README.md)** - Terraform and Ansible templates
