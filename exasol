@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+# Exasol Cloud Deployer
+# A bash script that simulates the interface of the binary Exasol deployer
+# using OpenTofu and Ansible
+
+set -euo pipefail
+
+# Resolve script directory, following symlinks (works on macOS/BSD readlink)
+resolve_script_dir() {
+    local source="$1"
+    while [ -h "$source" ]; do
+        local dir
+        dir="$(cd -P "$(dirname "$source")" && pwd)"
+        local target
+        target="$(readlink "$source")"
+        [[ "$target" != /* ]] && target="$dir/$target"
+        source="$target"
+    done
+    cd -P "$(dirname "$source")" && pwd
+}
+
+# Script information
+# Version is injected during build process, defaults to dev for local development
+readonly SCRIPT_VERSION_RAW="${EXASOL_VERSION:-__EXASOL_VERSION__}"
+if [[ "$SCRIPT_VERSION_RAW" =~ ^__.*__$ ]]; then
+    readonly SCRIPT_VERSION="dev"
+else
+    readonly SCRIPT_VERSION="$SCRIPT_VERSION_RAW"
+fi
+# Intentionally combine readonly+assignment to prevent set -e exit on command substitution failure
+# shellcheck disable=SC2155
+readonly SCRIPT_DIR="$(resolve_script_dir "${BASH_SOURCE[0]}")"
+
+# Source libraries
+source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/state.sh"
+source "$SCRIPT_DIR/lib/versions.sh"
+source "$SCRIPT_DIR/lib/cmd_init.sh"
+source "$SCRIPT_DIR/lib/cmd_deploy.sh"
+source "$SCRIPT_DIR/lib/cmd_destroy.sh"
+source "$SCRIPT_DIR/lib/cmd_status.sh"
+source "$SCRIPT_DIR/lib/cmd_health.sh"
+source "$SCRIPT_DIR/lib/cmd_start.sh"
+source "$SCRIPT_DIR/lib/cmd_stop.sh"
+
+# Global flags
+DEPLOYMENT_DIR="."
+LOG_LEVEL="info"
+
+# Show version
+show_version() {
+    echo "Exasol Cloud Deployer v${SCRIPT_VERSION}"
+    echo "Built with OpenTofu and Ansible"
+}
+
+# Show help
+show_help() {
+    cat <<EOF
+Installer for Exasol Database using OpenTofu and Ansible.
+
+Usage:
+  exasol [command] [flags]
+
+Available Commands:
+  init             Initialize a new deployment directory
+  deploy           Deploy using an existing deployment directory
+  start            Start a stopped database deployment
+  stop             Stop a running database deployment
+  destroy          Destroy an active deployment
+  status           Get the status of a deployment
+  health           Run connectivity and service health checks
+  update-versions  Discover and append the latest DB/C4 release to versions.conf
+  version          Print the program version and exit
+  help             Show this help message
+
+Flags:
+  --version        Print the program version and exit
+  --help, -h       Show this help message
+
+Global Flags:
+  --deployment-dir string   The directory to store deployment files (default ".")
+  --log-level string        Set log level: debug, info, warn, error (default "info")
+  -h, --help               Show help
+
+Use "exasol [command] --help" for more information about a command.
+
+Examples:
+   # Initialize a new deployment with default version
+   exasol init --deployment-dir ./my-deployment
+
+   # Initialize with specific version and architecture
+   exasol init --db-version 8.0.0-x86_64 --cluster-size 4
+
+   # List available database versions
+   exasol init --list-versions
+
+   # Deploy the infrastructure
+   exasol deploy --deployment-dir ./my-deployment
+
+   # Check deployment status
+   exasol status --deployment-dir ./my-deployment
+
+   # Stop the database (keeps instances running)
+   exasol stop --deployment-dir ./my-deployment
+
+   # Start a stopped database
+   exasol start --deployment-dir ./my-deployment
+
+   # Check health status
+   exasol health --deployment-dir ./my-deployment
+
+   # Destroy the deployment
+   exasol destroy --deployment-dir ./my-deployment
+EOF
+}
+
+# Note: Command-specific help functions (show_init_help, show_deploy_help, etc.)
+# are now defined in their respective command files (lib/cmd_*.sh)
+# This keeps the help text in sync with the actual command options
+
+# Parse global flags
+parse_global_flags() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --deployment-dir)
+                DEPLOYMENT_DIR="$2"
+                shift 2
+                ;;
+            --log-level)
+                LOG_LEVEL="$2"
+                set_log_level "$LOG_LEVEL"
+                shift 2
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+}
+
+# Main entry point
+main() {
+    # Check if no arguments provided
+    if [[ $# -eq 0 ]]; then
+        show_help
+        exit 0
+    fi
+
+    # First, extract and parse global flags
+    local args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --deployment-dir|--log-level)
+                # Handle global flag
+                if [[ "$1" == "--deployment-dir" ]]; then
+                    DEPLOYMENT_DIR="$2"
+                elif [[ "$1" == "--log-level" ]]; then
+                    LOG_LEVEL="$2"
+                    set_log_level "$LOG_LEVEL"
+                fi
+                shift 2
+                ;;
+            *)
+                # Save non-global arguments
+                args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # Restore arguments without global flags
+    set -- "${args[@]}"
+
+    # Get command
+    local command="${1:-help}"
+    shift || true
+
+    # Check dependencies early for commands that need them
+    # Skip for help, version, and init --list-versions
+    case "$command" in
+        help|--help|-h|version|--version)
+            # Skip dependency check for help and version
+            ;;
+        init)
+            # Skip dependency check only for --list-versions
+            if [[ "${1:-}" != "--list-versions" ]] && [[ "${1:-}" != "--help" ]] && [[ "${1:-}" != "-h" ]]; then
+                check_required_commands
+            fi
+            ;;
+        *)
+            # Check dependencies for all other commands
+            check_required_commands
+            ;;
+    esac
+
+    # Route to appropriate command
+    case "$command" in
+        init)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_init_help
+                exit 0
+            fi
+            cmd_init --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        deploy)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_deploy_help
+                exit 0
+            fi
+            progress_wrap_command "deploy" "$DEPLOYMENT_DIR" cmd_deploy --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        destroy)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_destroy_help
+                exit 0
+            fi
+            progress_wrap_command "destroy" "$DEPLOYMENT_DIR" cmd_destroy --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        start)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_start_help
+                exit 0
+            fi
+            progress_wrap_command "start" "$DEPLOYMENT_DIR" cmd_start --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        stop)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_stop_help
+                exit 0
+            fi
+            progress_wrap_command "stop" "$DEPLOYMENT_DIR" cmd_stop --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        status)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_status_help
+                exit 0
+            fi
+            cmd_status --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        health)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_health_help
+                exit 0
+            fi
+            cmd_health --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            ;;
+        version|--version)
+            show_version
+            ;;
+        update-versions)
+            if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+                show_update_versions_help
+                exit 0
+            fi
+            cmd_update_versions "$@"
+            ;;
+        help|--help|-h)
+            show_help
+            ;;
+        connect)
+            log_error "Feature not supported: connect command"
+            log_info "This feature is not yet implemented in the bash version."
+            exit 1
+            ;;
+        diag)
+            log_error "Feature not supported: diag command"
+            log_info "This feature is not yet implemented in the bash version."
+            exit 1
+            ;;
+        completion)
+            log_error "Feature not supported: completion command"
+            log_info "This feature is not yet implemented in the bash version."
+            exit 1
+            ;;
+        *)
+            log_error "Unknown command: $command"
+            echo ""
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# Run main
+main "$@"

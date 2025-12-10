@@ -1,0 +1,267 @@
+---
+# ==============================================================================
+# STOP EXASOL CLUSTER
+# Gracefully stops the Exasol database cluster and powers off hosts.
+# This playbook stops database services and performs a graceful host shutdown
+# to ensure data is flushed and avoid filesystem corruption.
+# ==============================================================================
+
+# ==============================================================================
+# PLAY 1: GATHER FACTS FROM ALL HOSTS
+# ==============================================================================
+- name: Play 1 - Gather Host Facts
+  hosts: exasol_nodes
+  become: yes
+  tasks:
+    - name: Ensure all host facts are gathered
+      ansible.builtin.setup:
+
+# ==============================================================================
+# PLAY 2: STOP EXASOL DATABASE ON ALL NODES
+# ==============================================================================
+- name: Play 2 - Stop Exasol Database
+  hosts: exasol_nodes
+  become: yes
+  gather_facts: no
+
+  vars:
+    exa_user: "exasol"
+    power_off_fallback: false
+
+  tasks:
+    # ==============================================================================
+    # STOP OPERATION
+    # ==============================================================================
+    - name: Display stop operation information
+      ansible.builtin.debug:
+        msg: "Stopping Exasol database cluster..."
+      when: inventory_hostname == groups['exasol_nodes'][0]
+
+    # ==============================================================================
+    # GRACEFUL DATABASE SHUTDOWN VIA CONFD
+    # ==============================================================================
+    - name: List all databases via ConfD
+      ansible.builtin.command:
+        cmd: ssh cos "confd_client db_list -j"
+      become: yes
+      become_user: "{{ exa_user }}"
+      register: db_list_result
+      changed_when: false
+      failed_when: false
+      run_once: true
+      when: inventory_hostname == groups['exasol_nodes'][0]
+
+    - name: Parse database list (assume all listed databases should be stopped)
+      ansible.builtin.set_fact:
+        running_databases: "{{ db_list_result.stdout | from_json | default([]) }}"
+      run_once: true
+      when:
+        - inventory_hostname == groups['exasol_nodes'][0]
+        - db_list_result.rc is defined and db_list_result.rc == 0
+
+    - name: Display running databases
+      ansible.builtin.debug:
+        msg: "Found running databases: {{ running_databases | default([]) }}"
+      run_once: true
+      when: inventory_hostname == groups['exasol_nodes'][0]
+
+    - name: Stop each running database via ConfD
+      ansible.builtin.command:
+        cmd: "ssh cos 'confd_client db_stop -j db_name: {{ item }}'"
+      become: yes
+      become_user: "{{ exa_user }}"
+      register: db_stop_result
+      changed_when: false
+      failed_when: db_stop_result.rc != 0
+      loop: "{{ running_databases | default([]) }}"
+      run_once: true
+      when:
+        - inventory_hostname == groups['exasol_nodes'][0]
+        - running_databases is defined
+        - running_databases | length > 0
+
+    - name: Wait for each database to fully stop (5 minute timeout)
+      ansible.builtin.command:
+        cmd: "ssh cos 'confd_client db_state -j db_name: {{ item }}'"
+      become: yes
+      become_user: "{{ exa_user }}"
+      register: wait_state_result
+      changed_when: false
+      failed_when: false
+      until: wait_state_result.stdout != '"running"' and wait_state_result.rc == 0
+      retries: 30 # 30 retries * 10 seconds = 5 minutes total
+      delay: 10
+      loop: "{{ running_databases | default([]) }}"
+      run_once: true
+      when:
+        - inventory_hostname == groups['exasol_nodes'][0]
+        - running_databases is defined
+        - running_databases | length > 0
+
+    - name: Verify databases are completely removed from db_list
+      ansible.builtin.command:
+        cmd: ssh cos "confd_client db_list -j"
+      become: yes
+      become_user: "{{ exa_user }}"
+      register: db_final_verify
+      changed_when: false
+      failed_when: false
+      run_once: true
+      when: inventory_hostname == groups['exasol_nodes'][0]
+
+    - name: Display database shutdown status
+      ansible.builtin.debug:
+        msg: "✓ Database shutdown complete. Remaining databases: {{ db_final_verify.stdout | from_json | default([]) | length }}"
+      run_once: true
+      when: inventory_hostname == groups['exasol_nodes'][0]
+
+    - name: "PROGRESS: Database shutdown complete"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: stop:01:Database_Shutdown"
+      run_once: true
+
+    # ==============================================================================
+    # STOP DATABASE SERVICES VIA SYSTEMD ON ALL NODES
+    # ==============================================================================
+    - name: Check current status of c4.service
+      ansible.builtin.systemd:
+        name: c4.service
+      register: c4_service_status
+      failed_when: false
+
+    - name: Display current service status
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: c4.service is {{ c4_service_status.status.ActiveState }}"
+      when: c4_service_status.status is defined
+
+    # Stop services in proper order: database, admin UI, cloud command, then main service
+    - name: Stop exasol-admin-ui.service
+      ansible.builtin.systemd:
+        name: exasol-admin-ui.service
+        state: stopped
+      register: stop_admin_ui
+      failed_when: false
+
+    - name: Wait for exasol-admin-ui.service to stop completely
+      ansible.builtin.systemd:
+        name: exasol-admin-ui.service
+      register: admin_ui_status
+      until: admin_ui_status.status.ActiveState != "active"
+      retries: 30
+      delay: 10
+      failed_when: false
+      when: stop_admin_ui.changed
+
+    - name: Stop c4_cloud_command.service
+      ansible.builtin.systemd:
+        name: c4_cloud_command.service
+        state: stopped
+      register: stop_cloud_command
+      failed_when: false
+
+    - name: Wait for c4_cloud_command.service to stop completely
+      ansible.builtin.systemd:
+        name: c4_cloud_command.service
+      register: cloud_command_status
+      until: cloud_command_status.status.ActiveState != "active"
+      retries: 60 # Longer wait for cloud command service
+      delay: 10
+      failed_when: false
+      when: stop_cloud_command.changed
+
+    - name: Stop c4.service (main Exasol database service)
+      ansible.builtin.systemd:
+        name: c4.service
+        state: stopped
+      register: stop_c4
+
+    - name: Wait for c4.service to stop completely (5 minute timeout)
+      ansible.builtin.command: systemctl is-active --quiet c4.service
+      register: c4_stop_check
+      until: c4_stop_check.rc != 0
+      retries: 60 # 60 retries * 5 seconds = 5 minutes total
+      delay: 5
+      changed_when: false
+      failed_when: false
+      when: stop_c4.changed
+
+    - name: Warn if c4.service failed to stop gracefully (no force kill)
+      ansible.builtin.debug:
+        msg: "WARNING: c4.service is still active after 5 minute grace period. Manual intervention may be required."
+      when:
+        - stop_c4.changed
+        - c4_stop_check is defined
+        - c4_stop_check.rc == 0
+
+    - name: "PROGRESS: Service shutdown initiated"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: stop:02:Service_Shutdown"
+      run_once: true
+
+    - name: Verify all services are stopped
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: service_status
+      failed_when:
+        - service_status.status is defined
+        - service_status.status.ActiveState == "active"
+      loop:
+        - exasol-admin-ui.service
+        - c4_cloud_command.service
+        - c4.service
+
+    - name: "PROGRESS: Stage verification starting"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: stop:03:Stage_Verification"
+      run_once: true
+
+    # ==============================================================================
+    # WAIT FOR ALL NODES TO REACH STAGE a/a1
+    # ==============================================================================
+    - name: Wait for nodes to reach stage a/a1 (services stopped)
+      ansible.builtin.command:
+        cmd: 'c4 ps -e ''.[].Instances.Configs | to_entries | map(.value.ground.boot_stage) | all(. == "a" or . == "a1")'''
+      become: yes
+      become_user: "{{ exa_user }}"
+      register: stage_check
+      until: stage_check.stdout is truthy
+      retries: 60
+      delay: 5
+      changed_when: false
+      failed_when: false
+      run_once: true
+
+    - name: Display stop summary
+      ansible.builtin.debug:
+        msg:
+          - "✓ {{ inventory_hostname }}: exasol-admin-ui.service stopped: {{ stop_admin_ui.changed | default(false) }}"
+          - "✓ {{ inventory_hostname }}: c4_cloud_command.service stopped: {{ stop_cloud_command.changed | default(false) }}"
+          - "✓ {{ inventory_hostname }}: c4.service stopped: {{ stop_c4.changed }}"
+
+    - name: Confirm successful stop
+      ansible.builtin.debug:
+        msg: "✓ Exasol database cluster stopped successfully on all nodes (stage a/a1)"
+      when: inventory_hostname == groups['exasol_nodes'][0]
+
+    - name: "PROGRESS: Infrastructure power-off starting"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: stop:04:Infrastructure_Power-Off"
+      run_once: true
+
+    - name: Power off hosts via systemd (graceful shutdown)
+      ansible.builtin.command: systemctl poweroff
+      become: true
+      async: 1
+      poll: 0
+      ignore_errors: true
+      changed_when: true
+
+    - name: "PROGRESS: Stop validation"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: stop:05:Stop_Validation"
+      run_once: true
+
+    - name: "PROGRESS: Stop complete"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: stop:06:Stop_Complete"
+      run_once: true

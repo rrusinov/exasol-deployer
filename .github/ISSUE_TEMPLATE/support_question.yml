@@ -1,0 +1,187 @@
+name: Support Question
+description: Ask for help or clarification
+title: "[Support]: "
+labels: ["question", "support"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Need help with Exasol Deployer? Please provide details about your question or issue.
+        
+        **Note**: For bug reports, please use the "Bug Report" template instead.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question or Issue
+      description: What do you need help with?
+      placeholder: |
+        Please describe your question or the issue you're facing...
+        
+        Be as specific as possible about:
+        - What you're trying to accomplish
+        - What you've already tried
+        - Where you're getting stuck
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Question Category
+      description: What type of help do you need?
+      options:
+        - Installation and Setup
+        - Cloud Provider Configuration
+        - Deployment Issues
+        - Configuration and Customization
+        - Networking and Security
+        - Troubleshooting
+        - Best Practices
+        - Documentation Clarification
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: cloud-provider
+    attributes:
+      label: Cloud Provider (if applicable)
+      description: Which cloud provider are you working with?
+      options:
+        - AWS
+        - Azure
+        - GCP
+        - Hetzner Cloud
+        - DigitalOcean
+        - libvirt/KVM
+        - Multiple providers
+        - Not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and Environment
+      description: |
+        Please provide relevant context about your environment and setup
+      value: |
+        - OS: [e.g., Ubuntu 22.04, macOS 14.0]
+        - Deployer version: [run `./exasol version`]
+        - Database version: [e.g., exasol-2025.1.8]
+        - Deployment type: [e.g., single-node, 4-node cluster]
+        - Cloud region: [if applicable]
+    validations:
+      required: false
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What Have You Tried?
+      description: |
+        What steps have you already taken to solve this issue?
+        What documentation have you consulted?
+      placeholder: |
+        Please describe:
+        - Commands you've run
+        - Documentation you've read
+        - Solutions you've attempted
+        - Error messages you've encountered
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Outcome
+      description: What are you trying to achieve? What should the end result look like?
+      placeholder: Describe what you're trying to accomplish...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Output or Logs
+      description: |
+        If you're encountering errors or unexpected behavior, please include relevant output
+      placeholder: |
+        Paste any relevant command output, error messages, or log entries here...
+        
+        Remember to remove or redact any sensitive information!
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration Details
+      description: |
+        If relevant, share your configuration (remove sensitive information)
+      placeholder: |
+        Include relevant parts of:
+        - Command line arguments used
+        - variables.auto.tfvars (redact sensitive values)
+        - Any custom modifications
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: documentation
+    attributes:
+      label: Documentation Consulted
+      description: Which documentation have you already checked?
+      options:
+        - label: Main README.md
+        - label: Cloud provider setup guides (clouds/ directory)
+        - label: Contributing guidelines
+        - label: Existing GitHub issues and discussions
+        - label: Script documentation (scripts/README.md)
+        - label: Testing documentation (tests/README.md)
+
+  - type: dropdown
+    id: urgency
+    attributes:
+      label: Urgency Level
+      description: How urgent is this question for you?
+      options:
+        - Low - General inquiry or learning
+        - Medium - Blocking current work
+        - High - Production issue or deadline
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Information
+      description: |
+        Any other information that might be helpful?
+      placeholder: |
+        Include any additional context such as:
+        - Screenshots (if relevant)
+        - Links to related resources
+        - Specific use case details
+        - Timeline constraints
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      description: Please confirm you have completed these steps
+      options:
+        - label: I have searched existing issues and discussions for similar questions
+          required: true
+        - label: I have consulted the relevant documentation
+          required: true
+        - label: I have removed or redacted any sensitive information
+          required: true
+        - label: I have provided sufficient context and details
+          required: true

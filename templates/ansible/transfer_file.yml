@@ -1,0 +1,10 @@
+---
+# Transfer file from local filesystem to remote node
+# This is only used when URLs start with file://
+- name: "Transfer file: {{ file_item.item | basename }}"
+  ansible.builtin.copy:
+    src: "{{ file_item.item }}"
+    dest: "{{ dest_path }}"
+    owner: "{{ initial_user }}"
+    group: "{{ initial_user }}"
+    mode: "{{ '0755' if (file_item.item | basename).startswith('c4') else '0644' }}"

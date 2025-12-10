@@ -1,0 +1,1 @@
+This cloud provider uses API tokens for authentication and does not have IAM-style permissions.

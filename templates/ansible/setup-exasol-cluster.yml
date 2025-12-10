@@ -1,0 +1,622 @@
+---
+# ==============================================================================
+# PLAY 1: GATHER FACTS FROM ALL HOSTS
+# This ensures that network information for all nodes is available to the next play.
+# ==============================================================================
+- name: Play 1 - Gather Host Facts
+  hosts: exasol_nodes
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Wait for SSH to become available (cloud-init may still be running)
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ (ssh_initial_timeout | default(600)) | int }}"
+        delay: "{{ (ssh_initial_delay | default(15)) | int }}"
+        sleep: "{{ (ssh_initial_sleep | default(5)) | int }}"
+
+    - name: Pause to allow cloud-init grace period
+      ansible.builtin.pause:
+        seconds: "{{ (cloud_init_grace_seconds | default(45)) | int }}"
+      when: (cloud_init_grace_seconds | default(45)) | int > 0
+
+    - name: Ensure all host facts are gathered
+      ansible.builtin.setup:
+      register: gather_facts_result
+      until: gather_facts_result is succeeded
+      retries: "{{ (gather_facts_retry_attempts | default(3)) | int }}"
+      delay: "{{ (gather_facts_retry_delay | default(20)) | int }}"
+
+    - name: "PROGRESS: Ansible connection established"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: deploy:06:Ansible_Connection"
+      run_once: true
+
+# ==============================================================================
+# PLAY 2: SETUP AND CONFIGURE EXASOL CLUSTER
+# This play runs in parallel to perform the configuration.
+- name: Play 2 - Setup and Configure Exasol Cluster
+  hosts: exasol_nodes
+  become: yes
+  gather_facts: no
+  serial: 0
+
+  vars:
+    # --- User and Path Configuration ---
+    exa_user: "exasol"
+
+  tasks:
+    # ==============================================================================
+    # LOAD DEPLOYMENT CONFIGURATION
+    # ==============================================================================
+    - name: Load credentials and configuration
+      ansible.builtin.set_fact:
+        deployment_config: "{{ lookup('file', playbook_dir + '/../.credentials.json') | from_json }}"
+      delegate_to: "{{ ansible_play_hosts[0] }}"
+      run_once: true
+
+    - name: Set configuration variables
+      ansible.builtin.set_fact:
+        exa_db_password: "{{ deployment_config.db_password }}"
+        exa_admin_password: "{{ deployment_config.adminui_password }}"
+        exa_host_password: "{{ deployment_config.host_password }}"
+        db_download_url: "{{ deployment_config.db_download_url }}"
+        c4_download_url: "{{ deployment_config.c4_download_url }}"
+        exa_working_copy: "{{ deployment_config.db_working_copy | default('@' + (deployment_config.db_download_url | basename | regex_replace('\\.tar\\.gz$', ''))) }}"
+      delegate_to: "{{ ansible_play_hosts[0] }}"
+      run_once: true
+
+    - name: Determine artifact locality
+      ansible.builtin.set_fact:
+        db_is_local: "{{ db_download_url.startswith('file://') }}"
+        c4_is_local: "{{ c4_download_url.startswith('file://') }}"
+      delegate_to: "{{ ansible_play_hosts[0] }}"
+      run_once: true
+
+    - name: Derive local artifact paths
+      ansible.builtin.set_fact:
+        db_local_path: "{{ db_is_local | ternary(db_download_url | regex_replace('^file://', ''), '') }}"
+        c4_local_path: "{{ c4_is_local | ternary(c4_download_url | regex_replace('^file://', ''), '') }}"
+      delegate_to: "{{ ansible_play_hosts[0] }}"
+      run_once: true
+
+    - name: Derive artifact filenames
+      ansible.builtin.set_fact:
+        db_artifact_filename: "{{ (db_local_path | basename) if (db_is_local | bool) else (db_download_url | basename) }}"
+        c4_artifact_filename: "{{ (c4_local_path | basename) if (c4_is_local | bool) else (c4_download_url | basename) }}"
+      delegate_to: "{{ ansible_play_hosts[0] }}"
+      run_once: true
+
+    # ==============================================================================
+    # SECTION 1: INITIAL NODE & NETWORK SETUP
+    # ==============================================================================
+    - name: "SECTION 1: Initial Node & Network Setup"
+      block:
+        - name: Wait for system to be ready
+          ansible.builtin.wait_for_connection:
+            timeout: 600
+
+        - name: Wait for cloud-init to complete
+          ansible.builtin.command: cloud-init status --wait
+          changed_when: false
+          register: cloud_init_wait
+          retries: 30
+          delay: 10
+          until: cloud_init_wait.rc == 0
+          failed_when: false
+
+        - name: Wait for apt locks to be released
+          ansible.builtin.shell: |
+            while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+                  fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+                  fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
+              echo "Waiting for apt locks to be released..."
+              sleep 5
+            done
+          args:
+            executable: /bin/bash
+          changed_when: false
+          register: apt_lock_wait
+          retries: 60
+          delay: 5
+          until: apt_lock_wait.rc == 0
+
+        - name: Set hostname to n11, n12, etc.
+          ansible.builtin.hostname:
+            name: "n{{ ansible_play_hosts.index(inventory_hostname) + 11 }}"
+
+        - name: Update apt cache
+          ansible.builtin.apt:
+            update_cache: yes
+            cache_valid_time: 3600
+
+        - name: Install required system packages via apt
+          ansible.builtin.apt:
+            name:
+              - parted
+              - lvm2
+              - python3-passlib # Required for password hashing
+            state: present
+
+        - name: Ensure exasol user password is set for OS logins
+          ansible.builtin.user:
+            name: "{{ exa_user }}"
+            password: "{{ exa_host_password | password_hash('sha512') }}"
+            update_password: always
+            create_home: yes
+
+        - name: Build hosts file entry for all nodes in the cluster
+          ansible.builtin.lineinfile:
+            path: /etc/hosts
+            regexp: "^{{ hostvars[item]['ansible_default_ipv4']['address'] }}.*"
+            line: "{{ hostvars[item]['ansible_default_ipv4']['address'] }} n{{ ansible_play_hosts.index(item) + 11 }}"
+            state: present
+          loop: "{{ ansible_play_hosts }}"
+
+        - name: "PROGRESS: Node configuration complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:07:Node_Configuration"
+          run_once: true
+
+    # ==============================================================================
+    # SECTION 2: CONFIGURE SSH FOR INTER-NODE COMMUNICATION
+    # ==============================================================================
+    # NOTE: The exasol user is now created via cloud-init during instance boot.
+    # This section only handles SSH key generation and distribution.
+    - name: "SECTION 2: Configure SSH for Inter-Node Communication"
+      block:
+        - name: Generate SSH key for exasol user on n11
+          community.crypto.openssh_keypair:
+            path: "/home/{{ exa_user }}/.ssh/id_rsa"
+            owner: "{{ exa_user }}"
+            group: "{{ exa_user }}"
+          delegate_to: "{{ ansible_play_hosts[0] }}"
+          run_once: true
+
+        - name: Fetch the exasol user public key from n11
+          ansible.builtin.slurp:
+            src: "/home/{{ exa_user }}/.ssh/id_rsa.pub"
+          register: exasol_user_pub_key
+          delegate_to: "{{ ansible_play_hosts[0] }}"
+          run_once: true
+
+        - name: Fetch the exasol user private key from n11
+          ansible.builtin.slurp:
+            src: "/home/{{ exa_user }}/.ssh/id_rsa"
+          register: exasol_user_priv_key
+          delegate_to: "{{ ansible_play_hosts[0] }}"
+          run_once: true
+
+        - name: Distribute n11's exasol public key to all nodes
+          ansible.posix.authorized_key:
+            user: "{{ exa_user }}"
+            state: present
+            key: "{{ exasol_user_pub_key['content'] | b64decode }}"
+
+        - name: Distribute n11's exasol private key to all nodes
+          ansible.builtin.copy:
+            content: "{{ exasol_user_priv_key['content'] | b64decode }}"
+            dest: "/home/{{ exa_user }}/.ssh/id_rsa"
+            owner: "{{ exa_user }}"
+            group: "{{ exa_user }}"
+            mode: "0600"
+
+        - name: Add COS SSH config entry to exasol user's SSH config on all nodes
+          ansible.builtin.blockinfile:
+            path: "/home/{{ exa_user }}/.ssh/config"
+            create: yes
+            owner: "{{ exa_user }}"
+            group: "{{ exa_user }}"
+            mode: "0600"
+            marker: "# {mark} ANSIBLE MANAGED BLOCK - COS Access"
+            block: |
+              Host cos
+                  HostName localhost
+                  User root
+                  Port 20002
+                  StrictHostKeyChecking no
+                  UserKnownHostsFile /dev/null
+
+        - name: "PROGRESS: SSH key distribution complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:08:SSH_Key_Distribution"
+          run_once: true
+
+    # ==============================================================================
+    # SECTION 2B: SETUP VXLAN MULTICAST OVERLAY (WHEN CONFIGURED)
+    # ==============================================================================
+    - name: "SECTION 2B: Setup VXLAN multicast overlay network"
+      when: overlay_ip is defined and overlay_ip | length > 0
+      block:
+        - name: Install overlay setup script for boot persistence
+          ansible.builtin.template:
+            src: exasol-overlay-setup.sh.j2
+            dest: /usr/local/bin/exasol-overlay-setup.sh
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Install systemd service for overlay network on boot
+          ansible.builtin.copy:
+            src: exasol-overlay.service
+            dest: /etc/systemd/system/exasol-overlay.service
+            owner: root
+            group: root
+            mode: "0644"
+          notify: Reload systemd
+
+        - name: Enable and start overlay network service
+          ansible.builtin.systemd:
+            name: exasol-overlay.service
+            enabled: yes
+            daemon_reload: yes
+            state: started
+          register: start_overlay_service
+
+        - name: Check overlay service status after start
+          ansible.builtin.systemd:
+            name: exasol-overlay.service
+          register: overlay_service_status
+
+        - name: Display overlay service status
+          ansible.builtin.debug:
+            msg: "{{ inventory_hostname }}: exasol-overlay.service is {{ overlay_service_status.status.ActiveState }} ({{ overlay_service_status.status.SubState }})"
+          when: overlay_service_status.status is defined
+
+        - name: Get overlay service logs if not active
+          ansible.builtin.command: journalctl -u exasol-overlay.service -n 50 --no-pager
+          register: overlay_logs
+          when:
+            - overlay_service_status.status is defined
+            - overlay_service_status.status.ActiveState != "active"
+          changed_when: false
+          failed_when: false
+
+        - name: Display overlay service logs on failure
+          ansible.builtin.debug:
+            msg: "{{ overlay_logs.stdout_lines }}"
+          when:
+            - overlay_logs is defined
+            - overlay_logs.stdout_lines is defined
+
+        - name: Wait for VXLAN overlay device
+          ansible.builtin.command: ip addr show vxlan-br0
+          register: overlay_status
+          changed_when: false
+          retries: 30 # 30 * 10 seconds = 5 minutes max
+          delay: 10
+          until: overlay_status.rc == 0
+          failed_when: overlay_status.rc != 0
+
+        - name: Assert overlay IP is present
+          ansible.builtin.shell: ip -o addr show vxlan-br0 | grep -q "{{ overlay_ip }}"
+          register: overlay_ip_check
+          changed_when: false
+          failed_when: overlay_ip_check.rc != 0
+
+        - name: Display overlay network status
+          ansible.builtin.debug:
+            var: overlay_status.stdout_lines
+
+        - name: "PROGRESS: Overlay network setup complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:08b:Overlay_Network_Setup"
+          run_once: true
+
+    # ==============================================================================
+    # SECTION 3A: DISCOVER DATA DISKS AND CREATE SYMLINKS (RUNS ON EVERY NODE)
+    # ==============================================================================
+    - name: "SECTION 3A: Discover data disks and create /dev/exasol_data_* links"
+      block:
+        - name: Parse data volume IDs from inventory
+          ansible.builtin.set_fact:
+            volume_ids_list: "{{ data_volume_ids | from_json if data_volume_ids is string else data_volume_ids }}"
+
+        - name: Render volume ids for template substitution
+          ansible.builtin.set_fact:
+            volume_ids_rendered: "{{ volume_ids_list | map('quote') | join(' ') }}"
+            volume_ids_comment: "{{ volume_ids_list | join(', ') }}"
+
+        - name: Install symlink creation script for boot persistence
+          ansible.builtin.template:
+            src: exasol-data-symlinks.sh.j2
+            dest: /usr/local/bin/exasol-data-symlinks.sh
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Install systemd service for symlink creation on boot
+          ansible.builtin.copy:
+            src: exasol-data-symlinks.service
+            dest: /etc/systemd/system/exasol-data-symlinks.service
+            owner: root
+            group: root
+            mode: "0644"
+          notify: Reload systemd
+
+        - name: Enable and start exasol-data-symlinks service
+          ansible.builtin.systemd:
+            name: exasol-data-symlinks.service
+            enabled: yes
+            daemon_reload: yes
+            state: started
+          register: start_data_symlinks_service
+
+        - name: Check data-symlinks service status
+          ansible.builtin.systemd:
+            name: exasol-data-symlinks.service
+          register: data_symlinks_status
+
+        - name: Display data-symlinks service status
+          ansible.builtin.debug:
+            msg: "{{ inventory_hostname }}: exasol-data-symlinks.service is {{ data_symlinks_status.status.ActiveState }} ({{ data_symlinks_status.status.SubState }})"
+          when: data_symlinks_status.status is defined
+
+        - name: Get data-symlinks service logs if not active
+          ansible.builtin.command: journalctl -u exasol-data-symlinks.service -n 50 --no-pager
+          register: data_symlinks_logs
+          when:
+            - data_symlinks_status.status is defined
+            - data_symlinks_status.status.ActiveState != "active"
+          changed_when: false
+          failed_when: false
+
+        - name: Display data-symlinks service logs on failure
+          ansible.builtin.debug:
+            msg: "{{ data_symlinks_logs.stdout_lines }}"
+          when:
+            - data_symlinks_logs is defined
+            - data_symlinks_logs.stdout_lines is defined
+
+        - name: Discover existing /dev/exasol_data_* symlinks (sorted)
+          ansible.builtin.shell:
+            cmd: >-
+              shopt -s nullglob;
+              symlinks=(/dev/exasol_data_*);
+              if [ {% raw %}${#symlinks[@]}{% endraw %} -eq 0 ]; then
+                echo "ERROR: No /dev/exasol_data_* symlinks found" >&2;
+                exit 1;
+              fi;
+              printf '%s\n' "{% raw %}${symlinks[@]}{% endraw %}" | sort
+            executable: /bin/bash
+          register: data_disks_result
+          changed_when: false
+          failed_when: data_disks_result.rc != 0
+
+        - name: Record data disk symlink paths for this host (in sorted order)
+          ansible.builtin.set_fact:
+            host_data_disk_paths: "{{ data_disks_result.stdout_lines }}"
+
+        - name: "PROGRESS: Disk discovery complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:09:Disk_Discovery"
+          run_once: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: yes
+
+# ==============================================================================
+# PLAY 3: FINAL CONFIGURATION AND SOFTWARE UPLOAD (Runs on primary node only)
+# ==============================================================================
+- name: Play 3 - Final Configuration and Software Upload
+  hosts: "{{ groups['exasol_nodes'][0] }}"
+  become: yes
+  gather_facts: no
+
+  vars:
+    exa_user: "exasol"
+
+  tasks:
+    - name: Gather Exasol data disk symlinks from primary node
+      ansible.builtin.shell:
+        cmd: "ls -1 /dev/exasol_data_*"
+        executable: /bin/bash
+      register: exasol_symlinks
+      changed_when: false
+
+    - name: Ensure data disk symlinks exist on primary node
+      ansible.builtin.assert:
+        that:
+          - exasol_symlinks.stdout_lines | length > 0
+        fail_msg: "No /dev/exasol_data_* symlinks found on {{ inventory_hostname }}"
+
+    - name: Consolidate data disk symlink paths into a list
+      ansible.builtin.set_fact:
+        data_disk_paths: "{{ exasol_symlinks.stdout_lines }}"
+
+    - name: Compute internal IPs for Exasol config
+      ansible.builtin.set_fact:
+        computed_internal_ips: "{{ (computed_internal_ips | default([])) + [ hostvars[item].overlay_ip | default(hostvars[item].private_ip) ] }}"
+      loop: "{{ groups['exasol_nodes'] }}"
+      loop_control:
+        loop_var: item
+
+    - name: Create final Exasol config file from template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/config.j2"
+        dest: "/home/{{ exa_user }}/config"
+        owner: "{{ exa_user }}"
+        group: "{{ exa_user }}"
+        mode: "0644"
+      vars:
+        internal_ips: "{{ computed_internal_ips | join(' ') }}"
+        external_ips: "{{ groups['exasol_nodes'] | map('extract', hostvars, 'ansible_host') | join(' ') }}"
+        data_disk_paths_var: "{{ data_disk_paths | join(',') }}"
+        exa_host_password: "{{ exa_host_password }}"
+        exa_working_copy: "{{ exa_working_copy }}"
+
+    - name: "PROGRESS: Config generation complete"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: deploy:10:Config_Generation"
+
+    - name: Create installation directory on primary node
+      ansible.builtin.file:
+        path: "/home/{{ exa_user }}/exasol-release"
+        state: directory
+        owner: "{{ exa_user }}"
+        group: "{{ exa_user }}"
+        mode: "0755"
+
+    - name: Move generated config file into place
+      ansible.builtin.command:
+        cmd: "mv /home/{{ exa_user }}/config /home/{{ exa_user }}/exasol-release/config"
+        creates: "/home/{{ exa_user }}/exasol-release/config"
+
+    - name: Transfer local Exasol database tarball
+      when: db_is_local | bool
+      ansible.builtin.copy:
+        src: "{{ db_local_path }}"
+        dest: "/home/{{ exa_user }}/exasol-release/{{ db_artifact_filename }}"
+        owner: "{{ exa_user }}"
+        group: "{{ exa_user }}"
+        mode: "0644"
+
+    - name: Download Exasol database tarball
+      when: not (db_is_local | bool)
+      ansible.builtin.get_url:
+        url: "{{ db_download_url }}"
+        dest: "/home/{{ exa_user }}/exasol-release/{{ db_artifact_filename }}"
+        owner: "{{ exa_user }}"
+        group: "{{ exa_user }}"
+        mode: "0644"
+      register: db_download
+      retries: 3
+      delay: 5
+
+    - name: Transfer local c4 binary
+      when: c4_is_local | bool
+      ansible.builtin.copy:
+        src: "{{ c4_local_path }}"
+        dest: "/home/{{ exa_user }}/exasol-release/{{ c4_artifact_filename }}"
+        owner: "{{ exa_user }}"
+        group: "{{ exa_user }}"
+        mode: "0755"
+
+    - name: Download c4 binary
+      when: not (c4_is_local | bool)
+      ansible.builtin.get_url:
+        url: "{{ c4_download_url }}"
+        dest: "/home/{{ exa_user }}/exasol-release/{{ c4_artifact_filename }}"
+        owner: "{{ exa_user }}"
+        group: "{{ exa_user }}"
+        mode: "0755"
+      register: c4_download
+      retries: 3
+      delay: 5
+
+    - name: "PROGRESS: Artifact transfer complete"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: deploy:11:Artifact_Transfer"
+
+    # ==============================================================================
+    # SECTION 5: VERIFY CHECKSUMS AND DEPLOY EXASOL
+    # ==============================================================================
+    - name: "SECTION 5: Verify Checksums and Deploy Exasol"
+      block:
+        - name: Verify database tarball checksum (if checksum available)
+          when: deployment_config.db_checksum is defined and deployment_config.db_checksum != ""
+          ansible.builtin.stat:
+            path: "/home/{{ exa_user }}/exasol-release/{{ db_artifact_filename }}"
+            checksum_algorithm: sha256
+          register: db_stat
+          failed_when: db_stat.stat.checksum != deployment_config.db_checksum
+
+        - name: Verify c4 binary checksum (if checksum available)
+          when: deployment_config.c4_checksum is defined and deployment_config.c4_checksum != ""
+          ansible.builtin.stat:
+            path: "/home/{{ exa_user }}/exasol-release/{{ c4_artifact_filename }}"
+            checksum_algorithm: sha256
+          register: c4_stat
+          failed_when: c4_stat.stat.checksum != deployment_config.c4_checksum
+
+        - name: Display checksum verification status
+          vars:
+            db_checksum_available: "{{ (deployment_config.db_checksum | default('', true)) | length > 0 }}"
+            c4_checksum_available: "{{ (deployment_config.c4_checksum | default('', true)) | length > 0 }}"
+          ansible.builtin.debug:
+            msg:
+              - "{{ 'OK db_tarball_checksum' if db_checksum_available else 'SKIPPED db_tarball_checksum: no checksum provided' }}"
+              - "{{ 'OK c4_binary_checksum' if c4_checksum_available else 'SKIPPED c4_binary_checksum: no checksum provided' }}"
+
+        - name: "PROGRESS: Checksum verification complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:12:Checksum_Verification"
+
+        - name: Rename c4 binary to 'c4' for convenience
+          ansible.builtin.command:
+            cmd: "mv /home/{{ exa_user }}/exasol-release/{{ c4_artifact_filename }} /home/{{ exa_user }}/exasol-release/c4"
+            creates: "/home/{{ exa_user }}/exasol-release/c4"
+          become_user: "{{ exa_user }}"
+
+        - name: Verify C4 configuration diagnostic
+          ansible.builtin.command:
+            cmd: "./c4 host diag -i config"
+            chdir: "/home/{{ exa_user }}/exasol-release"
+          become_user: "{{ exa_user }}"
+          register: c4_diag
+          changed_when: false
+          failed_when: c4_diag.rc != 0
+
+        - name: Display C4 diagnostic output
+          ansible.builtin.debug:
+            msg: "{{ c4_diag.stdout_lines }}"
+
+        - name: "PROGRESS: C4 diagnostic complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:13:C4_Diagnostic"
+
+        - name: Start Exasol database deployment
+          ansible.builtin.command:
+            cmd: "./c4 host play -i config"
+            chdir: "/home/{{ exa_user }}/exasol-release"
+          become_user: "{{ exa_user }}"
+          register: c4_play
+          async: 1800 # Allow up to 30 minutes for deployment
+          poll: 0 # Don't wait, check status later
+
+        - name: Wait for C4 deployment to complete
+          ansible.builtin.async_status:
+            jid: "{{ c4_play.ansible_job_id }}"
+          register: c4_play_result
+          until: c4_play_result.finished
+          retries: 120 # 120 * 10 seconds = 20 minutes max
+          delay: 10
+          become_user: "{{ exa_user }}"
+
+        - name: Display C4 deployment output
+          ansible.builtin.debug:
+            msg: "{{ c4_play_result.stdout_lines | default(['No output']) }}"
+
+        - name: "PROGRESS: Exasol deployment complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:14:Exasol_Deployment"
+
+        - name: Wait for database to boot (stage 'd')
+          ansible.builtin.command:
+            cmd: "./c4 wait --stage d"
+            chdir: "/home/{{ exa_user }}/exasol-release"
+          become_user: "{{ exa_user }}"
+          register: c4_wait
+          timeout: 1200 # 20 minutes timeout (increased to handle slow node boots)
+          changed_when: false
+
+        - name: Display database boot status
+          ansible.builtin.debug:
+            msg: "Database is now running at stage 'd'"
+
+        - name: "PROGRESS: Database startup complete"
+          ansible.builtin.debug:
+            msg: "PROGRESS_MARKER: deploy:15:Database_Startup"
+
+        - name: Display deployment completion message
+          ansible.builtin.debug:
+            msg:
+              - "========================================"
+              - "Exasol cluster deployment completed!"
+              - "========================================"
+              - "Review connection details in INFO.txt or run 'exasol status --show-details' within the deployment directory."
+
+    - name: "PROGRESS: Deploy complete"
+      ansible.builtin.debug:
+        msg: "PROGRESS_MARKER: deploy:17:Deploy_Complete"

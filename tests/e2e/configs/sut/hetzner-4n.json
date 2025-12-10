@@ -1,0 +1,12 @@
+{
+  "description": "Hetzner 4-node cluster configuration",
+  "provider": "hetzner",
+  "parameters": {
+    "cluster_size": 4,
+    "instance_type": "cpx31",
+    "data_volumes_per_node": 2,
+    "data_volume_size": 20,
+    "root_volume_size": 55,
+    "enable_multicast_overlay": true
+  }
+}

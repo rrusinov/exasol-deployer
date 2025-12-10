@@ -1,0 +1,14 @@
+# Python dependencies for Exasol Deployer helper scripts
+# These dependencies are required for the Python helper scripts in tests/python-helpers/
+
+# The helper scripts use only built-in Python modules:
+# - re: Regular expressions for parsing shell scripts and documentation
+# - sys: System interface and command-line argument handling
+# - os: Operating system interface (for path operations)
+# - argparse: Command-line argument parsing (in some helpers)
+
+# Minimum Python version requirement:
+# Python >= 3.6
+
+# Note: All helper scripts use only Python standard library modules.
+# YAML validation is handled by yamllint (external binary tool).

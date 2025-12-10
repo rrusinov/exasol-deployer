@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+# Test helper functions for unit testing
+
+# Ensure deterministic, ASCII-safe environment for tooling (e.g., tr, head)
+export LC_ALL=C LANG=C
+
+# Enable pipefail so pipeline failures are caught
+set -o pipefail
+
+# Colors for test output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Test counters
+TESTS_TOTAL=0
+TESTS_PASSED=0
+TESTS_FAILED=0
+TEST_RUN_ID="${EXASOL_TEST_RUN_ID:-$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 6)}"
+declare -a CREATED_TEST_DIRS=()
+TEST_FILE_NAME="${TEST_FILE_NAME:-${BASH_SOURCE[1]:-${0:-tests}}}"
+if [[ "$TEST_FILE_NAME" == /* && -n "${PWD:-}" ]]; then
+    TEST_FILE_NAME="./${TEST_FILE_NAME#"$PWD"/}"
+fi
+
+# Test assertion functions
+assert_equals() {
+    local expected="$1"
+    local actual="$2"
+    local message="${3:-Assertion failed}"
+
+    TESTS_TOTAL=$((TESTS_TOTAL + 1))
+
+    if [[ "$expected" == "$actual" ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} $message"
+        return 0
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} $message"
+        echo -e "  Expected: ${YELLOW}$expected${NC}"
+        echo -e "  Actual:   ${YELLOW}$actual${NC}"
+        return 1
+    fi
+}
+
+assert_contains() {
+    local haystack="$1"
+    local needle="$2"
+    local message="${3:-String should contain substring}"
+
+    TESTS_TOTAL=$((TESTS_TOTAL + 1))
+
+    if [[ "$haystack" == *"$needle"* ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} $message"
+        return 0
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} $message"
+        echo -e "  String: ${YELLOW}$haystack${NC}"
+        echo -e "  Should contain: ${YELLOW}$needle${NC}"
+        return 1
+    fi
+}
+
+assert_file_exists() {
+    local file="$1"
+    local message="${2:-File should exist: $file}"
+
+    TESTS_TOTAL=$((TESTS_TOTAL + 1))
+
+    if [[ -f "$file" ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} $message"
+        return 0
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} $message"
+        return 1
+    fi
+}
+
+assert_dir_exists() {
+    local dir="$1"
+    local message="${2:-Directory should exist: $dir}"
+
+    TESTS_TOTAL=$((TESTS_TOTAL + 1))
+
+    if [[ -d "$dir" ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} $message"
+        return 0
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} $message"
+        return 1
+    fi
+}
+
+assert_success() {
+    local exit_code=$1
+    local message="${2:-Command should succeed}"
+
+    TESTS_TOTAL=$((TESTS_TOTAL + 1))
+
+    if [[ $exit_code -eq 0 ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} $message"
+        return 0
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} $message"
+        echo -e "  Exit code: ${YELLOW}$exit_code${NC}"
+        return 1
+    fi
+}
+
+assert_failure() {
+    local exit_code=$1
+    local message="${2:-Command should fail}"
+
+    TESTS_TOTAL=$((TESTS_TOTAL + 1))
+
+    if [[ $exit_code -ne 0 ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} $message"
+        return 0
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} $message"
+        echo -e "  Exit code: ${YELLOW}$exit_code${NC}"
+        return 1
+    fi
+}
+
+assert_greater_than() {
+    local actual="$1"
+    local threshold="$2"
+    local message="${3:-Value should be greater than threshold}"
+
+    TESTS_TOTAL=$((TESTS_TOTAL + 1))
+
+    if [[ "$actual" -gt "$threshold" ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} $message"
+        return 0
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} $message"
+        echo -e "  Actual: ${YELLOW}$actual${NC}"
+        echo -e "  Threshold: ${YELLOW}$threshold${NC}"
+        return 1
+    fi
+}
+
+# Test summary
+test_summary() {
+    local summary_label="${TEST_FILE_NAME:-Tests}"
+    echo ""
+    echo "========================================="
+    echo "Test Summary: $summary_label"
+    echo "========================================="
+    echo "Total:  $TESTS_TOTAL"
+    echo -e "Passed: ${GREEN}$TESTS_PASSED${NC}"
+    echo -e "Failed: ${RED}$TESTS_FAILED${NC}"
+
+    if [[ $TESTS_FAILED -eq 0 ]]; then
+        echo -e "${GREEN}All tests passed!${NC}"
+        return 0
+    else
+        echo -e "${RED}Some tests failed!${NC}"
+        return 1
+    fi
+}
+
+# Setup and teardown helpers
+setup_test_dir() {
+    # Create unique test directory in /var/tmp for persistence
+    local username
+    username=$(whoami)
+    local test_dir
+    test_dir=$(mktemp -d "/var/tmp/exasol-deployer-utest-${username}-${TEST_RUN_ID}-XXXXXX" 2>/dev/null || mktemp -d "/tmp/exasol-deployer-utest-${username}-${TEST_RUN_ID}-XXXXXX")
+    CREATED_TEST_DIRS+=("$test_dir")
+    echo "$test_dir"
+}
+
+cleanup_test_dir() {
+    local test_dir="$1"
+    # Only cleanup directories that match our unit test pattern and belong to this user
+    local username
+    username=$(whoami)
+    if [[ -n "$test_dir" && "$test_dir" =~ ^/(var/tmp|tmp)/exasol-deployer-utest-${username}(-[a-zA-Z0-9]+)?-[a-zA-Z0-9-]+$ ]]; then
+        rm -rf "$test_dir"
+    fi
+}
+
+# Global cleanup for any test directories that might be left behind
+global_cleanup() {
+    # Cleanup tracked unit test directories
+    if [[ ${#CREATED_TEST_DIRS[@]} -gt 0 ]]; then
+        for test_dir in "${CREATED_TEST_DIRS[@]}"; do
+            cleanup_test_dir "$test_dir"
+        done
+    fi
+    
+    # Broad cleanup for e2e and legacy directories (not tracked)
+    local username
+    username=$(whoami)
+    
+    # Clean up any e2e test directories in /var/tmp that belong to this user
+    find /var/tmp -maxdepth 1 -name "exasol-deployer-e2e-${username}-*" -type d -exec rm -rf {} + 2>/dev/null || true
+    
+    # Also clean up any old directories in /tmp (legacy cleanup)
+    find /tmp -maxdepth 1 -name "exasol-test-${username}-*" -type d -exec rm -rf {} + 2>/dev/null || true
+    find /tmp -maxdepth 1 -name "exasol_e2e_${username}_*" -type d -exec rm -rf {} + 2>/dev/null || true
+    find /tmp -maxdepth 1 -name "exasol_test_results_*" -type d -exec rm -rf {} + 2>/dev/null || true
+}
+
+# Register global cleanup to run on script exit
+trap global_cleanup EXIT
+
+# Mock function helper
+mock_command() {
+    local cmd_name="$1"
+    local return_value="${2:-0}"
+    local output="${3:-}"
+
+    eval "$cmd_name() { echo '$output'; return $return_value; }"
+}
+
+# Extract long options handled by a command function
+extract_command_options() {
+    local file="$1"
+    local function_name="$2"
+    
+    # Use bundled Python helper under tests/python-helpers
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local python_helper="$script_dir/python-helpers/extract_function_options.py"
+    
+    if [[ ! -f "$python_helper" ]]; then
+        echo "Error: Python helper not found: $python_helper" >&2
+        return 1
+    fi
+    
+    python3 "$python_helper" "$file" "$function_name"
+}

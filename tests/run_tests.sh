@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Test runner - executes all unit tests
+
+set -euo pipefail
+
+# Check bash version (requires 4.0+ for associative arrays and mapfile)
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    echo "Error: This script requires Bash 4.0 or higher (current: ${BASH_VERSION})" >&2
+    echo "Please upgrade bash or use a system with bash 4.0+" >&2
+    exit 1
+fi
+
+# Get script directory
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Provide dummy token so DigitalOcean init paths work in tests
+export DIGITALOCEAN_TOKEN="${DIGITALOCEAN_TOKEN:-test-token}"
+
+
+echo -e "${BLUE}=========================================${NC}"
+echo -e "${BLUE}Exasol Deployer - Unit Tests${NC}"
+echo -e "${BLUE}=========================================${NC}"
+echo ""
+
+# Track overall results
+TOTAL_TEST_FILES=0
+PASSED_TEST_FILES=0
+FAILED_TEST_FILES=0
+
+BASH_BIN="${BASH:-bash}"
+
+# Function to run a test file
+run_test_file() {
+    local test_file="$1"
+    local test_name
+    test_name=$(basename "$test_file")
+
+    echo -e "${BLUE}Running: $test_name${NC}"
+    echo ""
+
+    TOTAL_TEST_FILES=$((TOTAL_TEST_FILES + 1))
+
+    if "$BASH_BIN" "$test_file"; then
+        PASSED_TEST_FILES=$((PASSED_TEST_FILES + 1))
+        echo ""
+        return 0
+    else
+        FAILED_TEST_FILES=$((FAILED_TEST_FILES + 1))
+        echo ""
+        return 1
+    fi
+}
+
+# Run all test files
+run_test_file "$TEST_DIR/test_shellcheck.sh"
+run_test_file "$TEST_DIR/test_common.sh"
+run_test_file "$TEST_DIR/test_progress.sh"
+run_test_file "$TEST_DIR/test_versions.sh"
+run_test_file "$TEST_DIR/test_version.sh"
+run_test_file "$TEST_DIR/test_installer.sh"
+run_test_file "$TEST_DIR/test_state.sh"
+run_test_file "$TEST_DIR/test_init.sh"
+run_test_file "$TEST_DIR/test_power_control.sh"
+run_test_file "$TEST_DIR/test_deploy_failures.sh"
+run_test_file "$TEST_DIR/test_destroy_failures.sh"
+run_test_file "$TEST_DIR/test_status.sh"
+run_test_file "$TEST_DIR/test_template_formatting.sh"
+run_test_file "$TEST_DIR/test_template_validation_common.sh"
+run_test_file "$TEST_DIR/test_template_validation_ansible.sh"
+run_test_file "$TEST_DIR/test_template_validation_aws.sh"
+run_test_file "$TEST_DIR/test_template_validation_azure.sh"
+run_test_file "$TEST_DIR/test_template_validation_gcp.sh"
+run_test_file "$TEST_DIR/test_template_validation_hetzner.sh"
+run_test_file "$TEST_DIR/test_template_validation_digitalocean.sh"
+run_test_file "$TEST_DIR/test_template_validation_libvirt.sh"
+run_test_file "$TEST_DIR/test_url_availability.sh"
+run_test_file "$TEST_DIR/test_documentation.sh"
+run_test_file "$TEST_DIR/test_help_options.sh"
+run_test_file "$TEST_DIR/test_permissions.sh"
+run_test_file "$TEST_DIR/test_e2e_framework.sh"
+run_test_file "$TEST_DIR/test_e2e_config.sh"
+run_test_file "$TEST_DIR/test_run_e2e.sh"
+run_test_file "$TEST_DIR/test_generate_limits_report.sh"
+run_test_file "$TEST_DIR/test_cleanup_resources.sh"
+run_test_file "$TEST_DIR/test_link_validation.sh"
+run_test_file "$TEST_DIR/test_style_consistency.sh"
+
+# Overall summary
+echo -e "${BLUE}=========================================${NC}"
+echo -e "${BLUE}Overall Test Summary${NC}"
+echo -e "${BLUE}=========================================${NC}"
+echo "Test Files Run: $TOTAL_TEST_FILES"
+echo -e "Passed: ${GREEN}$PASSED_TEST_FILES${NC}"
+echo -e "Failed: ${RED}$FAILED_TEST_FILES${NC}"
+echo ""
+
+if [[ $FAILED_TEST_FILES -eq 0 ]]; then
+    echo -e "${GREEN}✓ All test files passed!${NC}"
+    exit 0
+else
+    echo -e "${RED}✗ Some test files failed!${NC}"
+    exit 1
+fi

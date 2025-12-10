@@ -1,0 +1,47 @@
+
+resource "azurerm_role_definition" "terraform_pike" {
+  role_definition_id = local.uuid
+  name               = "terraform_pike"
+  scope              = data.azurerm_subscription.primary.id
+
+  permissions {
+    actions = [
+    "Microsoft.Compute/disks/delete",
+    "Microsoft.Compute/disks/read",
+    "Microsoft.Compute/disks/write",
+    "Microsoft.Compute/virtualMachines/delete",
+    "Microsoft.Compute/virtualMachines/powerOff/action",
+    "Microsoft.Compute/virtualMachines/read",
+    "Microsoft.Compute/virtualMachines/write",
+    "Microsoft.Network/networkInterfaces/delete",
+    "Microsoft.Network/networkInterfaces/join/action",
+    "Microsoft.Network/networkInterfaces/read",
+    "Microsoft.Network/networkInterfaces/write",
+    "Microsoft.Network/networkSecurityGroups/delete",
+    "Microsoft.Network/networkSecurityGroups/read",
+    "Microsoft.Network/networkSecurityGroups/write",
+    "Microsoft.Network/virtualNetworks/delete",
+    "Microsoft.Network/virtualNetworks/read",
+    "Microsoft.Network/virtualNetworks/subnets/delete",
+    "Microsoft.Network/virtualNetworks/subnets/join/action",
+    "Microsoft.Network/virtualNetworks/subnets/read",
+    "Microsoft.Network/virtualNetworks/subnets/write",
+    "Microsoft.Network/virtualNetworks/write",
+    "Microsoft.Resources/subscriptions/providers/read",
+    "Microsoft.Resources/subscriptions/resourcegroups/delete",
+    "Microsoft.Resources/subscriptions/resourcegroups/read",
+    "Microsoft.Resources/subscriptions/resourcegroups/write"]
+    not_actions = []
+  }
+
+  assignable_scopes = [
+    data.azurerm_subscription.primary.id,
+  ]
+}
+
+locals {
+  uuid = uuid()
+}
+
+data "azurerm_subscription" "primary" {
+}

@@ -1,0 +1,20 @@
+[Unit]
+Description=VXLAN overlay network for Exasol cluster multicast support
+After=network-online.target
+Wants=network-online.target
+Before=exasol.service c4_cloud_command.service
+Documentation=https://www.kernel.org/doc/Documentation/networking/vxlan.txt
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c '/usr/local/bin/exasol-overlay-setup.sh && exec sleep infinity'
+ExecStop=/bin/bash -c 'ip link show vxlan-br0 >/dev/null 2>&1 && ip link delete vxlan-br0 || true; ip link show vxlan0 >/dev/null 2>&1 && ip link delete vxlan0 || true'
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=60s
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target

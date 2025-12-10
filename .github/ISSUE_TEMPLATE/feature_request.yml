@@ -1,0 +1,177 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a new feature! Please provide detailed information to help us understand and evaluate your request.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Feature Summary
+      description: A clear and concise description of the feature you'd like to see
+      placeholder: Briefly describe the feature...
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve? What use case does it address?
+      placeholder: |
+        Describe the problem or use case this feature would address...
+        
+        Example: "As a user deploying to multiple regions, I need..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe your preferred solution or approach
+      placeholder: |
+        Describe how you envision this feature working...
+        
+        Include details about:
+        - User interface (command line flags, configuration options)
+        - Expected behavior
+        - Integration with existing features
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative Solutions
+      description: Describe any alternative solutions or workarounds you've considered
+      placeholder: |
+        Have you considered any alternative approaches?
+        Are there existing workarounds?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: Which area of the project does this feature relate to?
+      options:
+        - Cloud Provider Support
+        - Database Configuration
+        - Networking and Security
+        - CLI and User Experience
+        - Documentation and Templates
+        - Testing and Validation
+        - Performance and Optimization
+        - Monitoring and Logging
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority Level
+      description: How important is this feature to you?
+      options:
+        - Low - Nice to have
+        - Medium - Would improve workflow
+        - High - Blocking current use case
+        - Critical - Required for adoption
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: affected-providers
+    attributes:
+      label: Affected Cloud Providers
+      description: Which cloud providers would this feature affect? (Select all that apply)
+      options:
+        - label: AWS
+        - label: Azure
+        - label: GCP
+        - label: Hetzner Cloud
+        - label: DigitalOcean
+        - label: libvirt/KVM
+        - label: All providers
+        - label: Provider-agnostic
+
+  - type: textarea
+    id: use-cases
+    attributes:
+      label: Use Cases and Examples
+      description: |
+        Provide specific use cases and examples of how this feature would be used
+      placeholder: |
+        Example use cases:
+        
+        1. Use case: Multi-region deployment
+           - Current limitation: Can only deploy to one region
+           - With this feature: Could deploy to multiple regions simultaneously
+           
+        2. Use case: Custom networking
+           - Current limitation: Limited CIDR configuration
+           - With this feature: Full subnet customization
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation Considerations
+      description: |
+        Any thoughts on implementation details, potential challenges, or technical considerations?
+      placeholder: |
+        Consider:
+        - Backward compatibility requirements
+        - Configuration changes needed
+        - Testing requirements
+        - Documentation updates
+        - Potential breaking changes
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution Interest
+      description: Are you interested in contributing to this feature?
+      options:
+        - label: I would like to implement this feature myself
+        - label: I can help with testing and validation
+        - label: I can help with documentation
+        - label: I can provide feedback during development
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: |
+        Add any other context, screenshots, mockups, or references that would help explain this feature request
+      placeholder: |
+        Additional information such as:
+        - Links to related projects or documentation
+        - Screenshots or mockups
+        - References to similar features in other tools
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      description: Please confirm you have completed these steps
+      options:
+        - label: I have searched existing issues to ensure this feature hasn't been requested
+          required: true
+        - label: I have provided clear use cases and examples
+          required: true
+        - label: I have considered the impact on existing functionality
+          required: true

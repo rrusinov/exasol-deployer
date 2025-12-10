@@ -1,0 +1,12 @@
+{
+  "description": "Hetzner single node configuration",
+  "provider": "hetzner",
+  "parameters": {
+    "cluster_size": 1,
+    "instance_type": "cpx31",
+    "data_volumes_per_node": 1,
+    "data_volume_size": 20,
+    "root_volume_size": 50,
+    "enable_multicast_overlay": true
+  }
+}

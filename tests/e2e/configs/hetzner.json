@@ -1,0 +1,15 @@
+{
+  "provider": "hetzner",
+  "description": "Hetzner E2E test configurations combining different SUTs and workflows",
+  "max_concurrent_nodes": 5,
+  "test_suites": [
+    {
+      "sut": "sut/hetzner-1n.json",
+      "workflow": "workflow/simple.json"
+    },
+    {
+      "sut": "sut/hetzner-4n.json",
+      "workflow": "workflow/node-reboot.json"
+    }
+  ]
+}

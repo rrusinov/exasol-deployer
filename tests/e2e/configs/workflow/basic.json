@@ -1,0 +1,87 @@
+{
+  "description": "Basic workflow with deploy, stop, start, and destroy",
+  "steps": [
+    {
+      "step": "init"
+    },
+    {
+      "step": "validate",
+      "description": "Validate initialization",
+      "checks": [
+        "cluster_status==initialized"
+      ]
+    },
+    {
+      "step": "deploy"
+    },
+    {
+      "step": "validate",
+      "description": "Validate deployment",
+      "checks": [
+        "cluster_status==database_ready",
+        "health_status[*].ssh==ok",
+        "health_status[*].cos_ssh==ok",
+        "health_status[*].adminui==ok",
+        "health_status[*].database==ok"
+      ],     
+      "retry": {
+        "max_attempts": 6,
+        "delay_seconds": 10
+      }
+    },
+    {
+      "step": "stop_cluster"
+    },
+    {
+      "step": "validate",
+      "description": "Validate cluster stopped",
+      "checks": [
+        "cluster_status==stopped",
+        "health_status[*].ssh!=ok",
+        "health_status[*].cos_ssh!=ok",
+        "health_status[*].adminui!=ok",
+        "health_status[*].database!=ok"
+      ],
+      "retry": {
+        "max_attempts": 6,
+        "delay_seconds": 10
+      }
+    },
+    {
+      "step": "start_cluster"
+    },
+    {
+      "step": "validate",
+      "description": "Validate cluster started",
+      "checks": [
+        "cluster_status==database_ready",
+        "health_status[*].ssh==ok",
+        "health_status[*].cos_ssh==ok",
+        "health_status[*].adminui==ok",
+        "health_status[*].database==ok"
+      ],
+      "retry": {
+        "max_attempts": 6,
+        "delay_seconds": 10
+      }
+    },
+    {
+      "step": "destroy"
+    },
+    {
+      "step": "validate",
+      "description": "Validate destruction",
+      "checks": [
+        "cluster_status==destroyed",
+        "health_status[*].ssh!=ok",
+        "health_status[*].cos_ssh!=ok",
+        "health_status[*].adminui!=ok",
+        "health_status[*].database!=ok"
+      ],
+      "retry": {
+        "max_attempts": 6,
+        "delay_seconds": 10
+      }
+    }
+  ]
+}

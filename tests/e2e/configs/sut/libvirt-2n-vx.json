@@ -1,0 +1,19 @@
+{
+  "description": "Libvirt dual node configuration with VXLAN enabled",
+  "provider": "libvirt",
+  "db_version": ["default-local", "default"],
+  "parameters": {
+    "cluster_size": 2,
+    "libvirt_memory": 4,
+    "libvirt_vcpus": 2,
+    "data_volumes_per_node": 2,
+    "data_volume_size": 20,
+    "root_volume_size": 50,
+    "enable_multicast_overlay": true
+  },
+  "requirements": {
+    "libvirt_available": true,
+    "kvm_available": true,
+    "min_memory_gb": 16
+  }
+}

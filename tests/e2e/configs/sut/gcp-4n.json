@@ -1,0 +1,11 @@
+{
+  "description": "GCP 4-node cluster configuration",
+  "provider": "gcp",
+  "parameters": {
+    "cluster_size": 4,
+    "instance_type": "e2-medium",
+    "data_volumes_per_node": 1,
+    "data_volume_size": 15,
+    "root_volume_size": 40
+  }
+}

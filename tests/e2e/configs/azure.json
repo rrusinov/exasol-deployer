@@ -1,0 +1,19 @@
+{
+  "provider": "azure",
+  "description": "Azure E2E test configurations (optimized for 4 vCPU quota)",
+  "max_concurrent_nodes": 2,
+  "test_suites": [
+    {
+      "sut": "sut/azure-1n.json",
+      "workflow": "workflow/simple.json"
+    },
+    {
+      "sut": "sut/azure-2n.json",
+      "workflow": "workflow/basic.json"
+    },
+    {
+      "sut": "sut/azure-2n.json",
+      "workflow": "workflow/node-reboot.json"
+    }
+  ]
+}
