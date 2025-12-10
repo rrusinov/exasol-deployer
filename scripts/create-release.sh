@@ -538,6 +538,7 @@ main() {
     local version output_file temp_dir payload_tar
     
     version=$(generate_version)
+    mkdir -p "$BUILD_DIR"
     output_file="$BUILD_DIR/$OUTPUT_NAME"
     temp_dir=$(mktemp -d)
     payload_tar="$temp_dir/payload.tar"
