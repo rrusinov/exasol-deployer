@@ -597,9 +597,28 @@ cleanup_aws() {
         fi
         
         local vpcs
+        # Parse tag filter (format: key=value)
+        local tag_key="${TAG_FILTER%%=*}"
+        local tag_value="${TAG_FILTER#*=}"
+        
         vpcs=$(aws ec2 describe-vpcs --region "$region" \
-            --filters "Name=tag:Name,Values=${PREFIX_FILTER}*" \
+            --filters "Name=tag:${tag_key},Values=${tag_value}" \
             --query 'Vpcs[].VpcId' --output text 2>/dev/null || echo "")
+        
+        # Additional prefix filter if specified
+        if [[ -n "$PREFIX_FILTER" ]]; then
+            local prefix_vpcs
+            prefix_vpcs=$(aws ec2 describe-vpcs --region "$region" \
+                --filters "Name=tag:Name,Values=${PREFIX_FILTER}*" \
+                --query 'Vpcs[].VpcId' --output text 2>/dev/null || echo "")
+            
+            # Intersect the two lists
+            if [[ -n "$vpcs" && -n "$prefix_vpcs" ]]; then
+                vpcs=$(echo "$vpcs $prefix_vpcs" | tr ' ' '\n' | sort | uniq -d | tr '\n' ' ')
+            elif [[ -n "$prefix_vpcs" ]]; then
+                vpcs="$prefix_vpcs"
+            fi
+        fi
         
         if [[ -z "$vpcs" ]]; then
             continue
@@ -627,9 +646,8 @@ cleanup_aws() {
                 aws ec2 wait instance-terminated --region "$region" --instance-ids $instances 2>/dev/null || true
             fi
             
-            # Delete VPC (this will fail if resources still exist, which is expected)
-            aws ec2 delete-vpc --region "$region" --vpc-id "$vpc" 2>/dev/null || \
-                log_warn "  Could not delete VPC $vpc (may have dependencies)"
+            # Delete VPC with all dependencies
+            delete_vpc_with_dependencies "$region" "$vpc"
         done
     done
     

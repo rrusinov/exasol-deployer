@@ -225,6 +225,22 @@ def get_suite_info_from_results(results_file: str, suite_name: str) -> None:
         sys.exit(1)
 
 
+def get_progress_from_results(results_file: str) -> None:
+    """Extract progress information from results.json."""
+    try:
+        with open(results_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            results = data.get('results', [])
+            total = len(results)
+            completed = sum(1 for r in results if 'success' in r)
+            if total > 0:
+                print(f'{completed}/{total}')
+            else:
+                print('0/0')
+    except Exception:
+        print('initializing')
+
+
 def main():
     """Main entry point for command-line usage."""
     if len(sys.argv) < 2:
@@ -235,6 +251,7 @@ def main():
         print("  list_tests <results_dir> <provider_filter> <config1> [config2...]", file=sys.stderr)
         print("  resolve_tests <results_dir> <ids> <config1> [config2...]", file=sys.stderr)
         print("  get_suite_info <results_file> <suite_name>", file=sys.stderr)
+        print("  get_progress <results_file>", file=sys.stderr)
         sys.exit(1)
 
     command = sys.argv[1]
@@ -268,6 +285,12 @@ def main():
             print("Usage: get_suite_info <results_file> <suite_name>", file=sys.stderr)
             sys.exit(1)
         get_suite_info_from_results(sys.argv[2], sys.argv[3])
+
+    elif command == "get_progress":
+        if len(sys.argv) != 3:
+            print("Usage: get_progress <results_file>", file=sys.stderr)
+            sys.exit(1)
+        get_progress_from_results(sys.argv[2])
 
     else:
         print(f"Unknown command: {command}", file=sys.stderr)

@@ -36,6 +36,7 @@ Unit tests validate individual components and functions of the Exasol Deployer w
 ./tests/test_common.sh
 ./tests/test_state.sh
 ./tests/test_versions.sh
+./tests/test_installer.sh
 
 # Run with verbose output
 bash -x ./tests/test_common.sh
@@ -48,6 +49,7 @@ Unit tests are organized by component:
 - `test_common.sh` - Core utility functions (colors, logging, validation)
 - `test_state.sh` - State management and locking
 - `test_versions.sh` - Version parsing and validation
+- `test_installer.sh` - Installer PATH handling and containerized multi-OS testing
 - `test_init.sh` - Initialization command logic
 - `test_health.sh` - Health check functionality
 - `test_power_control.sh` - Start/stop operations
@@ -56,6 +58,28 @@ Unit tests are organized by component:
 - `test_template_*.sh` - Terraform/Ansible template validation
 - `test_shellcheck.sh` - Shell script linting
 - `test_documentation.sh` - Documentation consistency checks
+
+## Installer Testing
+
+The installer test suite (`test_installer.sh`) provides comprehensive validation of the installation process:
+
+### PATH Handling Tests (28 unit tests)
+- Prevents duplicate PATH entries across bash, zsh, and fish shells
+- Validates marker-based detection system
+- Tests installation, force overwrite, and uninstallation scenarios
+- Ensures no PATH contamination during testing (uses `--no-path` flag)
+
+### Containerized Multi-OS Testing (12 environments)
+- Ubuntu 20.04/22.04, Alpine 3.18/3.19, Debian 11/12
+- Fedora 38/39, CentOS Stream 9, macOS-like environment
+- Complete isolation prevents host system contamination
+- Tests exotic configurations and edge cases
+
+**Key Features:**
+- Container-based isolation using podman/docker
+- Shell-specific syntax validation
+- Comprehensive edge case coverage
+- Safe testing with `--extract-only` and `--no-path` flags
 
 ## Writing Unit Tests
 

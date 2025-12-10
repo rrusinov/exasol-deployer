@@ -768,18 +768,16 @@ class E2ETestFramework:
             abs_installer_path = installer_path.resolve()
             abs_install_dir = install_dir.resolve()
             
-            # Ensure bash environment to prevent shell detection issues
-            # The installer uses $SHELL to detect shell type, so we must set it explicitly
-            env = os.environ.copy()
-            env['SHELL'] = '/bin/bash'
+            # Use --extract-only to avoid PATH modifications in e2e testing
+            # This extracts files without modifying shell configuration files
+            extract_dir = abs_install_dir / 'exasol-deployer'
             
             result = subprocess.run(
-                ['/usr/bin/env', 'bash', str(abs_installer_path), '--install', str(abs_install_dir), '--yes'],
+                ['/usr/bin/env', 'bash', str(abs_installer_path), '--extract-only', str(extract_dir)],
                 capture_output=True,
                 text=True,
                 timeout=60,  # 1 minute timeout
-                cwd=self.repo_root,
-                env=env
+                cwd=self.repo_root
             )
             
             # Log installation output
@@ -794,8 +792,21 @@ class E2ETestFramework:
                     error_msg += f"\nOutput:\n{result.stdout}\n{result.stderr}"
                 raise RuntimeError(error_msg)
             
-            # Verify symlink exists
+            # Create symlink manually since --extract-only doesn't create it
             exasol_symlink = install_dir / 'exasol'
+            exasol_binary = extract_dir / 'exasol'
+            
+            if not exasol_binary.exists():
+                raise RuntimeError(f"Extracted exasol binary not found: {exasol_binary}")
+            
+            # Remove existing symlink if it exists
+            if exasol_symlink.exists() or exasol_symlink.is_symlink():
+                exasol_symlink.unlink()
+            
+            # Create symlink
+            exasol_symlink.symlink_to(exasol_binary)
+            
+            # Verify symlink exists and is executable
             if not exasol_symlink.exists():
                 raise RuntimeError(
                     f"Symlink not found: {exasol_symlink}\n"
@@ -803,19 +814,18 @@ class E2ETestFramework:
                 )
             
             # Verify required files exist in subdirectory
-            exasol_deployer_dir = install_dir / 'exasol-deployer'
             required_files = ['exasol', 'lib', 'templates', 'versions.conf', 'instance-types.conf']
             missing_files = []
             
             for file_name in required_files:
-                file_path = exasol_deployer_dir / file_name
+                file_path = extract_dir / file_name
                 if not file_path.exists():
                     missing_files.append(file_name)
             
             if missing_files:
                 raise RuntimeError(
                     f"Installation incomplete\n"
-                    f"Install directory: {exasol_deployer_dir}\n"
+                    f"Extract directory: {extract_dir}\n"
                     f"Missing files: {', '.join(missing_files)}"
                 )
             

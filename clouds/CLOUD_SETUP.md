@@ -17,7 +17,7 @@ Before setting up cloud credentials, you can check the required permissions for 
 
 ```bash
 # Generate permission tables for all providers
-./build/generate_permissions.sh
+./scripts/generate-permissions.sh
 ```
 
 This requires either the [pike](https://github.com/JamesWoolfenden/pike) tool installed locally, or Docker/Podman to run the pike container.

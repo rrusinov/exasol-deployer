@@ -313,8 +313,9 @@ configure_path() {
         return 0
     fi
     
-    # Check if already configured in shell config
-    if [[ -f "$config_file" ]] && grep -q "$install_path" "$config_file"; then
+    # Check if already configured in shell config using marker
+    local marker="# Added by Exasol Deployer installer"
+    if [[ -f "$config_file" ]] && grep -q "$marker" "$config_file"; then
         log_info "✓ PATH already configured in $config_file"
         return 0
     fi
@@ -325,12 +326,12 @@ configure_path() {
     case "$shell_type" in
         fish)
             echo "" >> "$config_file"
-            echo "# Added by Exasol Deployer installer" >> "$config_file"
+            echo "$marker" >> "$config_file"
             echo "fish_add_path $install_path" >> "$config_file"
             ;;
         *)
             echo "" >> "$config_file"
-            echo "# Added by Exasol Deployer installer" >> "$config_file"
+            echo "$marker" >> "$config_file"
             echo "export PATH=\"$install_path:\$PATH\"" >> "$config_file"
             ;;
     esac

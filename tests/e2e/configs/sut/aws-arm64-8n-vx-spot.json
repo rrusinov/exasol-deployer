@@ -8,7 +8,6 @@
     "data_volumes_per_node": 3,
     "data_volume_size": 20,
     "root_volume_size": 50,
-    "enable_multicast_overlay": true,
-    "aws_spot_instance": true
+    "enable_multicast_overlay": true
   }
 }

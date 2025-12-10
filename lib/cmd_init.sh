@@ -511,7 +511,7 @@ cmd_init() {
         if [[ -f "$permissions_file" ]]; then
             cat "$permissions_file"
         else
-            log_error "Permissions file not found for $cloud_provider. Run build/generate_permissions.sh first."
+            log_error "Permissions file not found for $cloud_provider. Run scripts/generate-permissions.sh first."
             return 1
         fi
         return 0

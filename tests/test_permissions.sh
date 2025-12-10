@@ -24,7 +24,7 @@ test_generate_permissions_creates_directory() {
     
     # Run generate permissions script
     # This may fail if pike is not installed, but should at least create the directory
-    "$TEST_DIR/../build/generate_permissions.sh" >/dev/null 2>&1 || true
+    "$TEST_DIR/../scripts/generate-permissions.sh" >/dev/null 2>&1 || true
 
     # Check if directory exists
     assert_dir_exists "$permissions_dir"
@@ -167,7 +167,7 @@ test_permissions_files_valid_json() {
     done
 
     if [[ "$has_files" == "false" ]]; then
-        echo -e "${YELLOW}⊘${NC} No permissions files found, run build/generate_permissions.sh to create them"
+        echo -e "${YELLOW}⊘${NC} No permissions files found, run scripts/generate-permissions.sh to create them"
     fi
 }
 

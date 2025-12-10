@@ -990,17 +990,17 @@ class TestReleaseInstallation(unittest.TestCase):
         
         framework = E2ETestFramework(str(self.config_file), results_dir)
         
-        # Create a fake installer that succeeds but doesn't create symlink
+        install_dir = self.temp_dir / 'install'
+        
+        # Create a fake installer that creates the directory structure but no binary
         fake_installer = self.temp_dir / 'fake-installer.sh'
         fake_installer.write_text('#!/bin/bash\nexit 0\n')
         fake_installer.chmod(0o755)
         
-        install_dir = self.temp_dir / 'install'
-        
         with self.assertRaises(RuntimeError) as context:
             framework._install_release(fake_installer, install_dir)
         
-        self.assertIn("Symlink not found", str(context.exception))
+        self.assertIn("Extracted exasol binary not found", str(context.exception))
 
     def test_install_release_handles_missing_files(self):
         """Test that _install_release() raises RuntimeError when required files are missing."""

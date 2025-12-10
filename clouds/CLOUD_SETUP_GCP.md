@@ -21,7 +21,7 @@ You can check the exact GCP IAM permissions required for deploying Exasol:
 This will display the complete IAM policy in JSON format. If the permissions file is not available, generate it first:
 
 ```bash
-./build/generate_permissions.sh
+./scripts/generate-permissions.sh
 ```
 
 ## Step 1: Create Google Cloud Account

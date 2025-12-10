@@ -18,6 +18,7 @@
     "compute.subnetworks.create",
     "compute.subnetworks.delete",
     "compute.subnetworks.get",
+    "compute.subnetworks.update",
     "compute.subnetworks.use",
     "compute.subnetworks.useExternalIp",
     "compute.zones.get"

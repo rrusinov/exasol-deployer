@@ -22,19 +22,19 @@ LOG_FILE="$LOG_DIR/generate_permissions.log"
 log_info "Logging to: $LOG_FILE"
 echo "=== Permission Generation Log - $(date) ===" > "$LOG_FILE"
 
-# Check for pike, docker, or podman
+# Check for pike, podman, or docker
 check_pike_availability() {
     if command -v pike >/dev/null 2>&1; then
         echo "pike"
-    elif command -v docker >/dev/null 2>&1; then
-        echo "docker"
     elif command -v podman >/dev/null 2>&1; then
         echo "podman"
+    elif command -v docker >/dev/null 2>&1; then
+        echo "docker"
     else
-        log_error "Pike tool not found. Install pike, docker, or podman."
+        log_error "Pike tool not found. Install pike, podman, or docker."
         log_error "  Install pike: go install github.com/jameswoolfenden/pike@latest"
-        log_error "  Or use docker: docker pull jameswoolfenden/pike:latest"
         log_error "  Or use podman: podman pull jameswoolfenden/pike:latest"
+        log_error "  Or use docker: docker pull jameswoolfenden/pike:latest"
         return 1
     fi
 }
@@ -46,10 +46,10 @@ run_pike_scan() {
     
     if [[ "$pike_mode" == "pike" ]]; then
         pike scan -d "$templates_dir" -o json 2>/dev/null || true
+    elif [[ "$pike_mode" == "podman" ]]; then
+        podman run --rm -v "$templates_dir:/data" jameswoolfenden/pike:latest scan -d /data -o json 2>&1 || true
     elif [[ "$pike_mode" == "docker" ]]; then
         docker run --rm -v "$templates_dir:/data" jameswoolfenden/pike:latest scan -d /data -o json 2>/dev/null || true
-    elif [[ "$pike_mode" == "podman" ]]; then
-        podman run --rm -v "$templates_dir:/data" jameswoolfenden/pike:latest scan -d /data -o json 2>/dev/null || true
     fi
 }
 

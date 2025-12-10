@@ -220,7 +220,7 @@ If permissions are not available, generate them (only needed when templates chan
 
 ```bash
 # Generate permissions tables for all providers
-./build/generate_permissions.sh
+./scripts/generate-permissions.sh
 ```
 
 **For detailed cloud provider setup, see:**
@@ -464,7 +464,7 @@ Initialize a new deployment directory with configuration files.
 **Flags:**
 
 **Required Flags**
-- `--cloud-provider string`: Cloud provider to target (`aws`, `azure`, `gcp`, `hetzner`, or `digitalocean`).
+- `--cloud-provider string`: Cloud provider to target (`aws`, `azure`, `gcp`, `hetzner`, `digitalocean`, or `libvirt`).
 
 **Common Flags**
 - `--deployment-dir string`: Directory for deployment files (default: current directory).
@@ -714,19 +714,6 @@ Show help information.
 ./exasol [command] --help
 ```
 
-## Configuration
-
-- **Cloud Provider**: Local libvirt/KVM deployment
-- **Database Version**: exasol-2025.1.8
-- **Architecture**: arm64
-- **Cluster Size**: 1 nodes
-- **Instance Type**: libvirt-custom
-- **Local KVM Deployment**
-- **Memory**: 4GB per VM
-- **vCPUs**: 2 per VM
-- **Network**: default
-- **Storage Pool**: default
-
 ## Credentials
 
 Database, AdminUI, and host OS credentials are stored in `.credentials.json` (protected file). The host password (`host_password`) is used for OS-level access to the `exasol` user (for example, `ssh exasol@n11`) and can be retrieved with `cat .credentials.json | jq -r '.host_password'`.
@@ -734,9 +721,9 @@ Database, AdminUI, and host OS credentials are stored in `.credentials.json` (pr
 ## Next Steps
 
 1. Review and customize `variables.auto.tfvars` if needed
-2. Run `./exasol deploy --deployment-dir /Users/ruslan.rusinov/work/exasol-deployer/.` to deploy
-3. Run `./exasol status --deployment-dir /Users/ruslan.rusinov/work/exasol-deployer/.` to check status
-4. Run `./exasol destroy --deployment-dir /Users/ruslan.rusinov/work/exasol-deployer/.` to tear down
+2. Run `./exasol deploy --deployment-dir <your-deployment-dir>` to deploy
+3. Run `./exasol status --deployment-dir <your-deployment-dir>` to check status
+4. Run `./exasol destroy --deployment-dir <your-deployment-dir>` to tear down
 
 ## Cleanup and Resource Management
 

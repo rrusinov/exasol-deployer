@@ -790,6 +790,14 @@ else
                     
                     # CRITICAL: Check if process failed by examining run.log for errors
                     # This prevents false "COMPLETE" status when processes crash early
+                    # 
+                    # RACE CONDITION PREVENTION:
+                    # Without this check, processes that crash during initialization
+                    # (e.g., during E2ETestFramework.__init__) would be marked as
+                    # "COMPLETE" instead of "FAILED", leading to confusing output.
+                    # 
+                    # The check examines run.log for Python tracebacks and errors
+                    # to distinguish between successful completion and early crashes.
                     run_log="$cfg_results_dir/run.log"
                     if [[ -f "$run_log" ]] && grep -q "Traceback\|Error:\|RuntimeError\|Exception:" "$run_log" 2>/dev/null; then
                         progress_lines+=("  $cfg_name: FAILED (process crashed)")
@@ -801,21 +809,7 @@ else
                 
                 # Show progress from results.json or run.log
                 if [[ -f "$results_file" ]]; then
-                    progress_info=$(python3 -c "
-import json
-try:
-    with open('$results_file', 'r') as f:
-        data = json.load(f)
-        results = data.get('results', [])
-        total = len(results)
-        completed = sum(1 for r in results if 'success' in r)
-        if total > 0:
-            print(f'{completed}/{total}')
-        else:
-            print('0/0')
-except:
-    print('initializing')
-" 2>/dev/null || echo "initializing")
+                    progress_info=$(python3 "$SCRIPT_DIR/e2e/e2e_shell_helpers.py" get_progress "$results_file" 2>/dev/null || echo "initializing")
                     progress_lines+=("  $cfg_name: $progress_info")
                 else
                     # Parse run.log for progress
@@ -878,6 +872,36 @@ except:
 
         # Wait for jobs and aggregate status
         # CRITICAL: This section determines the final exit status of the script
+        # 
+        # VALIDATION LOGIC EXPLANATION:
+        # This validation has been a source of confusion in the past. Here's how it works:
+        # 
+        # 1. PROCESS EXIT CODE: The Python e2e_framework.py process exit code
+        #    - 0 = Framework ran successfully (no crashes, exceptions handled)
+        #    - Non-zero = Framework crashed (Python exceptions, initialization failures)
+        # 
+        # 2. TEST RESULTS: Individual test outcomes within the framework
+        #    - Stored in results.json with success/failure status per test
+        #    - Tests can fail due to infrastructure issues, timeouts, validation failures
+        #    - Framework can exit with code 0 even if tests failed (this is correct behavior)
+        # 
+        # 3. VALIDATION PRIORITY:
+        #    a) Check run.log for Python crashes (Traceback, RuntimeError, Exception)
+        #    b) Check results.json for test failures (success: false)
+        #    c) Check if results.json exists (missing = framework crash during init)
+        #    d) Use process exit code as fallback
+        # 
+        # COMMON SCENARIOS:
+        # - "Process exit code: 0" + test failures = Tests failed, framework worked correctly
+        # - "Process exit code: 1" + no results.json = Framework crashed during startup
+        # - "Process exit code: 0" + no results.json = Framework crashed after startup
+        # - Python errors in run.log = Framework had internal errors
+        # 
+        # WHY THIS MATTERS:
+        # - Infrastructure failures (VPC limits, timeouts) are legitimate test failures
+        # - Framework crashes are bugs that need investigation
+        # - The script correctly reports both scenarios differently
+        # 
         # Common failure modes to avoid:
         # 1. Process crashes early -> wait returns non-zero exit code
         # 2. Process succeeds but tests fail -> check results.json for failures
@@ -907,10 +931,12 @@ except:
 
             # Check results.json for test failures (if it exists)
             results_file="$cfg_results_dir/results.json"
+            failure_reason=""
             if [[ -f "$results_file" ]]; then
                 failures="$(print_failures "$results_file")"
                 if [[ "$failures" != "[]" ]]; then
                     status=1
+                    failure_reason="Test failures detected in results"
                     tail_failed_logs "$results_file" || true
                 fi
             elif [[ $process_exit_code -eq 0 ]]; then
@@ -918,12 +944,16 @@ except:
                 echo "Warning: Process exited with code 0 but no results.json found for $cfg"
                 echo "This usually indicates the process crashed during initialization"
                 status=1
+                failure_reason="No results.json found (process crashed during initialization)"
             fi
 
             if [[ $status -ne 0 ]]; then
                 overall_status=1
                 echo "Config failed: $cfg (results: $cfg_results_dir)"
                 echo "  Process exit code: $process_exit_code"
+                if [[ -n "$failure_reason" ]]; then
+                    echo "  Failure reason: $failure_reason"
+                fi
                 echo "  Check logs: $run_log"
             else
                 echo "Config succeeded: $cfg (results: $cfg_results_dir)"
