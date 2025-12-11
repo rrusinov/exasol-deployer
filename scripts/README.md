@@ -279,7 +279,7 @@ All scripts have unit tests in the `tests/` directory:
 
 When adding new scripts:
 
-1. Follow the code style in [AGENTS.md](../AGENTS.md)
+1. Follow the project's shell script style guidelines
 2. Add unit tests in `tests/test_<script_name>.sh`
 3. Link tests in `tests/run_tests.sh`
 4. Update this README
