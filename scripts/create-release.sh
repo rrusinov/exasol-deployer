@@ -10,10 +10,11 @@ readonly OUTPUT_NAME="exasol-deployer.sh"
 
 # Generate version from git or fallback to timestamp
 generate_version() {
-    if git describe --tags --exact-match 2>/dev/null; then
-        git describe --tags --exact-match
-    elif git describe --tags 2>/dev/null; then
-        git describe --tags
+    local version
+    if version=$(git describe --tags --exact-match 2>/dev/null); then
+        echo "$version" | tr -d '\n'
+    elif version=$(git describe --tags 2>/dev/null); then
+        echo "$version" | tr -d '\n'
     else
         echo "$(date +%Y%m%d)-$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
     fi
@@ -38,7 +39,7 @@ create_payload() {
     find "$stage_dir" -name "*.md" -type f -delete
     
     # Copy exasol script and inject version
-    sed "s/__EXASOL_VERSION__/$version/g" exasol > "$stage_dir/exasol"
+    sed "s|__EXASOL_VERSION__|$version|g" exasol > "$stage_dir/exasol"
     chmod +x "$stage_dir/exasol"
     
     # Create tarball from staging directory
@@ -524,9 +525,9 @@ __ARCHIVE_BELOW__
 INSTALLER_HEADER
 
     # Replace placeholders
-    sed -i "s/__VERSION__/$version/g" "$output_file"
-    sed -i "s/__CHECKSUM__/$checksum/g" "$output_file"
-    sed -i "s/__BUILD_DATE__/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" "$output_file"
+    sed -i "s|__VERSION__|$version|g" "$output_file"
+    sed -i "s|__CHECKSUM__|$checksum|g" "$output_file"
+    sed -i "s|__BUILD_DATE__|$(date -u +%Y-%m-%dT%H:%M:%SZ)|g" "$output_file"
     
     # Append base64-encoded payload
     base64 "$payload_tar" >> "$output_file"
