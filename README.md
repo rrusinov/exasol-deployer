@@ -42,7 +42,7 @@ curl -fsSL https://xsol.short.gy/sh | bash
 Or using the full URL:
 
 ```bash
-curl -fsSL https://github.com/exasol/exasol-deployer/releases/latest/download/exasol-deployer.sh | bash
+curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh | bash
 ```
 
 Or download and run manually:
@@ -52,7 +52,7 @@ Or download and run manually:
 curl -fsSL https://xsol.short.gy/sh -o exasol-deployer.sh
 
 # Or use the full URL
-curl -fsSL https://github.com/exasol/exasol-deployer/releases/latest/download/exasol-deployer.sh -o exasol-deployer.sh
+curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh -o exasol-deployer.sh
 
 # Make it executable
 chmod +x exasol-deployer.sh
@@ -74,7 +74,7 @@ The installer will:
 For automation or CI/CD:
 
 ```bash
-curl -fsSL https://github.com/exasol/exasol-deployer/releases/latest/download/exasol-deployer.sh | bash -s -- --yes
+curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh | bash -s -- --yes
 ```
 
 ### Custom Installation Path
