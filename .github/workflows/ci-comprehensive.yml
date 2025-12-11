@@ -178,8 +178,14 @@ jobs:
             IF_STATEMENTS=${IF_STATEMENTS:-0}
             LOOPS=${LOOPS:-0}
             
+            # Validate that all values are actually numeric
+            [[ "$LINES" =~ ^[0-9]+$ ]] || LINES=0
+            [[ "$FUNCTIONS" =~ ^[0-9]+$ ]] || FUNCTIONS=0
+            [[ "$IF_STATEMENTS" =~ ^[0-9]+$ ]] || IF_STATEMENTS=0
+            [[ "$LOOPS" =~ ^[0-9]+$ ]] || LOOPS=0
+            
             # Simple complexity score (with error handling)
-            COMPLEXITY=$((${IF_STATEMENTS} + ${LOOPS} + ${FUNCTIONS}))
+            COMPLEXITY=$((IF_STATEMENTS + LOOPS + FUNCTIONS))
             
             echo "$script,$LINES,$FUNCTIONS,$IF_STATEMENTS,$LOOPS,$COMPLEXITY" >> reports/complexity/metrics.csv
           done
