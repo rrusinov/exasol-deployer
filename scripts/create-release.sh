@@ -407,7 +407,7 @@ install_exasol() {
         if [[ "$yes" != "true" ]]; then
             read -p "Overwrite? [y/N] " -n 1 -r
             echo
-            [[ $REPLY =~ ^[Yy]$ ]] || die "Installation cancelled"
+            [[ $REPLY =~ ^[Yy]$ ]] || die "Installation cancelled. To overwrite existing installation, use: curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh | bash -s -- --yes"
         fi
     fi
     
