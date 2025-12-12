@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" | systemd-cat -t exasol-overlay -p info
+}
+
+log "Stopping VXLAN overlay and cleaning up"
+
+# Remove overlay interfaces if present
+if ip link show vxlan-br0 >/dev/null 2>&1; then
+    ip link delete vxlan-br0 || true
+    log "Removed bridge vxlan-br0"
+fi
+
+if ip link show vxlan0 >/dev/null 2>&1; then
+    ip link delete vxlan0 || true
+    log "Removed vxlan interface vxlan0"
+fi
+
+# Remove persisted sysctl drop-in and reset forwarding defaults
+if [[ -f /etc/sysctl.d/exasol-overlay.conf ]]; then
+    rm -f /etc/sysctl.d/exasol-overlay.conf
+    sysctl -w net.ipv4.ip_forward=0 net.ipv4.conf.all.forwarding=0 net.ipv4.conf.default.forwarding=0 >/dev/null 2>&1 || true
+    sysctl --system >/dev/null 2>&1 || true
+    log "Removed /etc/sysctl.d/exasol-overlay.conf and reset forwarding"
+fi
+
+log "VXLAN overlay teardown complete"

@@ -29,9 +29,6 @@ Unit tests validate individual components and functions of the Exasol Deployer w
 ## Running Unit Tests
 
 ```bash
-# Run all unit tests
-./tests/run_tests.sh
-
 # Run specific test file
 ./tests/test_common.sh
 ./tests/test_state.sh
@@ -707,10 +704,6 @@ All workflow operations are supported across all providers:
 - Cluster start uses `exasol start` command - requires VMs to be running
 - For DigitalOcean/Hetzner/libvirt: after cluster stop, VMs must be manually powered on before cluster start
 - Node reboot uses SSH `sudo reboot` command
-
-## Workflow Configuration Format
-
-Workflows are stored in `tests/e2e/configs/workflow/` and define sequences of test steps independent of specific deployment parameters.
 
 ## Workflow Configuration Format
 

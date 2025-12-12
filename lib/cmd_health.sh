@@ -123,7 +123,7 @@ health_fetch_remote_ips() {
     local public_ip=""
     if [[ -n "$deploy_dir" ]] && [[ -d "$deploy_dir" ]] && [[ $node_index -ge 0 ]]; then
         if cd "$deploy_dir" 2>/dev/null; then
-            public_ip=$(tofu output -json node_public_ips 2>/dev/null | jq -r ".[$node_index] // empty" 2>/dev/null || true)
+            public_ip=$("${TOFU_BINARY:-tofu}" output -json node_public_ips 2>/dev/null | jq -r ".[$node_index] // empty" 2>/dev/null || true)
             cd - >/dev/null 2>&1 || true
         fi
     fi
@@ -950,15 +950,15 @@ cmd_health() {
             echo "Running Terraform state refresh..."
         fi
 
-        if [[ -d "$deploy_dir/terraform" ]] && command -v tofu >/dev/null 2>&1; then
-            if (cd "$deploy_dir/terraform" && tofu refresh -auto-approve >/dev/null 2>&1); then
+        if [[ -d "$deploy_dir/terraform" ]] && command -v "${TOFU_BINARY:-tofu}" >/dev/null 2>&1; then
+            if (cd "$deploy_dir/terraform" && "${TOFU_BINARY:-tofu}" refresh -auto-approve >/dev/null 2>&1); then
                 [[ "$output_format" == "text" ]] && echo "Terraform state refreshed successfully"
             else
                 [[ "$output_format" == "text" ]] && echo "WARNING: Terraform refresh failed"
                 json_issues+=("{\"type\": \"terraform_refresh_failed\", \"severity\": \"warning\"}")
             fi
         else
-            [[ "$output_format" == "text" ]] && echo "WARNING: Terraform directory or tofu command not found"
+            [[ "$output_format" == "text" ]] && echo "WARNING: Terraform directory or ${TOFU_BINARY:-tofu} command not found"
         fi
     fi
 

@@ -12,11 +12,11 @@ test_yaml_syntax_validation() {
         return
     fi
 
-    # Find all YAML files in the project
+    # Find all YAML files in the project (excluding portable dependencies)
     local yaml_files=()
     while IFS= read -r file; do
         yaml_files+=("$file")
-    done < <(find "$TEST_DIR/.." -name "*.yml" -o -name "*.yaml" | sort)
+    done < <(find "$TEST_DIR/.." -name "*.yml" -o -name "*.yaml" | grep -v "/tmp/tests/e2e-" | grep -v "/share/python/lib/python" | sort)
 
     if [[ ${#yaml_files[@]} -eq 0 ]]; then
         TESTS_TOTAL=$((TESTS_TOTAL + 1))

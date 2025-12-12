@@ -240,7 +240,7 @@
         cmd: "c4 ps -e '.[].Instances.Configs | to_entries | all(.value.ground.boot_stage == \"d\")'"
       become_user: "{{ exa_user }}"
       register: stage_check
-      until: stage_check.stdout | regex_search('true')
+      until: (stage_check.stdout | default('') | regex_search('true')) is not none
       retries: 120
       delay: 10
       changed_when: false

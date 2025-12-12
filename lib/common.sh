@@ -7,6 +7,70 @@ if [[ -n "${__EXASOL_COMMON_SH_INCLUDED__:-}" ]]; then
 fi
 readonly __EXASOL_COMMON_SH_INCLUDED__=1
 
+# Detect and configure dependencies (OpenTofu, Ansible, Python)
+detect_dependencies() {
+    local script_dir share_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+    share_dir="$script_dir/share"
+    
+    # Configure OpenTofu to use bundled configuration for plugin caching and mirrors
+    if [[ -f "$script_dir/.tofurc" ]]; then
+        export TF_CLI_CONFIG_FILE="$script_dir/.tofurc"
+    fi
+    
+    # Check for local OpenTofu
+    if [[ -x "$share_dir/tofu/tofu" ]]; then
+        export TOFU_BINARY="$share_dir/tofu/tofu"
+    elif command -v tofu >/dev/null 2>&1; then
+        export TOFU_BINARY="tofu"
+    elif command -v terraform >/dev/null 2>&1; then
+        export TOFU_BINARY="terraform"
+    else
+        echo "Error: OpenTofu/Terraform not found." >&2
+        echo "Install with: curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh | bash -s -- --install-dependencies --yes" >&2
+        exit 1
+    fi
+    
+    # Check for local jq
+    if [[ -x "$share_dir/jq/jq" ]]; then
+        export JQ_BINARY="$share_dir/jq/jq"
+    elif command -v jq >/dev/null 2>&1; then
+        export JQ_BINARY="jq"
+    fi
+    
+    # Check for local Ansible (in portable Python)
+    if [[ -x "$share_dir/python/bin/ansible-playbook" ]]; then
+        export ANSIBLE_PLAYBOOK="$share_dir/python/bin/ansible-playbook"
+        export PYTHON_BINARY="$share_dir/python/bin/python3"
+    elif command -v ansible-playbook >/dev/null 2>&1; then
+        export ANSIBLE_PLAYBOOK="ansible-playbook"
+        export PYTHON_BINARY="${PYTHON_BINARY:-python3}"
+    else
+        echo "Error: Ansible not found." >&2
+        echo "Install with: curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh | bash -s -- --install-dependencies --yes" >&2
+        exit 1
+    fi
+    
+    # Verify dependencies work
+    if ! "$TOFU_BINARY" version >/dev/null 2>&1; then
+        echo "Error: $TOFU_BINARY is not working properly" >&2
+        exit 1
+    fi
+    
+    # Test ansible with UTF-8 locale (required by Ansible)
+    # Try different locale approaches for container compatibility
+    if LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 "$ANSIBLE_PLAYBOOK" --version >/dev/null 2>&1; then
+        : # Success with en_US.UTF-8
+    elif LC_ALL=C.UTF-8 LANG=C.UTF-8 "$ANSIBLE_PLAYBOOK" --version >/dev/null 2>&1; then
+        : # Success with C.UTF-8
+    elif "$ANSIBLE_PLAYBOOK" --version >/dev/null 2>&1; then
+        : # Success with default locale
+    else
+        echo "Error: $ANSIBLE_PLAYBOOK is not working properly" >&2
+        exit 1
+    fi
+}
+
 # Get default region/location for a provider from instance-types.conf
 get_instance_type_region_default() {
     local provider="$1"
@@ -141,22 +205,45 @@ die() {
 # ==============================================================================
 
 setup_plugin_cache() {
-    local cache_dir="${TF_PLUGIN_CACHE_DIR:-${HOME}/.cache/exasol-tofu-plugins}"
-    export TF_PLUGIN_CACHE_DIR="$cache_dir"
-
-    if [[ ! -d "$cache_dir" ]]; then
-        mkdir -p "$cache_dir" 2>/dev/null || true
+    # Allow users to opt out of creating cache config files
+    if [[ "${EXASOL_DISABLE_PLUGIN_CACHE:-0}" != "0" ]]; then
+        return
     fi
 
-    # Create rc files if missing so Terraform/OpenTofu know about the cache
+    local cache_dir="${TF_PLUGIN_CACHE_DIR:-${HOME}/.cache/exasol-tofu-plugins}"
+    export TF_PLUGIN_CACHE_DIR="$cache_dir"
+    local export_tf_cache=1
+
+    # If user already set plugin_cache_dir in rc files, do not override with env
     for rc_file in "${HOME}/.tofurc" "${HOME}/.terraformrc"; do
-        if [[ ! -f "$rc_file" ]]; then
-            cat > "$rc_file" <<EOF
-plugin_cache_dir = "${cache_dir}"
-EOF
-            log_debug "Created provider cache config: $rc_file -> $cache_dir"
+        if [[ -f "$rc_file" ]] && grep -Eq '^[[:space:]]*plugin_cache_dir[[:space:]]*=' "$rc_file"; then
+            export_tf_cache=0
+            break
         fi
     done
+
+    local created_cache_dir=0
+    if [[ $export_tf_cache -eq 1 && ! -d "$cache_dir" ]]; then
+        mkdir -p "$cache_dir" 2>/dev/null || true
+        created_cache_dir=1
+    fi
+
+    if [[ $export_tf_cache -eq 1 ]]; then
+        export TF_PLUGIN_CACHE_DIR="$cache_dir"
+    fi
+
+    # Create rc files if missing so Terraform/OpenTofu know about the cache.
+    # Do this only when we created the cache dir, to avoid touching user-managed setups.
+    if [[ $export_tf_cache -eq 1 && $created_cache_dir -eq 1 ]]; then
+        for rc_file in "${HOME}/.tofurc" "${HOME}/.terraformrc"; do
+            if [[ ! -f "$rc_file" ]]; then
+                cat > "$rc_file" <<EOF
+plugin_cache_dir = "${cache_dir}"
+EOF
+                log_debug "Created provider cache config: $rc_file -> $cache_dir"
+            fi
+        done
+    fi
 }
 
 # Initialize provider cache on load so all commands share it
@@ -164,6 +251,33 @@ setup_plugin_cache
 
 log_plugin_cache_dir() {
     log_info "Using provider cache directory: ${TF_PLUGIN_CACHE_DIR}"
+}
+
+log_dependency_info() {
+    # Show which tools are being used (portable vs system)
+    if [[ -n "${TOFU_BINARY:-}" ]]; then
+        if [[ "$TOFU_BINARY" == *"/share/tofu/tofu" ]]; then
+            log_info "Using OpenTofu: portable (${TOFU_BINARY})"
+        else
+            log_info "Using OpenTofu: system ($TOFU_BINARY)"
+        fi
+    fi
+    
+    if [[ -n "${JQ_BINARY:-}" ]]; then
+        if [[ "$JQ_BINARY" == *"/share/jq/jq" ]]; then
+            log_info "Using jq: portable (${JQ_BINARY})"
+        else
+            log_info "Using jq: system ($JQ_BINARY)"
+        fi
+    fi
+    
+    if [[ -n "${ANSIBLE_PLAYBOOK:-}" ]]; then
+        if [[ "$ANSIBLE_PLAYBOOK" == *"/share/python/bin/ansible-playbook" ]]; then
+            log_info "Using Ansible: portable (${ANSIBLE_PLAYBOOK})"
+        else
+            log_info "Using Ansible: system ($ANSIBLE_PLAYBOOK)"
+        fi
+    fi
 }
 
 # Registry client retry defaults (honor user overrides)
@@ -271,6 +385,11 @@ command_exists() {
 
 # Check required commands
 check_required_commands() {
+    # Skip dependency check if requested (for testing)
+    if [[ "${SKIP_DEPENDENCY_CHECK:-}" == "true" ]]; then
+        return 0
+    fi
+
     local missing_commands=()
     local version_issues=()
 
@@ -279,16 +398,19 @@ check_required_commands() {
         version_issues+=("bash (version ${BASH_VERSION} too old, need >= 4.0)")
     fi
 
-    # Check essential tools
-    if ! command_exists tofu; then
+    # Detect dependencies (this will set TOFU_BINARY, ANSIBLE_PLAYBOOK, etc.)
+    detect_dependencies
+
+    # Check essential tools (now using detected binaries)
+    if [[ -z "${TOFU_BINARY:-}" ]] || ! command_exists "${TOFU_BINARY}"; then
         missing_commands+=("tofu (OpenTofu)")
     fi
 
-    if ! command_exists ansible-playbook; then
+    if [[ -z "${ANSIBLE_PLAYBOOK:-}" ]] || ! command_exists "${ANSIBLE_PLAYBOOK}"; then
         missing_commands+=("ansible-playbook")
     fi
 
-    if ! command_exists jq; then
+    if [[ -z "${JQ_BINARY:-}" ]] || ! command_exists "${JQ_BINARY:-jq}"; then
         missing_commands+=("jq")
     fi
 

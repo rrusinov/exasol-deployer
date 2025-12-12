@@ -63,6 +63,7 @@ cmd_deploy() {
     # Set deployment directory for progress tracking
     export EXASOL_DEPLOY_DIR="$deploy_dir"
     log_plugin_cache_dir
+    log_dependency_info
 
     # Validate deployment directory
     if [[ ! -d "$deploy_dir" ]]; then
@@ -110,7 +111,26 @@ cmd_deploy() {
     # Run all tofu operations (init, plan, apply)
     log_info "Creating cloud infrastructure..."
 
-    if ! { tofu init -upgrade && tofu plan -out=tfplan && tofu apply -auto-approve tfplan; }; then
+    # Retry tofu init up to 5 times to handle temporary 503 errors
+    local init_success=false
+    for attempt in $(seq 1 5); do
+        if "${TOFU_BINARY:-tofu}" init -upgrade; then
+            init_success=true
+            break
+        else
+            if [[ $attempt -lt 5 ]]; then
+                log_info "Tofu init failed (attempt $attempt/5), retrying in 10s..."
+                sleep 10
+            fi
+        fi
+    done
+    
+    if [[ "$init_success" != "true" ]]; then
+        state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
+        die "Infrastructure deployment failed: tofu init failed after 5 attempts"
+    fi
+
+    if ! { "${TOFU_BINARY:-tofu}" plan -out=tfplan && "${TOFU_BINARY:-tofu}" apply -auto-approve tfplan; }; then
         state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
         die "Infrastructure deployment failed"
     fi
@@ -153,7 +173,7 @@ cmd_deploy() {
     log_info "Configuring cluster with Ansible..."
     # Ensure stdin is in blocking mode to avoid Ansible errors
     # Redirect stdin from /dev/null to prevent non-blocking IO issues
-    if ! ansible-playbook -i inventory.ini .templates/setup-exasol-cluster.yml </dev/null; then
+    if ! "${ANSIBLE_PLAYBOOK:-ansible-playbook}" -i inventory.ini .templates/setup-exasol-cluster.yml </dev/null; then
         state_set_status "$deploy_dir" "$STATE_DEPLOYMENT_FAILED"
         die "Ansible configuration failed"
     fi

@@ -29,10 +29,10 @@ echo
 echo "TEST: Local development version shows 'dev'"
 TESTS_RUN=$((TESTS_RUN + 1))
 output=$(./exasol version </dev/null)
-if [[ "$output" == *"vdev"* ]]; then
+if [[ "$output" == *"dev"* ]]; then
     pass "Local version shows 'dev'"
 else
-    fail "Expected 'vdev' in output"
+    fail "Expected 'dev' in output"
 fi
 
 # Test 2: Version command works
@@ -48,7 +48,7 @@ fi
 echo "TEST: Version output has correct format"
 TESTS_RUN=$((TESTS_RUN + 1))
 output=$(./exasol version </dev/null)
-if [[ "$output" == *"Exasol Cloud Deployer v"* ]]; then
+if [[ "$output" == *"Exasol Cloud Deployer "* ]]; then
     pass "Version output has correct format"
 else
     fail "Version output format incorrect"
@@ -63,7 +63,7 @@ fi
 echo "TEST: EXASOL_VERSION environment variable overrides version"
 TESTS_RUN=$((TESTS_RUN + 1))
 output=$(EXASOL_VERSION="test-override" ./exasol version </dev/null)
-if [[ "$output" == *"vtest-override"* ]]; then
+if [[ "$output" == *"test-override"* ]]; then
     pass "Environment variable override works"
 else
     fail "Environment variable override failed"

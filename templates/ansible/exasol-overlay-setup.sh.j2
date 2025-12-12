@@ -38,14 +38,23 @@ fi
 
 trap 'log "ERROR: VXLAN overlay setup failed (line ${BASH_LINENO[0]}, exit code $?)"' ERR
 
-# Enable IP forwarding and multicast support
-sysctl -w net.ipv4.ip_forward=1 >/dev/null
-sysctl -w net.ipv4.conf.all.forwarding=1 >/dev/null
-if ! grep -q '^net.ipv4.ip_forward=1$' /etc/sysctl.conf; then
-    echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+# Enable IP forwarding but keep it scoped to VXLAN/bridge only.
+# We persist via a dedicated drop-in to avoid touching global sysctl.conf.
+SYSCTL_DROPIN="/etc/sysctl.d/exasol-overlay.conf"
+cat > "${SYSCTL_DROPIN}" <<'EOF'
+net.ipv4.ip_forward=1
+net.ipv4.conf.all.forwarding=0
+net.ipv4.conf.default.forwarding=0
+net.bridge.bridge-nf-call-iptables=1
+EOF
+
+# Ensure bridge netfilter sysctl exists before applying.
+modprobe br_netfilter
+if ! grep -qx "br_netfilter" /etc/modules; then
+    echo "br_netfilter" >> /etc/modules
 fi
-if ! grep -q '^net.ipv4.conf.all.forwarding=1$' /etc/sysctl.conf; then
-    echo "net.ipv4.conf.all.forwarding=1" >> /etc/sysctl.conf
+if ! sysctl -p "${SYSCTL_DROPIN}" >/dev/null; then
+    log "WARNING: Failed to apply ${SYSCTL_DROPIN}; continuing but forwarding scope may be degraded"
 fi
 
 # Load VXLAN kernel module
@@ -118,6 +127,19 @@ ip link set "${VXLAN_IFACE}" master "${BRIDGE_IFACE}"
 
 # Add route for overlay network
 ip route replace "${OVERLAY_NETWORK}" dev "${BRIDGE_IFACE}" || true
+
+# Scope IP forwarding to overlay-facing interfaces only
+sysctl -w "net.ipv4.conf.${VXLAN_IFACE}.forwarding=1" >/dev/null || true
+sysctl -w "net.ipv4.conf.${BRIDGE_IFACE}.forwarding=1" >/dev/null || true
+
+# Warn if FORWARD policy is wide open (nftables/iptables)
+if command -v nft >/dev/null 2>&1; then
+    forward_policy="$(nft list ruleset 2>/dev/null | awk '/hook forward/,/}/' | awk '/policy/ {print $2; exit}')"
+    [[ "${forward_policy}" == "accept" ]] && log "WARNING: FORWARD policy is ACCEPT; restrict overlay traffic with nftables if needed"
+elif command -v iptables >/dev/null 2>&1; then
+    forward_policy="$(iptables -S FORWARD 2>/dev/null | awk 'NR==1 {print $1}' | sed 's/^-P //')"
+    [[ "${forward_policy}" == "ACCEPT" ]] && log "WARNING: FORWARD policy is ACCEPT; restrict overlay traffic with iptables if needed"
+fi
 
 # Seed initial FDB/ARP entries to peers so traffic floods out
 for seed_ip in "${SEED_NODES[@]}"; do

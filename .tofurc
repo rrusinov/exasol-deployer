@@ -1,0 +1,12 @@
+# OpenTofu configuration for Exasol Deployer
+# Uses direct downloads for maximum compatibility
+
+plugin_cache_dir = "$HOME/.cache/exasol-tofu-plugins"
+
+provider_installation {
+  # Use direct downloads with retry for reliability
+  direct {
+    exclude = []
+    download_retry_count = 10
+  }
+}

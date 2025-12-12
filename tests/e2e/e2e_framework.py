@@ -331,10 +331,11 @@ summary {{ cursor: pointer; font-weight: bold; padding: 0.5rem; background: #f0f
 class E2ETestFramework:
     """Main E2E test framework class."""
 
-    def __init__(self, config_path: str, results_dir: Optional[Path] = None, db_version: Optional[str] = None, stop_on_error: bool = False):
+    def __init__(self, config_path: str, results_dir: Optional[Path] = None, db_version: Optional[str] = None, stop_on_error: bool = False, portable_deps: bool = False):
         self.config_path = Path(config_path)
         self.db_version = db_version  # Optional database version override
         self.stop_on_error = stop_on_error  # Stop execution on first test failure
+        self.portable_deps = portable_deps  # Install portable dependencies (overrides config-level settings)
         
         # Create execution-timestamp directory: ./tmp/tests/e2e-YYYYMMDD-HHMMSS/
         self.execution_timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -392,8 +393,18 @@ class E2ETestFramework:
         # CRITICAL: Use shared locking for both build and install to prevent race conditions
         # where one process builds while another installs a partially written file
         self.logger.info("Using release testing workflow")
-        install_dir = self.results_dir / 'install'
-        self.installer_path, self.exasol_bin = self._build_and_install_release(install_dir)
+        
+        # Check if we should use shared installation (set by run_e2e.sh for multi-provider runs)
+        shared_install_root = os.environ.get('E2E_SHARED_INSTALL_ROOT')
+        if shared_install_root:
+            # Use shared installation directory across all provider configs
+            install_dir = Path(shared_install_root) / 'install'
+            install_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            # Use per-config installation directory (default behavior)
+            install_dir = self.results_dir / 'install'
+            
+        self.installer_path, self.exasol_bin = self._build_and_install_release(install_dir, use_portable_deps=self.portable_deps)
         self.logger.info(f"Using installed exasol binary: {self.exasol_bin}")
 
     def _resolve_db_version(self, suite_db_version: Optional[Union[str, List[str]]]) -> Optional[str]:
@@ -509,7 +520,7 @@ class E2ETestFramework:
         
         return False
 
-    def _build_and_install_release(self, install_dir: Path) -> tuple[Path, Path]:
+    def _build_and_install_release(self, install_dir: Path, use_portable_deps: bool = False) -> tuple[Path, Path]:
         """Build and install release artifact with proper locking
         
         CRITICAL: This method uses file locking to prevent race conditions where:
@@ -617,7 +628,7 @@ class E2ETestFramework:
                     self.logger.info(f"Release build complete: {installer_path}")
                 
                 # Now install under the same lock to prevent reading partial files
-                exasol_bin = self._install_release_locked(installer_path, install_dir)
+                exasol_bin = self._install_release_locked(installer_path, install_dir, use_portable_deps)
                 
                 return installer_path, exasol_bin
                 
@@ -729,12 +740,13 @@ class E2ETestFramework:
                 raise
             raise RuntimeError(f"Release build failed: {e}")
 
-    def _install_release_locked(self, installer_path: Path, install_dir: Path) -> Path:
+    def _install_release_locked(self, installer_path: Path, install_dir: Path, use_portable_deps: bool = False) -> Path:
         """Install release artifact (called under lock from _build_and_install_release)
         
         Args:
             installer_path: Path to the installer script
             install_dir: Directory to install into
+            use_portable_deps: Whether to install portable dependencies
             
         Returns:
             Path to the installed exasol symlink
@@ -742,14 +754,15 @@ class E2ETestFramework:
         Raises:
             RuntimeError: If installation fails
         """
-        return self._install_release(installer_path, install_dir)
+        return self._install_release(installer_path, install_dir, use_portable_deps)
 
-    def _install_release(self, installer_path: Path, install_dir: Path) -> Path:
+    def _install_release(self, installer_path: Path, install_dir: Path, use_portable_deps: bool = False) -> Path:
         """Install release artifact to test directory
         
         Args:
             installer_path: Path to the installer script
             install_dir: Directory to install into (installer will create subdirectory)
+            use_portable_deps: Whether to install portable dependencies
             
         Returns:
             Path to the installed exasol symlink
@@ -757,7 +770,7 @@ class E2ETestFramework:
         Raises:
             RuntimeError: If installation fails
         """
-        self.logger.info(f"Installing release to: {install_dir}")
+        self.logger.info(f"Installing release to: {install_dir} (portable_deps: {use_portable_deps})")
         
         # Create install directory
         install_dir.mkdir(parents=True, exist_ok=True)
@@ -768,43 +781,59 @@ class E2ETestFramework:
             abs_installer_path = installer_path.resolve()
             abs_install_dir = install_dir.resolve()
             
-            # Use --extract-only to avoid PATH modifications in e2e testing
-            # This extracts files without modifying shell configuration files
-            extract_dir = abs_install_dir / 'exasol-deployer'
-            
-            result = subprocess.run(
-                ['/usr/bin/env', 'bash', str(abs_installer_path), '--extract-only', str(extract_dir)],
-                capture_output=True,
-                text=True,
-                timeout=60,  # 1 minute timeout
-                cwd=self.repo_root
-            )
-            
-            # Log installation output
-            if result.stdout:
-                self.logger.info(f"Install STDOUT:\n{result.stdout.strip()}")
-            if result.stderr:
-                self.logger.info(f"Install STDERR:\n{result.stderr.strip()}")
-            
-            if result.returncode != 0:
-                error_msg = f"Installation failed with exit code {result.returncode}"
-                if result.stdout or result.stderr:
-                    error_msg += f"\nOutput:\n{result.stdout}\n{result.stderr}"
-                raise RuntimeError(error_msg)
-            
-            # Create symlink manually since --extract-only doesn't create it
-            exasol_symlink = install_dir / 'exasol'
-            exasol_binary = extract_dir / 'exasol'
-            
-            if not exasol_binary.exists():
-                raise RuntimeError(f"Extracted exasol binary not found: {exasol_binary}")
-            
-            # Remove existing symlink if it exists
-            if exasol_symlink.exists() or exasol_symlink.is_symlink():
-                exasol_symlink.unlink()
-            
-            # Create symlink
-            exasol_symlink.symlink_to(exasol_binary)
+            if use_portable_deps:
+                # Install with dependencies
+                self.logger.info("Installing with portable dependencies...")
+                result = subprocess.run(
+                    ['/usr/bin/env', 'bash', str(abs_installer_path), '--install-dependencies', '--prefix', str(abs_install_dir), '--yes', '--no-path'],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,  # 5 minute timeout for dependency downloads
+                    cwd=self.repo_root
+                )
+                exasol_symlink = abs_install_dir / 'exasol'
+                extract_dir = abs_install_dir / 'exasol-deployer'  # For portable deps, files are in subdirectory
+            else:
+                # Use --extract-only to avoid PATH modifications in e2e testing
+                # This extracts files without modifying shell configuration files
+                extract_dir = abs_install_dir / 'exasol-deployer'
+                
+                result = subprocess.run(
+                    ['/usr/bin/env', 'bash', str(abs_installer_path), '--extract-only', str(extract_dir)],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,  # 1 minute timeout
+                    cwd=self.repo_root
+                )
+                
+                # Log installation output
+                if result.stdout:
+                    self.logger.info(f"Install STDOUT:\n{result.stdout.strip()}")
+                if result.stderr:
+                    self.logger.info(f"Install STDERR:\n{result.stderr.strip()}")
+                
+                # Check return code first before checking for files
+                if result.returncode != 0:
+                    error_msg = f"Installation failed with exit code {result.returncode}"
+                    if result.stdout or result.stderr:
+                        error_msg += f"\nOutput:\n{result.stdout}\n{result.stderr}"
+                    raise RuntimeError(error_msg)
+                
+                exasol_symlink = extract_dir / 'exasol'
+                
+                # Create symlink manually since --extract-only doesn't create it
+                exasol_symlink = install_dir / 'exasol'
+                exasol_binary = extract_dir / 'exasol'
+                
+                if not exasol_binary.exists():
+                    raise RuntimeError(f"Extracted exasol binary not found: {exasol_binary}")
+                
+                # Remove existing symlink if it exists
+                if exasol_symlink.exists() or exasol_symlink.is_symlink():
+                    exasol_symlink.unlink()
+                
+                # Create symlink
+                exasol_symlink.symlink_to(exasol_binary)
             
             # Verify symlink exists and is executable
             if not exasol_symlink.exists():
@@ -1788,6 +1817,43 @@ class E2ETestFramework:
             suite_db_version = test_case.get('db_version')
             resolved_db_version = self._resolve_db_version(suite_db_version)
 
+            # Check if portable dependencies are needed for this test
+            # Command-line --portable-deps overrides config-level use_portable_dependencies
+            use_portable_deps = self.portable_deps or test_case.get('use_portable_dependencies', False)
+            exasol_bin_to_use = self.exasol_bin
+            
+            if use_portable_deps and not self.portable_deps:
+                # Only install per-test portable deps if not already installed globally
+                self._log_to_file(log_file, "Installing portable dependencies for this test...")
+                # Install dependencies to test-specific directory
+                portable_install_dir = deploy_dir / 'portable-install'
+                portable_install_dir.mkdir(exist_ok=True)
+                
+                try:
+                    # Install with dependencies
+                    result_install = subprocess.run(
+                        ['/usr/bin/env', 'bash', str(self.installer_path), '--install-dependencies', 
+                         '--prefix', str(portable_install_dir), '--yes', '--no-path'],
+                        capture_output=True,
+                        text=True,
+                        timeout=300,  # 5 minute timeout for dependency downloads
+                        cwd=self.repo_root
+                    )
+                    
+                    if result_install.returncode != 0:
+                        raise RuntimeError(f"Portable dependencies installation failed: {result_install.stderr}")
+                    
+                    # Use the portable installation
+                    exasol_bin_to_use = portable_install_dir / 'exasol'
+                    if not exasol_bin_to_use.exists():
+                        raise RuntimeError(f"Portable exasol binary not found: {exasol_bin_to_use}")
+                    
+                    self._log_to_file(log_file, f"Using portable dependencies: {exasol_bin_to_use}")
+                    
+                except Exception as e:
+                    self._log_to_file(log_file, f"Failed to install portable dependencies: {e}")
+                    raise RuntimeError(f"Portable dependencies installation failed: {e}")
+
             # Create workflow executor
             executor = WorkflowExecutor(
                 deploy_dir=deploy_dir,
@@ -1795,7 +1861,7 @@ class E2ETestFramework:
                 logger=self.logger,
                 log_callback=log_callback,
                 db_version=resolved_db_version,
-                exasol_bin=self.exasol_bin
+                exasol_bin=exasol_bin_to_use
             )
 
             # Execute workflow
@@ -2671,6 +2737,7 @@ def main():
     parser.add_argument('--providers', help='Comma separated list of providers to include (e.g. aws,gcp)')
     parser.add_argument('--tests', help='Comma separated deployment IDs to execute')
     parser.add_argument('--db-version', help='Database version to use (overrides config, e.g. 8.0.0-x86_64)')
+    parser.add_argument('--portable-deps', action='store_true', help='Install portable dependencies (overrides config-level settings)')
 
     args = parser.parse_args()
 
@@ -2679,7 +2746,8 @@ def main():
             args.config,
             Path(args.results_dir) if args.results_dir else None,
             db_version=args.db_version,
-            stop_on_error=args.stop_on_error
+            stop_on_error=args.stop_on_error,
+            portable_deps=args.portable_deps
         )
     except ValueError as e:
         # Configuration validation failed - error already printed to stderr

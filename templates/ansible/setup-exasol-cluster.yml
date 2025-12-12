@@ -235,6 +235,14 @@
             group: root
             mode: "0755"
 
+        - name: Install overlay teardown script for clean shutdown
+          ansible.builtin.template:
+            src: exasol-overlay-stop.sh.j2
+            dest: /usr/local/bin/exasol-overlay-stop.sh
+            owner: root
+            group: root
+            mode: "0755"
+
         - name: Install systemd service for overlay network on boot
           ansible.builtin.copy:
             src: exasol-overlay.service
