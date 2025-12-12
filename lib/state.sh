@@ -80,7 +80,7 @@ state_read() {
         return 1
     fi
 
-    jq -r ".$key // empty" "$state_file"
+    "${JQ_BINARY:-jq}" -r ".$key // empty" "$state_file"
 }
 
 # Update state
@@ -177,7 +177,7 @@ EOF
 
     # Verify the written JSON to ensure we own the lock and it matches the PID
     local written_pid
-    written_pid=$(jq -r '.pid // empty' "$lock_file" 2>/dev/null || echo "")
+    written_pid=$("${JQ_BINARY:-jq}" -r '.pid // empty' "$lock_file" 2>/dev/null || echo "")
     if [[ -z "$written_pid" || "$written_pid" -ne $$ ]]; then
         log_error "Lock file content mismatch, removing lock: $lock_file"
         rm -f "$lock_file"
@@ -208,7 +208,7 @@ cleanup_stale_lock() {
     fi
 
     local pid
-    pid=$(jq -r '.pid // empty' "$lock_file" 2>/dev/null || echo "")
+    pid=$("${JQ_BINARY:-jq}" -r '.pid // empty' "$lock_file" 2>/dev/null || echo "")
 
     if [[ -z "$pid" ]]; then
         log_warn "Removing stale lock without PID information: $lock_file"
@@ -238,7 +238,7 @@ lock_info() {
         cat "$lock_file"
     else
         # Return specific key value
-        jq -r ".$key // empty" "$lock_file"
+        "${JQ_BINARY:-jq}" -r ".$key // empty" "$lock_file"
     fi
 }
 

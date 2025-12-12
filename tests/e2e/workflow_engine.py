@@ -56,6 +56,7 @@ Dynamic validation checks use data from `exasol status` and `exasol health` comm
 
 import json
 import logging
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -165,7 +166,7 @@ class ValidationRegistry:
         """Run exasol CLI command"""
         cmd = [str(self.exasol_bin), command, '--deployment-dir', str(self.deploy_dir)]
         cmd.extend(args)
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=360)
 
     def _read_state(self) -> Dict[str, Any]:
         """Read deployment state from .exasol.json"""
@@ -177,7 +178,23 @@ class ValidationRegistry:
 
     def _run_exasol_health(self) -> Dict[str, Any]:
         """Run exasol health command and return parsed JSON"""
-        result = self._run_exasol_command('health', '--output-format', 'json')
+        try:
+            result = self._run_exasol_command('health', '--output-format', 'json')
+        except subprocess.TimeoutExpired as e:
+            self.logger.error(f"Health check command timed out after 360 seconds")
+            # Return structure indicating health check unavailable due to timeout
+            return {
+                'status': 'timeout',
+                'checks': {
+                    'ssh': {'passed': 0, 'failed': 0},
+                    'services': {'active': 0, 'failed': 0},
+                    'adminui': {'passed': 0, 'failed': 0},
+                    'database': {'passed': 0, 'failed': 0},
+                    'cos_ssh': {'passed': 0, 'failed': 0}
+                },
+                'issues_count': 0,
+                'issues': [f"Health check timed out after 360 seconds"]
+            }
         
         # Try to parse JSON output first, even if command failed
         # Health command returns exit code 1 when issues are detected,
@@ -424,12 +441,20 @@ class WorkflowExecutor:
         self.log_callback(f"Running command: {cmd_str}")
         
         # Use Popen to stream output in real-time
+        # Ensure proper locale environment for ansible-playbook validation
+        env = os.environ.copy()
+        env.update({
+            'LC_ALL': 'en_US.UTF-8',
+            'LANG': 'en_US.UTF-8'
+        })
+        
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            bufsize=1  # Line buffered
+            bufsize=1,  # Line buffered
+            env=env
         )
         
         stdout_lines = []

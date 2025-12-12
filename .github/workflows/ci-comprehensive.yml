@@ -38,15 +38,15 @@ jobs:
       - name: Advanced ShellCheck Analysis
         run: |
           echo "Running comprehensive ShellCheck analysis..."
-          
+
           # Create detailed shellcheck report
           mkdir -p reports
-          
+
           # Find all shell scripts
           find . -type f -name '*.sh' -not -path './build/*' -not -path './tmp/*' -not -path './.git/*' > shell_scripts.txt
-          
+
           echo "Found $(wc -l < shell_scripts.txt) shell scripts to analyze"
-          
+
           # Run shellcheck with detailed output
           while IFS= read -r script; do
             echo "Analyzing: $script"
@@ -56,15 +56,15 @@ jobs:
               echo "  ✅ Clean: $script"
             fi
           done < shell_scripts.txt
-          
+
           # Generate summary
           echo "## ShellCheck Analysis Summary" > reports/shellcheck_summary.md
           echo "" >> reports/shellcheck_summary.md
-          
+
           TOTAL_SCRIPTS=$(wc -l < shell_scripts.txt)
           CLEAN_SCRIPTS=$(find reports -name "*.json" -exec sh -c 'test $(jq length "$1") -eq 0' _ {} \; -print | wc -l)
           ISSUES_SCRIPTS=$((TOTAL_SCRIPTS - CLEAN_SCRIPTS))
-          
+
           echo "- **Total scripts analyzed**: $TOTAL_SCRIPTS" >> reports/shellcheck_summary.md
           echo "- **Scripts with no issues**: $CLEAN_SCRIPTS" >> reports/shellcheck_summary.md
           echo "- **Scripts with issues**: $ISSUES_SCRIPTS" >> reports/shellcheck_summary.md
@@ -72,38 +72,38 @@ jobs:
       - name: Security Pattern Analysis
         run: |
           echo "Running security pattern analysis..."
-          
+
           # Look for potential security issues
           mkdir -p reports/security
-          
+
           # Check for hardcoded credentials patterns
           echo "Scanning for credential patterns..."
           grep -r -n -E "(password|secret|key|token|api_key).*=.*['\"][^'\"]{8,}" . \
             --exclude-dir=.git --exclude-dir=tmp --exclude-dir=build --exclude-dir=reports \
             --include="*.sh" --include="*.py" --include="*.yml" --include="*.yaml" \
             > reports/security/credential_patterns.txt || true
-          
+
           # Check for TODO/FIXME/HACK comments that might indicate security issues
           echo "Scanning for security-related TODO items..."
           grep -r -n -i -E "(todo|fixme|hack).*(security|password|auth|token|key)" . \
             --exclude-dir=.git --exclude-dir=tmp --exclude-dir=build --exclude-dir=reports \
             > reports/security/security_todos.txt || true
-          
+
           # Check for potential command injection patterns
           echo "Scanning for potential command injection..."
           grep -r -n -E "\$\([^)]*\$" . \
             --exclude-dir=.git --exclude-dir=tmp --exclude-dir=build --exclude-dir=reports \
             --include="*.sh" \
             > reports/security/command_injection_patterns.txt || true
-          
+
           # Generate security summary
           echo "## Security Analysis Summary" > reports/security/summary.md
           echo "" >> reports/security/summary.md
-          
+
           CRED_COUNT=$(wc -l < reports/security/credential_patterns.txt 2>/dev/null || echo 0)
           TODO_COUNT=$(wc -l < reports/security/security_todos.txt 2>/dev/null || echo 0)
           INJECTION_COUNT=$(wc -l < reports/security/command_injection_patterns.txt 2>/dev/null || echo 0)
-          
+
           echo "- **Potential credential patterns**: $CRED_COUNT" >> reports/security/summary.md
           echo "- **Security-related TODOs**: $TODO_COUNT" >> reports/security/summary.md
           echo "- **Potential command injection patterns**: $INJECTION_COUNT" >> reports/security/summary.md
@@ -111,24 +111,24 @@ jobs:
       - name: Documentation Quality Analysis
         run: |
           echo "Running documentation quality analysis..."
-          
+
           mkdir -p reports/documentation
-          
+
           # Check for broken internal links
           echo "Checking internal documentation links..."
           find . -name "*.md" -not -path "./.git/*" -not -path "./reports/*" | while read -r md_file; do
             echo "Checking: $md_file"
-            
+
             # Extract relative links and check if files exist
             grep -oE '\[([^\]]+)\]\(([^)]+)\)' "$md_file" | while IFS= read -r link; do
               # Extract the URL part
               url=$(echo "$link" | sed 's/.*](\([^)]*\)).*/\1/')
-              
+
               # Skip external URLs
               if [[ "$url" =~ ^https?:// ]]; then
                 continue
               fi
-              
+
               # Check if relative file exists
               if [[ "$url" =~ ^[^/] ]]; then
                 # Relative to current file
@@ -138,16 +138,16 @@ jobs:
                 # Absolute path from repo root
                 full_path=".$url"
               fi
-              
+
               if [[ ! -f "$full_path" && ! -d "$full_path" ]]; then
                 echo "BROKEN: $md_file -> $url (resolved to: $full_path)" >> reports/documentation/broken_links.txt
               fi
             done
           done || true
-          
+
           # Check for missing documentation
           echo "Checking for missing documentation..."
-          
+
           # Check if all scripts have corresponding documentation
           find . -name "*.sh" -path "./scripts/*" | while read -r script; do
             script_name=$(basename "$script" .sh)
@@ -159,37 +159,37 @@ jobs:
       - name: Code Complexity Analysis
         run: |
           echo "Running code complexity analysis..."
-          
+
           mkdir -p reports/complexity
-          
+
           # Analyze shell script complexity (basic metrics)
           find . -name "*.sh" -not -path "./.git/*" -not -path "./reports/*" | while read -r script; do
             echo "Analyzing complexity: $script"
-            
+
             # Count lines, functions, and complexity indicators
             LINES=$(wc -l < "$script" 2>/dev/null || echo 0)
             FUNCTIONS=$(grep -c "^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*(" "$script" 2>/dev/null || echo 0)
             IF_STATEMENTS=$(grep -c "if \|elif " "$script" 2>/dev/null || echo 0)
             LOOPS=$(grep -c "for \|while " "$script" 2>/dev/null || echo 0)
-            
+
             # Ensure all variables are numeric (default to 0 if empty or non-numeric)
             LINES=${LINES:-0}
             FUNCTIONS=${FUNCTIONS:-0}
             IF_STATEMENTS=${IF_STATEMENTS:-0}
             LOOPS=${LOOPS:-0}
-            
+
             # Validate that all values are actually numeric
             [[ "$LINES" =~ ^[0-9]+$ ]] || LINES=0
             [[ "$FUNCTIONS" =~ ^[0-9]+$ ]] || FUNCTIONS=0
             [[ "$IF_STATEMENTS" =~ ^[0-9]+$ ]] || IF_STATEMENTS=0
             [[ "$LOOPS" =~ ^[0-9]+$ ]] || LOOPS=0
-            
+
             # Simple complexity score (with error handling)
             COMPLEXITY=$((IF_STATEMENTS + LOOPS + FUNCTIONS))
-            
+
             echo "$script,$LINES,$FUNCTIONS,$IF_STATEMENTS,$LOOPS,$COMPLEXITY" >> reports/complexity/metrics.csv
           done
-          
+
           # Generate complexity summary
           echo "script,lines,functions,if_statements,loops,complexity_score" > reports/complexity/complexity_report.csv
           if [[ -f reports/complexity/metrics.csv ]]; then
@@ -199,12 +199,12 @@ jobs:
       - name: Dependency Analysis
         run: |
           echo "Running dependency analysis..."
-          
+
           mkdir -p reports/dependencies
-          
+
           # Analyze external command dependencies
           echo "Analyzing external command dependencies..."
-          
+
           # Find all external commands used
           find . -name "*.sh" -not -path "./.git/*" -not -path "./reports/*" -exec grep -h -o '\b[a-z][a-z0-9_-]*\b' {} \; | \
             sort | uniq | while read -r cmd; do
@@ -213,7 +213,7 @@ jobs:
               echo "$cmd" >> reports/dependencies/external_commands.txt
             fi
           done || true
-          
+
           # Analyze Python dependencies
           if find . -name "*.py" -not -path "./.git/*" | head -1 >/dev/null 2>&1; then
             echo "Analyzing Python dependencies..."
@@ -224,30 +224,30 @@ jobs:
       - name: Generate Comprehensive Report
         run: |
           echo "Generating comprehensive quality report..."
-          
+
           cat > reports/comprehensive_report.md << 'EOF'
           # Comprehensive Code Quality Report
-          
+
           This report provides a detailed analysis of code quality, security, and maintainability.
-          
+
           ## Summary
-          
+
           EOF
-          
+
           # Add shellcheck summary
           if [[ -f reports/shellcheck_summary.md ]]; then
             echo "### ShellCheck Analysis" >> reports/comprehensive_report.md
             cat reports/shellcheck_summary.md >> reports/comprehensive_report.md
             echo "" >> reports/comprehensive_report.md
           fi
-          
+
           # Add security summary
           if [[ -f reports/security/summary.md ]]; then
             echo "### Security Analysis" >> reports/comprehensive_report.md
             cat reports/security/summary.md >> reports/comprehensive_report.md
             echo "" >> reports/comprehensive_report.md
           fi
-          
+
           # Add documentation summary
           echo "### Documentation Quality" >> reports/comprehensive_report.md
           BROKEN_LINKS=$(wc -l < reports/documentation/broken_links.txt 2>/dev/null || echo 0)
@@ -255,7 +255,7 @@ jobs:
           echo "- **Broken internal links**: $BROKEN_LINKS" >> reports/comprehensive_report.md
           echo "- **Missing documentation**: $MISSING_DOCS" >> reports/comprehensive_report.md
           echo "" >> reports/comprehensive_report.md
-          
+
           # Add complexity summary
           if [[ -f reports/complexity/complexity_report.csv ]]; then
             echo "### Code Complexity" >> reports/comprehensive_report.md
@@ -265,12 +265,12 @@ jobs:
             echo "- **Average complexity score**: $AVG_COMPLEXITY" >> reports/comprehensive_report.md
             echo "" >> reports/comprehensive_report.md
           fi
-          
+
           # Add dependency summary
           echo "### Dependencies" >> reports/comprehensive_report.md
           EXT_COMMANDS=$(wc -l < reports/dependencies/external_commands.txt 2>/dev/null || echo 0)
           echo "- **External commands used**: $EXT_COMMANDS" >> reports/comprehensive_report.md
-          
+
           if [[ -f reports/dependencies/python_imports.txt ]]; then
             PY_IMPORTS=$(wc -l < reports/dependencies/python_imports.txt)
             echo "- **Python imports**: $PY_IMPORTS" >> reports/comprehensive_report.md
@@ -306,30 +306,30 @@ jobs:
       - name: Analyze script performance
         run: |
           echo "Running performance analysis..."
-          
+
           mkdir -p reports/performance
-          
+
           # Test performance of key scripts
           echo "script,real_time,user_time,sys_time,max_memory_kb" > reports/performance/performance_metrics.csv
-          
+
           # Test main exasol script performance
           chmod +x exasol
           echo "Testing exasol script performance..."
-          
+
           # Test help command performance
           /usr/bin/time -f "%e,%U,%S,%M" -o time_output ./exasol --help >/dev/null 2>&1 || true
           if [[ -f time_output ]]; then
             echo "exasol_help,$(cat time_output)" >> reports/performance/performance_metrics.csv
             rm -f time_output
           fi
-          
+
           # Test version command performance
           /usr/bin/time -f "%e,%U,%S,%M" -o time_output ./exasol version >/dev/null 2>&1 || true
           if [[ -f time_output ]]; then
             echo "exasol_version,$(cat time_output)" >> reports/performance/performance_metrics.csv
             rm -f time_output
           fi
-          
+
           # Test list-versions performance
           /usr/bin/time -f "%e,%U,%S,%M" -o time_output ./exasol init --list-versions >/dev/null 2>&1 || true
           if [[ -f time_output ]]; then
@@ -340,20 +340,20 @@ jobs:
       - name: Analyze repository size and structure
         run: |
           echo "Analyzing repository structure..."
-          
+
           # Repository size analysis
           echo "## Repository Analysis" > reports/performance/repo_analysis.md
           echo "" >> reports/performance/repo_analysis.md
-          
+
           TOTAL_SIZE=$(du -sh . | cut -f1)
           FILE_COUNT=$(find . -type f | wc -l)
           DIR_COUNT=$(find . -type d | wc -l)
-          
+
           echo "- **Total size**: $TOTAL_SIZE" >> reports/performance/repo_analysis.md
           echo "- **File count**: $FILE_COUNT" >> reports/performance/repo_analysis.md
           echo "- **Directory count**: $DIR_COUNT" >> reports/performance/repo_analysis.md
           echo "" >> reports/performance/repo_analysis.md
-          
+
           # Largest files
           echo "### Largest Files" >> reports/performance/repo_analysis.md
           echo '```' >> reports/performance/repo_analysis.md

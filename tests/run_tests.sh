@@ -63,7 +63,17 @@ run_test_file "$TEST_DIR/test_common.sh"
 run_test_file "$TEST_DIR/test_progress.sh"
 run_test_file "$TEST_DIR/test_versions.sh"
 run_test_file "$TEST_DIR/test_version.sh"
-run_test_file "$TEST_DIR/test_installer.sh"
+
+# Installer tests for specific environments
+echo "Running installer tests for supported environments..."
+for env in ubuntu arch fedora old-bash; do
+  echo "Testing installer environment: $env"
+  if ! "$TEST_DIR/test_installer.sh" "$env"; then
+    echo "FAIL: Installer test failed for environment: $env"
+    exit 1
+  fi
+done
+
 run_test_file "$TEST_DIR/test_state.sh"
 run_test_file "$TEST_DIR/test_init.sh"
 run_test_file "$TEST_DIR/test_power_control.sh"
@@ -86,6 +96,10 @@ run_test_file "$TEST_DIR/test_permissions.sh"
 run_test_file "$TEST_DIR/test_e2e_framework.sh"
 run_test_file "$TEST_DIR/test_e2e_config.sh"
 run_test_file "$TEST_DIR/test_run_e2e.sh"
+run_test_file "$TEST_DIR/test_dependency_installer_logic.sh"
+run_test_file "$TEST_DIR/test_dependency_installation.sh"
+run_test_file "$TEST_DIR/test_dependency_installation_containers.sh"
+run_test_file "$TEST_DIR/test_installer_edge_cases_containers.sh"
 run_test_file "$TEST_DIR/test_generate_limits_report.sh"
 run_test_file "$TEST_DIR/test_cleanup_resources.sh"
 run_test_file "$TEST_DIR/test_link_validation.sh"

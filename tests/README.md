@@ -29,14 +29,11 @@ Unit tests validate individual components and functions of the Exasol Deployer w
 ## Running Unit Tests
 
 ```bash
-# Run all unit tests
-./tests/run_tests.sh
-
 # Run specific test file
 ./tests/test_common.sh
 ./tests/test_state.sh
 ./tests/test_versions.sh
-./tests/test_installer.sh
+./tests/test_installer.sh <system>
 
 # Run with verbose output
 bash -x ./tests/test_common.sh
@@ -61,7 +58,18 @@ Unit tests are organized by component:
 
 ## Installer Testing
 
-The installer test suite (`test_installer.sh`) provides comprehensive validation of the installation process:
+The installer test suite (`test_installer.sh <system>`) provides comprehensive validation of the installation process across different operating systems:
+
+**Available Systems:**
+- `ubuntu` - Ubuntu 22.04 LTS
+- `arch` - Arch Linux (latest)
+- `fedora` - Fedora (latest)
+- `old-bash` - Ubuntu 18.04 (old bash version)
+- `gentoo` - Gentoo Linux (latest)
+- `suse` - openSUSE Leap (latest)
+- `nix` - NixOS (latest)
+
+**Usage:** `./tests/test_installer.sh <system>`
 
 ### PATH Handling Tests (28 unit tests)
 - Prevents duplicate PATH entries across bash, zsh, and fish shells
@@ -707,10 +715,6 @@ All workflow operations are supported across all providers:
 - Cluster start uses `exasol start` command - requires VMs to be running
 - For DigitalOcean/Hetzner/libvirt: after cluster stop, VMs must be manually powered on before cluster start
 - Node reboot uses SSH `sudo reboot` command
-
-## Workflow Configuration Format
-
-Workflows are stored in `tests/e2e/configs/workflow/` and define sequences of test steps independent of specific deployment parameters.
 
 ## Workflow Configuration Format
 

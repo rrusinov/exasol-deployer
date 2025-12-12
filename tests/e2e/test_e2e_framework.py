@@ -981,7 +981,7 @@ class TestReleaseInstallation(unittest.TestCase):
         with self.assertRaises(RuntimeError) as context:
             framework._install_release(fake_installer, install_dir)
         
-        self.assertIn("Installation failed", str(context.exception))
+        self.assertIn("Installation failed with exit code", str(context.exception))
 
     def test_install_release_handles_missing_symlink(self):
         """Test that _install_release() raises RuntimeError when symlink is missing."""
@@ -1128,6 +1128,54 @@ class TestReleaseWorkflow(unittest.TestCase):
             self.assertIn("Using installed exasol binary", log_content,
                         "Log should document installed binary path")
             
+        except RuntimeError as e:
+            self.skipTest(f"Build or installation not available: {e}")
+
+    def test_portable_deps_flag_overrides_config(self):
+        """Test that --portable-deps flag overrides config-level settings."""
+        username = getpass.getuser()
+        
+        try:
+            # Create framework with portable_deps=True
+            with tempfile.TemporaryDirectory(prefix=f'exasol_test_{username}_') as temp_dir:
+                results_dir = Path(temp_dir) / 'results'
+                
+                framework = E2ETestFramework(
+                    self.config_file,
+                    results_dir,
+                    portable_deps=True
+                )
+                
+                # Verify portable_deps flag is set
+                self.assertTrue(framework.portable_deps, "portable_deps should be True when set via constructor")
+                
+                # Verify the installation directory exists (portable deps creates different structure)
+                install_dir = results_dir / 'install'
+                self.assertTrue(install_dir.exists(), "Install directory should exist")
+                
+                # Verify exasol binary exists
+                self.assertTrue(framework.exasol_bin.exists(), "Exasol binary should exist after installation")
+                
+        except RuntimeError as e:
+            self.skipTest(f"Build or installation not available: {e}")
+
+    def test_portable_deps_flag_false_by_default(self):
+        """Test that portable_deps defaults to False."""
+        username = getpass.getuser()
+        
+        try:
+            # Create framework without portable_deps flag
+            with tempfile.TemporaryDirectory(prefix=f'exasol_test_{username}_') as temp_dir:
+                results_dir = Path(temp_dir) / 'results'
+                
+                framework = E2ETestFramework(
+                    self.config_file,
+                    results_dir
+                )
+                
+                # Verify portable_deps flag defaults to False
+                self.assertFalse(framework.portable_deps, "portable_deps should default to False")
+                
         except RuntimeError as e:
             self.skipTest(f"Build or installation not available: {e}")
 

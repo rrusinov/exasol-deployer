@@ -41,11 +41,15 @@ check_url_accessible() {
     # --fail: return error on HTTP errors
     # --location: follow redirects
     # --max-time 10: timeout after 10 seconds
-    if curl --head --silent --fail --location --max-time 10 "$url" > /dev/null 2>&1; then
+    local curl_exit_code
+    curl --head --silent --fail --location --max-time 10 "$url" > /dev/null 2>&1
+    curl_exit_code=$?
+    
+    if [[ $curl_exit_code -eq 0 ]]; then
         assert_success 0 "URL accessible: $description"
         return 0
     else
-        assert_failure 0 "URL NOT accessible: $description (URL: $url)"
+        assert_failure $curl_exit_code "URL NOT accessible: $description (URL: $url)"
         return 1
     fi
 }

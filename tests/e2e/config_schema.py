@@ -150,6 +150,14 @@ SUT_PARAMETERS = {
         'description': 'Size of root volume in GB'
     },
     
+    # Test configuration parameters
+    'use_portable_dependencies': {
+        'type': 'bool',
+        'cli_flag': None,  # Not a CLI parameter, only for E2E config
+        'providers': 'all',
+        'description': 'Install and use portable OpenTofu, jq, and Ansible for this test'
+    },
+    
     # Cloud provider parameters
     'instance_type': {
         'type': 'string',

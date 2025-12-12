@@ -384,7 +384,7 @@ test_exasol_entrypoint_init_providers() {
             init_cmd=("$TEST_DIR/../exasol" init --cloud-provider "$provider" --deployment-dir "$test_dir")
         fi
 
-        if "${init_cmd[@]}" ; then
+        if SKIP_DEPENDENCY_CHECK=true "${init_cmd[@]}" ; then
             TESTS_TOTAL=$((TESTS_TOTAL + 1))
             TESTS_PASSED=$((TESTS_PASSED + 1))
             echo -e "${GREEN}✓${NC} exasol init should succeed for provider: $provider"

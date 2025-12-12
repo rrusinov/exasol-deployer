@@ -37,6 +37,8 @@ Install the latest release with a single command:
 
 ```bash
 curl -fsSL https://xsol.short.gy/sh | bash
+# Or with bundled dependencies (no system OpenTofu/Python/Ansible/jq needed; requires curl+unzip):
+# curl -fsSL https://xsol.short.gy/sh | bash -s -- --install-dependencies --yes
 ```
 
 Or using the full URL:
@@ -44,6 +46,24 @@ Or using the full URL:
 ```bash
 curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh | bash
 ```
+
+### Self-Contained Installation (Zero Dependencies)
+
+Install with all dependencies (OpenTofu, Python, Ansible, jq) bundled locally:
+
+```bash
+# Install with dependencies (completely self-contained)
+curl -fsSL https://xsol.short.gy/sh | bash -s -- --install-dependencies --yes
+
+# Or download and run manually
+curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh -o exasol-deployer.sh
+chmod +x exasol-deployer.sh
+./exasol-deployer.sh --install-dependencies
+```
+
+This creates a completely portable installation (~250MB) that works on any Linux/macOS system without requiring system-wide OpenTofu, Python, or Ansible installations.
+
+### Manual Download
 
 Or download and run manually:
 
@@ -103,8 +123,17 @@ For detailed build and installation documentation, see [Scripts and Build System
 
 ### Required Software
 
+**Option 1: Zero Dependencies (Recommended)**
+Use the `--install-dependencies` flag to install everything locally:
+```bash
+curl -fsSL https://xsol.short.gy/sh | bash -s -- --install-dependencies --yes
+```
+This installs OpenTofu, Python, and Ansible in a local directory (~250MB) with no system dependencies.
+
+**Option 2: System Installation**
 - **OpenTofu** or Terraform (>= 1.0)
 - **Ansible** (>= 2.9)
+- **Python 3.6+** (required for Ansible)
 - **jq** (for JSON processing)
 - **Standard Unix tools**: grep, sed, awk, curl, ssh, date, mktemp, readlink/realpath
 - **Cloud provider credentials** configured (see [Cloud Setup Guide](clouds/CLOUD_SETUP.md))

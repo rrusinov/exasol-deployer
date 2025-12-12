@@ -140,7 +140,7 @@ cmd_stop() {
     local ansible_extra=(-i inventory.ini .templates/stop-exasol-cluster.yml -e "power_off_fallback=true")
 
     # Ensure stdin is in blocking mode to avoid Ansible errors
-    if ! ansible-playbook "${ansible_extra[@]}" </dev/null; then
+    if ! "${ANSIBLE_PLAYBOOK:-ansible-playbook}" "${ansible_extra[@]}" </dev/null; then
         # Unreachable hosts after shutdown are expected since we're powering off the hosts
         log_warn "Ansible reported unreachable hosts after shutdown; this is expected if VMs are powered off."
     fi
@@ -149,7 +149,7 @@ cmd_stop() {
     if [[ "$infra_power_supported" == "true" ]]; then
         # Note: We enable refresh to ensure Terraform sees the current state (running=true)
         # This is important for all providers to detect state drift and apply changes correctly
-        if ! tofu apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_state" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped"; then
+        if ! "${TOFU_BINARY:-tofu}" apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_state" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped"; then
             state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
             die "Infrastructure stop (tofu apply) failed"
         fi

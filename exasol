@@ -49,7 +49,7 @@ LOG_LEVEL="info"
 
 # Show version
 show_version() {
-    echo "Exasol Cloud Deployer v${SCRIPT_VERSION}"
+    echo "Exasol Cloud Deployer ${SCRIPT_VERSION}"
     echo "Built with OpenTofu and Ansible"
 }
 

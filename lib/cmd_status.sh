@@ -51,15 +51,15 @@ status_get_details() {
         return 0
     fi
 
-    if ! command -v tofu >/dev/null 2>&1; then
-        log_debug "Skipping detail collection: tofu command not found"
+    if ! command -v "${TOFU_BINARY:-tofu}" >/dev/null 2>&1; then
+        log_debug "Skipping detail collection: ${TOFU_BINARY:-tofu} command not found"
         echo "$empty"
         return 0
     fi
 
     local raw_outputs
-    if ! raw_outputs=$(tofu -chdir="$deploy_dir" output -json 2>/dev/null); then
-        log_debug "Failed to read deployment details via tofu output -json"
+    if ! raw_outputs=$("${TOFU_BINARY:-tofu}" -chdir="$deploy_dir" output -json 2>/dev/null); then
+        log_debug "Failed to read deployment details via ${TOFU_BINARY:-tofu} output -json"
         echo "$empty"
         return 0
     fi

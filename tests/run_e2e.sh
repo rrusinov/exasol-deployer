@@ -59,7 +59,7 @@ cleanup_on_interrupt() {
         echo "Destroying ${#DEPLOYMENT_DIRS[@]} active deployment(s)..."
         
         # Try up to 3 times
-        for attempt in 1 2 3 4 5 6; do
+        for attempt in 1 2 3; do
             declare -a failed_dirs=()
             
             # Launch destroy operations in parallel with timeout
@@ -118,8 +118,9 @@ cleanup_on_interrupt() {
             DEPLOYMENT_DIRS=("${failed_dirs[@]}")
             
             if [[ $attempt -lt 3 ]]; then
-                echo "  ${#failed_dirs[@]} deployment(s) still active, retrying in 3 seconds..."
-                sleep 3
+                local backoff=$((attempt * 5))
+                echo "  ${#failed_dirs[@]} deployment(s) still active, retrying in ${backoff}s..."
+                sleep "${backoff}"
             else
                 echo "  Warning: ${#failed_dirs[@]} deployment(s) could not be destroyed after 3 attempts"
                 for dir in "${failed_dirs[@]}"; do
@@ -151,6 +152,7 @@ Options:
   --rerun <exec-dir> <suite>    Rerun specific suite from execution directory
   --list-test(s) [provider]     List all known tests grouped by provider (optionally filter by provider)
   --run-tests <id[,id...]>      Execute only the specified tests (ids from --list-tests)
+  --portable-deps               Use portable dependencies for installation
   -h, --help                    Show this help
 
 Examples:
@@ -176,6 +178,7 @@ RERUN_EXEC_DIR=""
 RERUN_SUITE=""
 LIST_TESTS=0
 RUN_TEST_IDS=""
+PORTABLE_DEPS=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -225,6 +228,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --stop-on-error)
             STOP_ON_ERROR=1
+            shift
+            ;;
+        --portable-deps)
+            PORTABLE_DEPS=1
             shift
             ;;
         --db-version)
@@ -329,6 +336,10 @@ run_framework() {
     if [[ "$STOP_ON_ERROR" -eq 1 ]]; then
         stop_on_error_args=(--stop-on-error)
     fi
+    local portable_deps_args=()
+    if [[ "$PORTABLE_DEPS" -eq 1 ]]; then
+        portable_deps_args=(--portable-deps)
+    fi
     
     # Run the framework without capturing output so progress bar is visible
     python3 "$SCRIPT_DIR/e2e/e2e_framework.py" run \
@@ -336,6 +347,7 @@ run_framework() {
         "${results_dir_args[@]}" \
         --parallel "$PARALLEL" \
         "${stop_on_error_args[@]}" \
+        "${portable_deps_args[@]}" \
         "${db_version_args[@]}" \
         "$@"
     
@@ -682,6 +694,30 @@ else
         declare -A cfg_pids=()
         declare -A cfg_results=()
 
+        # Set shared installation root for all provider configs to avoid redundant installations
+        export E2E_SHARED_INSTALL_ROOT="$parallel_root"
+
+        # Check if any config needs portable dependencies
+        portable_deps_needed=false
+        for cfg in "${filtered_configs[@]}"; do
+            # Check main config file
+            if grep -q '"use_portable_dependencies".*true' "$cfg" 2>/dev/null; then
+                portable_deps_needed=true
+                break
+            fi
+            # Check referenced SUT files
+            cfg_dir="$(dirname "$cfg")"
+            while IFS= read -r sut_file; do
+                if [[ -n "$sut_file" ]]; then
+                    sut_path="$cfg_dir/$sut_file"
+                    if [[ -f "$sut_path" ]] && grep -q '"use_portable_dependencies".*true' "$sut_path" 2>/dev/null; then
+                        portable_deps_needed=true
+                        break 2
+                    fi
+                fi
+            done < <(grep -o '"sut": *"[^"]*"' "$cfg" 2>/dev/null | sed 's/.*"sut": *"\([^"]*\)".*/\1/')
+        done
+
         # Determine parallelism limit (all configs)
         effective_parallel=${#filtered_configs[@]}
         current_jobs=0
@@ -705,6 +741,10 @@ else
             if [[ "$STOP_ON_ERROR" -eq 1 ]]; then
                 stop_on_error_args=(--stop-on-error)
             fi
+            portable_deps_args=()
+            if [[ "$portable_deps_needed" == "true" ]]; then
+                portable_deps_args=(--portable-deps)
+            fi
             
             python3 "$SCRIPT_DIR/e2e/e2e_framework.py" run \
                 --config "$cfg" \
@@ -712,6 +752,7 @@ else
                 --parallel "$PARALLEL" \
                 "${stop_on_error_args[@]}" \
                 "${db_version_args[@]}" \
+                "${portable_deps_args[@]}" \
                 "${provider_args[@]}" \
                 >"$cfg_results_dir/run.log" 2>&1 &
 
