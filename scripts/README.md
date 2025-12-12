@@ -197,8 +197,8 @@ __ARCHIVE_BELOW__
 ### Testing
 
 ```bash
-# Run installer tests
-./tests/test_installer.sh
+# Run installer tests (specify system: ubuntu, arch, fedora, old-bash, etc.)
+./tests/test_installer.sh ubuntu
 
 # Manual testing
 ./build/exasol_deployer.sh --version

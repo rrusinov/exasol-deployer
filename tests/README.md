@@ -33,7 +33,7 @@ Unit tests validate individual components and functions of the Exasol Deployer w
 ./tests/test_common.sh
 ./tests/test_state.sh
 ./tests/test_versions.sh
-./tests/test_installer.sh
+./tests/test_installer.sh <system>
 
 # Run with verbose output
 bash -x ./tests/test_common.sh
@@ -58,7 +58,18 @@ Unit tests are organized by component:
 
 ## Installer Testing
 
-The installer test suite (`test_installer.sh`) provides comprehensive validation of the installation process:
+The installer test suite (`test_installer.sh <system>`) provides comprehensive validation of the installation process across different operating systems:
+
+**Available Systems:**
+- `ubuntu` - Ubuntu 22.04 LTS
+- `arch` - Arch Linux (latest)
+- `fedora` - Fedora (latest)
+- `old-bash` - Ubuntu 18.04 (old bash version)
+- `gentoo` - Gentoo Linux (latest)
+- `suse` - openSUSE Leap (latest)
+- `nix` - NixOS (latest)
+
+**Usage:** `./tests/test_installer.sh <system>`
 
 ### PATH Handling Tests (28 unit tests)
 - Prevents duplicate PATH entries across bash, zsh, and fish shells

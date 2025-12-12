@@ -23,7 +23,6 @@ jobs:
           - test_progress
           - test_versions
           - test_version
-          - test_installer
           - test_state
           - test_init
           - test_power_control
@@ -77,6 +76,43 @@ jobs:
           echo "## Test Results for ${{ matrix.test_file }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "✅ ${{ matrix.test_file }} completed" >> $GITHUB_STEP_SUMMARY
+
+  installer-tests:
+    name: Installer Test - ${{ matrix.system }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        system:
+          - ubuntu
+          - arch
+          - fedora
+          - old-bash
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq python3 libvirt-clients genisoimage
+
+      - name: Install Terraform/OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.6.0
+
+      - name: Run installer test for ${{ matrix.system }}
+        run: |
+          export DIGITALOCEAN_TOKEN="${DIGITALOCEAN_TOKEN:-test-token}"
+          ./tests/test_installer.sh ${{ matrix.system }}
+
+      - name: Generate test report
+        if: always()
+        run: |
+          echo "## Installer Test Results for ${{ matrix.system }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ test_installer (${{ matrix.system }}) completed" >> $GITHUB_STEP_SUMMARY
 
   shellcheck:
     name: Shell Script Linting
