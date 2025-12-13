@@ -1,0 +1,35 @@
+{% raw -%}
+# Hetzner-specific device discovery implementation
+# Hetzner uses SCSI device naming with volume IDs
+# Future agents: When adding Hetzner features, consider:
+# - Different volume types (SSD vs HDD)
+# - Volume attachment consistency across different server types
+# - Hetzner Cloud vs dedicated server differences
+
+provider_init_discovery() {
+    log "Initializing Hetzner Cloud volume discovery"
+    # Hetzner doesn't require pre-discovery like Azure or libvirt
+    # Volumes are discovered on-demand using volume IDs
+}
+
+provider_find_device() {
+    local vol_id="$1"
+    local volume_index="$2"  # 0-based index, unused for Hetzner (uses vol_id directly)
+    
+    log "Looking for Hetzner Cloud volume: $vol_id"
+    
+    # Hetzner volumes appear as SCSI devices with volume ID in the device name
+    # Try multiple possible naming patterns
+    local target_device
+    target_device=$(find_device_via_patterns "$vol_id" \
+        "/dev/disk/by-id/scsi-0HC_Volume_${vol_id}" \
+        "/dev/disk/by-id/scsi-0HC_Volume_${vol_id}-*" \
+        "/dev/disk/by-id/scsi-0HC_Volume_${vol_id}_*") || true
+    
+    echo "$target_device"
+}
+
+provider_log_available_devices() {
+    log_available_devices "Available Hetzner volumes:" "/dev/disk/by-id/scsi-0HC_Volume_*"
+}
+{%- endraw %}

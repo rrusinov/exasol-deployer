@@ -147,6 +147,7 @@ Options:
   --configs <name[,name...]>    Run only the specified config files (e.g. aws,libvirt,aws-arm64)
   --parallel <n>                Override parallelism (0 = auto/all tests)
   --stop-on-error               Stop execution on first test failure (for debugging)
+  --debug                       Enable debug mode with verbose Ansible output
   --db-version <version>        Database version to use (e.g. 8.0.0-x86_64, overrides config)
   --results-dir <path>          Use specific execution directory (default: auto-generated)
   --rerun <exec-dir> <suite>    Rerun specific suite from execution directory
@@ -173,6 +174,7 @@ CONFIGS_FILTER=""
 CONFIGS_SPECIFIED=0
 PARALLEL=0
 STOP_ON_ERROR=0
+DEBUG=0
 DB_VERSION=""
 RERUN_EXEC_DIR=""
 RERUN_SUITE=""
@@ -228,6 +230,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --stop-on-error)
             STOP_ON_ERROR=1
+            shift
+            ;;
+        --debug)
+            DEBUG=1
             shift
             ;;
         --portable-deps)
@@ -336,6 +342,10 @@ run_framework() {
     if [[ "$STOP_ON_ERROR" -eq 1 ]]; then
         stop_on_error_args=(--stop-on-error)
     fi
+    local debug_args=()
+    if [[ "$DEBUG" -eq 1 ]]; then
+        debug_args=(--debug)
+    fi
     local portable_deps_args=()
     if [[ "$PORTABLE_DEPS" -eq 1 ]]; then
         portable_deps_args=(--portable-deps)
@@ -347,6 +357,7 @@ run_framework() {
         "${results_dir_args[@]}" \
         --parallel "$PARALLEL" \
         "${stop_on_error_args[@]}" \
+        "${debug_args[@]}" \
         "${portable_deps_args[@]}" \
         "${db_version_args[@]}" \
         "$@"
@@ -741,6 +752,10 @@ else
             if [[ "$STOP_ON_ERROR" -eq 1 ]]; then
                 stop_on_error_args=(--stop-on-error)
             fi
+            debug_args=()
+            if [[ "$DEBUG" -eq 1 ]]; then
+                debug_args=(--debug)
+            fi
             portable_deps_args=()
             if [[ "$portable_deps_needed" == "true" ]]; then
                 portable_deps_args=(--portable-deps)
@@ -751,6 +766,7 @@ else
                 --results-dir "$cfg_results_dir" \
                 --parallel "$PARALLEL" \
                 "${stop_on_error_args[@]}" \
+                "${debug_args[@]}" \
                 "${db_version_args[@]}" \
                 "${portable_deps_args[@]}" \
                 "${provider_args[@]}" \

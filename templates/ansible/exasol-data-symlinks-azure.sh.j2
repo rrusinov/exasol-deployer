@@ -1,0 +1,103 @@
+{% raw -%}
+# Azure-specific device discovery implementation
+# Azure uses LUN-based device mapping with multiple possible paths
+# Future agents: When adding Azure features, consider:
+# - Premium SSD vs Standard SSD vs Ultra Disk differences
+# - Managed disk vs unmanaged disk handling
+# - Different Azure VM sizes and their disk attachment limits
+# - Azure disk encryption and its impact on device paths
+
+declare -a AZURE_LUN_LINKS=()
+declare AZURE_LUN_INDEX=0
+declare AZURE_LUN_COUNT=0
+declare AZURE_IMDS_DISK_INFO=""
+
+provider_init_discovery() {
+    log "Initializing Azure managed disk discovery"
+    
+    # Azure disks may appear under either of these paths.
+    # Newer agents expose them via /dev/disk/azure/data/by-lun/*
+    # Older agents use /dev/disk/azure/scsi1/lun*
+    # Wait up to 60 seconds for any of those patterns to become visible.
+    local wait_secs=60
+    while (( wait_secs > 0 )) && ! (compgen -G "/dev/disk/azure/data/by-lun/*" > /dev/null || compgen -G "/dev/disk/azure/scsi1/lun*" > /dev/null); do
+        log "Waiting for Azure LUN devices... $wait_secs seconds remaining"
+        sleep 5
+        ((wait_secs-=5))
+    done
+    
+    # Collect Azure LUN links from possible locations
+    AZURE_LUN_LINKS=()
+    AZURE_LUN_COUNT=0
+    
+    # Collect all matching links first
+    declare -a temp_links=()
+    for link in /dev/disk/azure/data/by-lun/* /dev/disk/azure/scsi1/lun*; do
+        if [[ -e "$link" ]]; then
+            temp_links+=("$link")
+        fi
+    done
+    
+    # Sort the links for consistent ordering
+    if (( ${#temp_links[@]} > 0 )); then
+        mapfile -t AZURE_LUN_LINKS < <(printf '%s\n' "${temp_links[@]}" | sort)
+        AZURE_LUN_COUNT=${#AZURE_LUN_LINKS[@]}
+    fi
+    
+    if ((AZURE_LUN_COUNT == 0)); then
+        log "WARNING: Azure provider detected but no /dev/disk/azure/scsi1/lun* entries found after waiting"
+    else
+        log "Discovered $AZURE_LUN_COUNT Azure LUN devices"
+    fi
+    
+    # Try to get disk information from Azure IMDS for enhanced logging
+    if command -v curl >/dev/null 2>&1; then
+        local imds_url="http://169.254.169.254/metadata/instance/compute/storageProfile/dataDisks?api-version=2021-02-01"
+        AZURE_IMDS_DISK_INFO=$(curl -s -H Metadata:true --max-time 3 "$imds_url" 2>/dev/null | grep -v "^$" || true)
+        if [[ -n "$AZURE_IMDS_DISK_INFO" ]] && [[ "$AZURE_IMDS_DISK_INFO" != "[]" ]]; then
+            log "Retrieved disk information from Azure IMDS for verification"
+        else
+            AZURE_IMDS_DISK_INFO=""
+        fi
+    fi
+}
+
+provider_find_device() {
+    local vol_id="$1"
+    local volume_index="$2"  # 0-based index, unused for Azure (uses LUN order)
+    
+    if ((AZURE_LUN_COUNT == 0)); then
+        log "ERROR: Azure provider detected but no LUN devices discovered"
+        return 1
+    fi
+    
+    if ((AZURE_LUN_INDEX >= AZURE_LUN_COUNT)); then
+        log "ERROR: Not enough Azure data disks discovered (expected $VOLUME_COUNT, found $AZURE_LUN_COUNT)"
+        return 1
+    fi
+    
+    local lun_link="${AZURE_LUN_LINKS[$AZURE_LUN_INDEX]}"
+    # Fix for set -e: use : $((expression)) to prevent exit on non-zero result
+    : $((AZURE_LUN_INDEX++))
+    
+    local target_device
+    target_device=$(readlink -f "$lun_link") || target_device=""
+    
+    # Log disk information for debugging
+    if [[ -n "$AZURE_IMDS_DISK_INFO" ]] && [[ "$AZURE_IMDS_DISK_INFO" != "[]" ]]; then
+        log "IMDS disk info available for LUN ${AZURE_LUN_INDEX}: $lun_link -> $target_device"
+    else
+        log "Mapping LUN link $lun_link to device $target_device (no IMDS verification available)"
+    fi
+    
+    echo "$target_device"
+}
+
+provider_log_available_devices() {
+    log_available_devices "Available Azure LUN links (newer):" "/dev/disk/azure/data/by-lun/*"
+    log_available_devices "Available Azure LUN links (older):" "/dev/disk/azure/scsi1/lun*"
+    if [[ -n "$AZURE_IMDS_DISK_INFO" ]]; then
+        log "Azure IMDS disk information available"
+    fi
+}
+{%- endraw %}
