@@ -162,11 +162,11 @@ class ValidationRegistry:
         # Fall back to registered static checks
         return self.checks.get(check_name)
 
-    def _run_exasol_command(self, command: str, *args) -> subprocess.CompletedProcess:
+    def _run_exasol_command(self, command: str, *args, timeout: int = 360) -> subprocess.CompletedProcess:
         """Run exasol CLI command"""
         cmd = [str(self.exasol_bin), command, '--deployment-dir', str(self.deploy_dir)]
         cmd.extend(args)
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=360)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
     def _read_state(self) -> Dict[str, Any]:
         """Read deployment state from .exasol.json"""
@@ -176,12 +176,18 @@ class ValidationRegistry:
                 return json.load(f)
         return {}
 
-    def _run_exasol_health(self) -> Dict[str, Any]:
+    def _run_exasol_health(self, verbosity: str = 'quiet', timeout: int = 360) -> Dict[str, Any]:
         """Run exasol health command and return parsed JSON"""
         try:
-            result = self._run_exasol_command('health', '--output-format', 'json')
+            cmd_args = ['health']
+            if verbosity == 'verbose':
+                cmd_args.append('--verbose')
+            elif verbosity == 'quiet':
+                cmd_args.append('--quiet')
+            cmd_args.extend(['--output-format', 'json'])
+            result = self._run_exasol_command(*cmd_args, timeout=timeout)
         except subprocess.TimeoutExpired as e:
-            self.logger.error(f"Health check command timed out after 360 seconds")
+            self.logger.error(f"Health check command timed out after {timeout} seconds")
             # Return structure indicating health check unavailable due to timeout
             return {
                 'status': 'timeout',
@@ -193,7 +199,7 @@ class ValidationRegistry:
                     'cos_ssh': {'passed': 0, 'failed': 0}
                 },
                 'issues_count': 0,
-                'issues': [f"Health check timed out after 360 seconds"]
+                'issues': [f"Health check timed out after {timeout} seconds"]
             }
         
         # Try to parse JSON output first, even if command failed
@@ -324,7 +330,7 @@ class ValidationRegistry:
             nodes = [n.strip() for n in node_selector.split(',')]
         
         def check_func(context: Dict[str, Any]) -> bool:
-            health_data = self._run_exasol_health()
+            health_data = self._run_exasol_health(timeout=60)
             if not health_data:
                 self.logger.error("Health command returned no data")
                 return False
@@ -422,7 +428,7 @@ class WorkflowExecutor:
 
     def __init__(self, deploy_dir: Path, provider: str, logger: logging.Logger,
                  log_callback: Optional[Callable] = None, db_version: Optional[str] = None,
-                 exasol_bin: Optional[Path] = None):
+                 exasol_bin: Optional[Path] = None, debug_mode: bool = False):
         self.deploy_dir = deploy_dir
         self.provider = provider
         self.logger = logger
@@ -431,6 +437,7 @@ class WorkflowExecutor:
         self.validation_registry = ValidationRegistry(deploy_dir, provider, logger, self.exasol_bin)
         self.context: Dict[str, Any] = {}
         self.db_version = db_version  # Optional database version override
+        self.debug_mode = debug_mode  # Enable verbose Ansible output and additional debugging
 
     def _run_command_with_streaming(self, cmd: List[str], timeout: int) -> subprocess.CompletedProcess:
         """Run a command and stream output in real-time to log_callback.
@@ -447,6 +454,17 @@ class WorkflowExecutor:
             'LC_ALL': 'en_US.UTF-8',
             'LANG': 'en_US.UTF-8'
         })
+        
+        # Add debug environment variables when debug mode is enabled
+        if self.debug_mode:
+            env.update({
+                'ANSIBLE_VERBOSITY': '3',  # Ansible verbose level (0-4)
+                'ANSIBLE_DEBUG': '1',      # Enable Ansible debug output
+                'ANSIBLE_STDOUT_CALLBACK': 'debug',  # Use debug callback for detailed output
+                'ANSIBLE_DISPLAY_SKIPPED_HOSTS': 'True',  # Show skipped hosts
+                'ANSIBLE_DISPLAY_OK_HOSTS': 'True',       # Show successful hosts
+            })
+            self.log_callback("Debug mode enabled - Ansible will run with verbose output")
         
         process = subprocess.Popen(
             cmd,
@@ -708,6 +726,23 @@ class WorkflowExecutor:
             })
 
             if not check_passed and not allow_failure:
+                # Run verbose health check for debugging if this is a health_status check
+                if check_name.startswith('health_status'):
+                    self.logger.info("Running health checks for debugging...")
+                    try:
+                        import subprocess
+                        # Get JSON output for structured logging
+                        cmd = [str(self.exasol_bin), 'health', '--deployment-dir', str(self.deploy_dir), '--output-format', 'json', '--quiet']
+                        json_result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                        self.logger.info("Health check JSON: " + json_result.stdout.strip())
+
+                        # Get verbose text output for detailed debugging
+                        cmd = [str(self.exasol_bin), 'health', '--deployment-dir', str(self.deploy_dir), '--verbose', '--quiet']
+                        verbose_result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                        self.logger.info("Verbose health check output:\n" + verbose_result.stdout)
+                    except Exception as e:
+                        self.logger.error(f"Failed to run health checks for debugging: {e}")
+
                 step.validation_results = validation_results
                 raise RuntimeError(f"Validation check failed: {check_name}")
 

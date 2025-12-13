@@ -1,0 +1,57 @@
+{% raw -%}
+# libvirt-specific device discovery implementation
+# libvirt uses virtio devices with predictable naming (vdb, vdc, etc.)
+# Future agents: When adding libvirt features, consider:
+# - Different disk bus types (virtio, SCSI, IDE)
+# - Hot-plug disk support
+# - Different storage backends (qcow2, raw, LVM)
+# - NUMA topology and disk placement
+
+declare -a LIBVIRT_DATA_DEVICES=()
+
+provider_init_discovery() {
+    log "Initializing libvirt virtio device discovery"
+    
+    # Discover all available virtio data devices (skip vda which is typically the OS disk)
+    LIBVIRT_DATA_DEVICES=()
+    while IFS= read -r dev; do
+        [[ ! -b "$dev" ]] && continue
+        # Skip mounted devices (e.g., root at /dev/vda)
+        if lsblk -nlo MOUNTPOINT "$dev" 2>/dev/null | grep -q '^/'; then
+            continue
+        fi
+        local resolved
+        resolved="$(readlink -f "$dev" 2>/dev/null || echo "")"
+        [[ -n "$resolved" ]] && LIBVIRT_DATA_DEVICES+=("$resolved")
+    done < <(for dev in /dev/vd[b-z]; do [[ -e "$dev" ]] && echo "$dev"; done | sort -u)
+
+    if (( ${#LIBVIRT_DATA_DEVICES[@]} == 0 )); then
+        log "WARNING: No libvirt virtio data devices discovered (expected $VOLUME_COUNT)"
+    else
+        log "Discovered ${#LIBVIRT_DATA_DEVICES[@]} libvirt virtio data devices: ${LIBVIRT_DATA_DEVICES[*]}"
+    fi
+}
+
+provider_find_device() {
+    local vol_id="$1"
+    local volume_index="$2"  # 0-based index
+    
+    log "Looking for libvirt virtio device for volume $vol_id (index $volume_index)"
+    
+    if (( volume_index < ${#LIBVIRT_DATA_DEVICES[@]} )); then
+        local target_device="${LIBVIRT_DATA_DEVICES[$volume_index]}"
+        log "Selected virtio device $volume_index: $target_device for volume $vol_id"
+        echo "$target_device"
+    else
+        log "ERROR: Not enough libvirt virtio data devices discovered (expected index $volume_index)"
+        echo ""
+    fi
+}
+
+provider_log_available_devices() {
+    log_available_devices "Available virtio devices:" "/dev/vd[b-z]" "/dev/disk/by-id/virtio-*"
+    if (( ${#LIBVIRT_DATA_DEVICES[@]} > 0 )); then
+        log "Discovered libvirt data devices: ${LIBVIRT_DATA_DEVICES[*]}"
+    fi
+}
+{%- endraw %}

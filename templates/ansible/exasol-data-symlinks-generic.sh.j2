@@ -1,0 +1,263 @@
+{% raw -%}
+# Raw system discovery for unknown providers or debugging failed provider templates
+# This captures comprehensive system information without cloud-specific assumptions
+# Future agents: Use this data to identify patterns for new cloud provider templates
+
+dump_system_discovery() {
+    local discovery_file="/var/log/exasol-disk-discovery.info"
+    local timestamp=$(date +'%Y-%m-%d_%H-%M-%S')
+    local discovery_dir="/var/log/exasol-discovery-${timestamp}"
+    
+    mkdir -p "$discovery_dir"
+    
+    log "=== SYSTEM DISCOVERY DUMP ==="
+    log "Dumping comprehensive system information to: $discovery_dir"
+    log "Use this data to analyze device patterns for cloud provider template creation"
+    
+    # 1. Complete lsblk output with all available columns
+    {
+        echo "=== LSBLK COMPLETE OUTPUT ==="
+        echo "Timestamp: $(date)"
+        echo "Expected volumes: $VOLUME_COUNT"
+        echo "Volume IDs: ${VOLUME_IDS[*]}"
+        echo ""
+        lsblk --all --output-all 2>/dev/null || lsblk -a
+        echo ""
+    } > "$discovery_dir/lsblk-complete.info"
+    
+    # 2. All /dev block devices with detailed information
+    {
+        echo "=== ALL BLOCK DEVICES ==="
+        echo "Timestamp: $(date)"
+        echo ""
+        find /dev -type b 2>/dev/null | sort | while read -r device; do
+            echo "Device: $device"
+            ls -la "$device" 2>/dev/null || echo "  Cannot stat device"
+            if [[ -b "$device" ]]; then
+                lsblk -no NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL,VENDOR "$device" 2>/dev/null || echo "  Cannot query device info"
+            fi
+            echo ""
+        done
+    } > "$discovery_dir/block-devices.info"
+    
+    # 3. Complete /dev/disk hierarchy
+    {
+        echo "=== /dev/disk HIERARCHY ==="
+        echo "Timestamp: $(date)"
+        echo ""
+        if [[ -d /dev/disk ]]; then
+            find /dev/disk -type l 2>/dev/null | sort | while read -r link; do
+                local target
+                target=$(readlink -f "$link" 2>/dev/null || echo "unknown")
+                echo "$link -> $target"
+            done
+        else
+            echo "/dev/disk directory not found"
+        fi
+        echo ""
+    } > "$discovery_dir/disk-by-links.info"
+    
+    # 4. Complete /sys/block information
+    {
+        echo "=== /sys/block INFORMATION ==="
+        echo "Timestamp: $(date)"
+        echo ""
+        if [[ -d /sys/block ]]; then
+            for block_dev in /sys/block/*; do
+                [[ ! -d "$block_dev" ]] && continue
+                local dev_name="${block_dev##*/}"
+                echo "Block device: $dev_name"
+                
+                # Read various sysfs attributes
+                for attr in size model serial vendor; do
+                    local attr_file="$block_dev/$attr"
+                    if [[ -f "$attr_file" ]]; then
+                        echo "  $attr: $(cat "$attr_file" 2>/dev/null || echo 'unreadable')"
+                    fi
+                done
+                
+                # Device type and removable status
+                for attr in removable ro; do
+                    local attr_file="$block_dev/$attr"
+                    if [[ -f "$attr_file" ]]; then
+                        echo "  $attr: $(cat "$attr_file" 2>/dev/null || echo 'unreadable')"
+                    fi
+                done
+                
+                echo ""
+            done
+        else
+            echo "/sys/block directory not found"
+        fi
+    } > "$discovery_dir/sys-block.info"
+    
+    # 5. UDEV information for all block devices
+    {
+        echo "=== UDEV DEVICE INFORMATION ==="
+        echo "Timestamp: $(date)"
+        echo ""
+        if command -v udevadm >/dev/null 2>&1; then
+            find /dev -type b 2>/dev/null | sort | while read -r device; do
+                echo "Device: $device"
+                udevadm info --query=property --name="$device" 2>/dev/null | grep -E '^(ID_|DEVTYPE|SUBSYSTEM|DEVNAME|DEVPATH)' || echo "  No udev properties available"
+                echo ""
+            done
+        else
+            echo "udevadm command not available"
+        fi
+    } > "$discovery_dir/udev-properties.info"
+    
+    # 6. System hardware information
+    {
+        echo "=== SYSTEM HARDWARE INFORMATION ==="
+        echo "Timestamp: $(date)"
+        echo ""
+        
+        echo "--- DMI Information ---"
+        if [[ -d /sys/class/dmi/id ]]; then
+            for dmi_file in /sys/class/dmi/id/*; do
+                [[ ! -f "$dmi_file" ]] && continue
+                local dmi_name="${dmi_file##*/}"
+                echo "$dmi_name: $(cat "$dmi_file" 2>/dev/null || echo 'unreadable')"
+            done
+        else
+            echo "DMI information not available"
+        fi
+        
+        echo ""
+        echo "--- CPU Information ---"
+        if [[ -f /proc/cpuinfo ]]; then
+            grep -E '^(processor|model name|vendor_id)' /proc/cpuinfo | head -10
+        fi
+        
+        echo ""
+        echo "--- Memory Information ---"
+        if [[ -f /proc/meminfo ]]; then
+            grep -E '^(MemTotal|MemFree|MemAvailable)' /proc/meminfo
+        fi
+        
+        echo ""
+        echo "--- Kernel Information ---"
+        uname -a 2>/dev/null || echo "uname not available"
+        
+        echo ""
+        echo "--- PCI Devices ---"
+        if command -v lspci >/dev/null 2>&1; then
+            lspci 2>/dev/null | grep -i storage || echo "No storage controllers found via lspci"
+        else
+            echo "lspci command not available"
+        fi
+        
+    } > "$discovery_dir/system-hardware.info"
+    
+    # 7. Network and metadata service checks
+    {
+        echo "=== NETWORK AND METADATA SERVICES ==="
+        echo "Timestamp: $(date)"
+        echo ""
+        
+        if command -v curl >/dev/null 2>&1; then
+            echo "--- Metadata Service Tests ---"
+            
+            # Test various metadata endpoints without cloud-specific assumptions
+            declare -a metadata_urls=(
+                "http://169.254.169.254/latest/meta-data/"
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01"
+                "http://metadata.google.internal/computeMetadata/v1/"
+            )
+            
+            for url in "${metadata_urls[@]}"; do
+                echo "Testing: $url"
+                if curl -s --max-time 3 "$url" >/dev/null 2>&1; then
+                    echo "  Response: Available"
+                else
+                    echo "  Response: Not available"
+                fi
+            done
+        else
+            echo "curl command not available for metadata service tests"
+        fi
+        
+        echo ""
+        echo "--- Network Interfaces ---"
+        if command -v ip >/dev/null 2>&1; then
+            ip addr show 2>/dev/null | grep -E '^[0-9]+:|inet ' || echo "Cannot get network interface information"
+        else
+            echo "ip command not available"
+        fi
+        
+    } > "$discovery_dir/network-metadata.info"
+    
+    # 8. Process and mount information
+    {
+        echo "=== PROCESS AND MOUNT INFORMATION ==="
+        echo "Timestamp: $(date)"
+        echo ""
+        
+        echo "--- Mount Points ---"
+        mount 2>/dev/null || echo "Cannot get mount information"
+        
+        echo ""
+        echo "--- Disk Usage ---"
+        df -h 2>/dev/null || echo "Cannot get disk usage information"
+        
+        echo ""
+        echo "--- Running Processes (storage related) ---"
+        if command -v ps >/dev/null 2>&1; then
+            ps aux 2>/dev/null | grep -E '(mount|disk|storage|block)' | grep -v grep || echo "No storage-related processes found"
+        fi
+        
+    } > "$discovery_dir/process-mount.info"
+    
+    # Create summary file
+    {
+        echo "=== EXASOL DISK DISCOVERY SUMMARY ==="
+        echo "Timestamp: $(date)"
+        echo "Cloud Provider: $CLOUD_PROVIDER"
+        echo "Expected Volume Count: $VOLUME_COUNT"
+        echo "Volume IDs: ${VOLUME_IDS[*]}"
+        echo ""
+        echo "Discovery files created in: $discovery_dir"
+        echo ""
+        echo "Files:"
+        ls -la "$discovery_dir/" 2>/dev/null || echo "Cannot list discovery files"
+        echo ""
+        echo "Use this data to:"
+        echo "1. Identify device naming patterns"
+        echo "2. Correlate volume IDs with device paths"
+        echo "3. Create provider-specific template"
+        echo "4. Debug device mapping issues"
+        echo ""
+        echo "Next steps:"
+        echo "1. Analyze the discovery files"
+        echo "2. Create templates/ansible/exasol-data-symlinks-${CLOUD_PROVIDER}.sh.j2"
+        echo "3. Implement provider_init_discovery(), provider_find_device(), provider_log_available_devices()"
+    } > "$discovery_dir/README.txt"
+    
+    # Also create a legacy file for backward compatibility
+    cp "$discovery_dir/README.txt" "$discovery_file"
+    
+    log "Discovery data written to: $discovery_dir"
+    log "Summary available at: $discovery_file"
+    log "Analyze the discovery files to create a provider-specific template"
+}
+
+provider_init_discovery() {
+    log "Unknown provider '$CLOUD_PROVIDER' - performing system discovery"
+    dump_system_discovery
+}
+
+provider_find_device() {
+    local vol_id="$1"
+    local volume_index="$2"
+    
+    log "No provider template available for '$CLOUD_PROVIDER'"
+    log "Cannot find device for volume $vol_id (index $volume_index)"
+    echo ""
+}
+
+provider_log_available_devices() {
+    log "System discovery completed - check /var/log/exasol-discovery-* directories"
+    log "Create provider-specific template based on discovery data"
+}
+{%- endraw %}

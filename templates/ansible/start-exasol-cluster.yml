@@ -148,18 +148,24 @@
       register: start_data_symlinks
       failed_when: false
 
-    - name: Check data-symlinks service status
+    - name: Wait for data-symlinks service to complete (if started)
       ansible.builtin.systemd:
         name: exasol-data-symlinks.service
       register: data_symlinks_status
+      until: >
+        data_symlinks_status.status.ActiveState == "active" or
+        data_symlinks_status.status.ActiveState == "inactive" or
+        data_symlinks_status.status.ActiveState == "failed"
+      retries: 30
+      delay: 2
+      when: start_data_symlinks.changed
       failed_when: false
 
-    - name: Display data-symlinks service status if not active
+    - name: Display data-symlinks service status
       ansible.builtin.debug:
         msg: "{{ inventory_hostname }}: exasol-data-symlinks.service is {{ data_symlinks_status.status.ActiveState | default('not found') }}"
       when:
         - data_symlinks_status.status is defined
-        - data_symlinks_status.status.ActiveState != "active"
 
     - name: Start c4_cloud_command.service
       ansible.builtin.systemd:
@@ -219,12 +225,24 @@
         - c4_logs is defined
         - c4_logs.stdout_lines is defined
 
-    - name: Wait for c4.service to be fully active
-      ansible.builtin.wait_for:
-        timeout: 60
-      when:
-        - start_c4 is defined
-        - start_c4.changed
+    - name: Wait for c4.service to be active (not just started)
+      ansible.builtin.systemd:
+        name: c4.service
+      register: c4_status_wait
+      until: c4_status_wait.status.ActiveState == "active"
+      retries: 30
+      delay: 5
+      when: start_c4.changed
+      failed_when: false
+
+    - name: Verify c4 process is responding
+      ansible.builtin.command: c4 ps
+      become_user: "{{ exa_user }}"
+      register: c4_ps_check
+      retries: 12
+      delay: 5
+      until: c4_ps_check.rc == 0
+      when: start_c4.changed
       failed_when: false
 
     - name: "PROGRESS: Service startup complete"
@@ -235,16 +253,31 @@
     # ==============================================================================
     # WAIT FOR ALL NODES TO REACH STAGE d
     # ==============================================================================
-    - name: Wait for all nodes to reach stage 'd' (database ready)
-      ansible.builtin.command:
-        cmd: "c4 ps -e '.[].Instances.Configs | to_entries | all(.value.ground.boot_stage == \"d\")'"
-      become_user: "{{ exa_user }}"
-      register: stage_check
-      until: (stage_check.stdout | default('') | regex_search('true')) is not none
-      retries: 120
-      delay: 10
-      changed_when: false
-      failed_when: stage_check.stdout is not regex('true')
+    - name: Wait for all cluster nodes to reach stage 'd' (with detailed output)
+      block:
+        - name: Get current boot stages for all nodes
+          ansible.builtin.command:
+            cmd: "c4 ps -e 'map({node: .Name, instances: (.Instances.Configs | to_entries | map({instance: .key, stage: .value.ground.boot_stage}))}) | map({node: .node, stages: .instances | map(.stage)})'"
+          become_user: "{{ exa_user }}"
+          register: all_boot_stages
+          changed_when: false
+          failed_when: false
+
+        - name: Display current cluster boot stages
+          ansible.builtin.debug:
+            msg: "Cluster boot stages: {{ all_boot_stages.stdout | default('[]') }}"
+          when: all_boot_stages.stdout is defined
+
+        - name: Check if all nodes reached stage 'd'
+          ansible.builtin.command:
+            cmd: "c4 ps -e '.[].Instances.Configs | to_entries | all(.value.ground.boot_stage == \"d\")'"
+          become_user: "{{ exa_user }}"
+          register: stage_check
+          until: (stage_check.stdout | default('') | regex_search('true')) is not none
+          retries: 60
+          delay: 10
+          changed_when: false
+          failed_when: stage_check.stdout is not regex('true')
       run_once: true
 
     - name: Display database boot status

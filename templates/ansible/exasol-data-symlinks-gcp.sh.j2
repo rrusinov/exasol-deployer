@@ -1,0 +1,94 @@
+{% raw -%}
+# GCP-specific device discovery implementation
+# GCP uses persistent disks with both legacy and new naming conventions
+# Future agents: When adding GCP features, consider:
+# - Local SSD devices (ephemeral storage)
+# - Different disk types (pd-standard, pd-ssd, pd-extreme)
+# - Disk attachment order and naming consistency
+# - Regional persistent disks vs zonal disks
+
+declare -a GCP_DATA_DISK_CANDIDATES=()
+declare GCP_METADATA_DISK_INFO=""
+
+provider_init_discovery() {
+    log "Initializing GCP persistent disk discovery"
+    
+    # Try to get disk information from GCP metadata service for enhanced logging
+    if command -v curl >/dev/null 2>&1; then
+        local metadata_url="http://metadata.google.internal/computeMetadata/v1/instance/disks/?recursive=true"
+        GCP_METADATA_DISK_INFO=$(curl -s -H "Metadata-Flavor: Google" --max-time 5 "$metadata_url" 2>/dev/null || true)
+        if [[ -n "$GCP_METADATA_DISK_INFO" && "$GCP_METADATA_DISK_INFO" != *"404"* ]]; then
+            log "Retrieved disk information from GCP metadata service"
+        else
+            GCP_METADATA_DISK_INFO=""
+            log "GCP metadata service not available or no disk information retrieved"
+        fi
+    fi
+
+    # Discover all potential data disks (exclude OS disk index 0)
+    # Check both legacy persistent-disk-X naming and new exasol-data-X-Y naming
+    GCP_DATA_DISK_CANDIDATES=()
+    
+    for gcp_disk_link in /dev/disk/by-id/google-persistent-disk-[1-9]* /dev/disk/by-id/google-exasol-data-*; do
+        if [[ -e "$gcp_disk_link" && ! "$gcp_disk_link" == *-part* ]]; then
+            local candidate_device
+            candidate_device=$(readlink -f "$gcp_disk_link")
+            if [[ -b "$candidate_device" ]]; then
+                # Check if this device is mounted at system paths
+                if ! lsblk -nlo MOUNTPOINT "$candidate_device" | grep -q -E '^/(|boot|var|usr|opt|home|tmp|etc)(/|$)'; then
+                    GCP_DATA_DISK_CANDIDATES+=("$candidate_device")
+                    log "Found potential data disk candidate: $candidate_device ($gcp_disk_link)"
+                else
+                    log "Skipping mounted system disk: $candidate_device ($gcp_disk_link)"
+                fi
+            fi
+        fi
+    done
+
+    # Also check SCSI patterns - support both naming conventions
+    for scsi_link in /dev/disk/by-id/scsi-0Google_PersistentDisk_persistent-disk-[1-9]* /dev/disk/by-id/scsi-0Google_PersistentDisk_exasol-data-*; do
+        if [[ -e "$scsi_link" && ! "$scsi_link" == *-part* ]]; then
+            local candidate_device
+            candidate_device=$(readlink -f "$scsi_link")
+            if [[ -b "$candidate_device" ]]; then
+                if ! lsblk -nlo MOUNTPOINT "$candidate_device" | grep -q -E '^/(|boot|var|usr|opt|home|tmp|etc)(/|$)'; then
+                    # Avoid duplicates
+                    if [[ ! " ${GCP_DATA_DISK_CANDIDATES[*]} " =~ " $candidate_device " ]]; then
+                        GCP_DATA_DISK_CANDIDATES+=("$candidate_device")
+                        log "Found potential data disk candidate (SCSI): $candidate_device ($scsi_link)"
+                    fi
+                fi
+            fi
+        fi
+    done
+    
+    log "Discovered ${#GCP_DATA_DISK_CANDIDATES[@]} GCP data disk candidates"
+}
+
+provider_find_device() {
+    local vol_id="$1"
+    local volume_index="$2"  # 0-based index
+    
+    log "Looking for GCP data disk for volume $vol_id (data volume #$volume_index)"
+    
+    # Select the appropriate disk based on volume index
+    if (( volume_index < ${#GCP_DATA_DISK_CANDIDATES[@]} )); then
+        local target_device="${GCP_DATA_DISK_CANDIDATES[$volume_index]}"
+        log "Selected data disk $volume_index: $target_device for volume $vol_id"
+        echo "$target_device"
+    else
+        log "Not enough data disk candidates found (need index $volume_index, have ${#GCP_DATA_DISK_CANDIDATES[@]} candidates)"
+        log "Available candidates: ${GCP_DATA_DISK_CANDIDATES[*]}"
+        echo ""
+    fi
+}
+
+provider_log_available_devices() {
+    log_available_devices "Available GCP disks:" "/dev/disk/by-id/google-*"
+    log_available_devices "Available GCP SCSI disks:" "/dev/disk/by-id/scsi-0Google_PersistentDisk_*"
+    log_available_devices "Available GCP data disks:" "/dev/disk/by-id/google-exasol-data-*"
+    if [[ -n "$GCP_METADATA_DISK_INFO" ]]; then
+        log "GCP metadata disk information: $GCP_METADATA_DISK_INFO"
+    fi
+}
+{%- endraw %}

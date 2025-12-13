@@ -331,11 +331,12 @@ summary {{ cursor: pointer; font-weight: bold; padding: 0.5rem; background: #f0f
 class E2ETestFramework:
     """Main E2E test framework class."""
 
-    def __init__(self, config_path: str, results_dir: Optional[Path] = None, db_version: Optional[str] = None, stop_on_error: bool = False, portable_deps: bool = False):
+    def __init__(self, config_path: str, results_dir: Optional[Path] = None, db_version: Optional[str] = None, stop_on_error: bool = False, portable_deps: bool = False, debug_mode: bool = False):
         self.config_path = Path(config_path)
         self.db_version = db_version  # Optional database version override
         self.stop_on_error = stop_on_error  # Stop execution on first test failure
         self.portable_deps = portable_deps  # Install portable dependencies (overrides config-level settings)
+        self.debug_mode = debug_mode  # Enable verbose Ansible output and additional debugging
         
         # Create execution-timestamp directory: ./tmp/tests/e2e-YYYYMMDD-HHMMSS/
         self.execution_timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -915,8 +916,9 @@ class E2ETestFramework:
             def emit(self, record):
                 try:
                     with self.progress_lock:
-                        # Clear current line before logging
-                        self.stream.write('\r\033[K')
+                        # Only clear line if writing to terminal, not log files
+                        if self.stream.isatty():
+                            self.stream.write('\r\033[K')
                         super().emit(record)
                         self.stream.flush()
                 except Exception:
@@ -1562,9 +1564,13 @@ class E2ETestFramework:
             message += f" - {current_step}"
         
         with self._progress_lock:
-            # Clear line completely, then write message
-            # Use ANSI escape codes to clear the line
-            print(f"\r\033[K{message}", end='', flush=True)
+            # Only use carriage return and ANSI codes for terminals, not log files
+            if sys.stdout.isatty():
+                # Clear line completely, then write message
+                print(f"\r\033[K{message}", end='', flush=True)
+            else:
+                # For log files, just print the message normally with newline
+                print(message, flush=True)
     
     def _log_deployment_step(self, deployment_id: str, step: str, status: str = "STARTED"):
         """Log deployment step to stdout with timestamp."""
@@ -1577,8 +1583,10 @@ class E2ETestFramework:
             step_message = f"{timestamp} {deployment_id} {step}"
         
         with self._progress_lock:
-            # Clear current progress line and print step
-            print("\r" + " " * 100 + "\r", end='', flush=True)
+            # Only clear progress line for terminals, not log files
+            if sys.stdout.isatty():
+                # Clear current progress line and print step
+                print("\r" + " " * 100 + "\r", end='', flush=True)
             print(step_message, flush=True)
             
             # Re-render progress bar
@@ -1861,7 +1869,8 @@ class E2ETestFramework:
                 logger=self.logger,
                 log_callback=log_callback,
                 db_version=resolved_db_version,
-                exasol_bin=exasol_bin_to_use
+                exasol_bin=exasol_bin_to_use,
+                debug_mode=self.debug_mode
             )
 
             # Execute workflow
@@ -1982,6 +1991,10 @@ class E2ETestFramework:
         for key, flag in param_flag_map.items():
             if key in params:
                 cmd.extend([flag, str(params[key])])
+
+        # Handle boolean flags
+        if params.get('enable_multicast_overlay'):
+            cmd.append('--enable-multicast-overlay')
 
         if params.get('enable_spot_instances'):
             provider_flag = {
@@ -2734,6 +2747,7 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Generate plan without executing')
     parser.add_argument('--parallel', type=int, default=0, help='Maximum parallel executions (0=auto)')
     parser.add_argument('--stop-on-error', action='store_true', help='Stop execution on first test failure (for debugging)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode with verbose Ansible output')
     parser.add_argument('--providers', help='Comma separated list of providers to include (e.g. aws,gcp)')
     parser.add_argument('--tests', help='Comma separated deployment IDs to execute')
     parser.add_argument('--db-version', help='Database version to use (overrides config, e.g. 8.0.0-x86_64)')
@@ -2747,7 +2761,8 @@ def main():
             Path(args.results_dir) if args.results_dir else None,
             db_version=args.db_version,
             stop_on_error=args.stop_on_error,
-            portable_deps=args.portable_deps
+            portable_deps=args.portable_deps,
+            debug_mode=args.debug
         )
     except ValueError as e:
         # Configuration validation failed - error already printed to stderr

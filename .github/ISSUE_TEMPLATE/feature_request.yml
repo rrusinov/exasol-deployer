@@ -38,7 +38,7 @@ body:
       description: Describe your preferred solution or approach
       placeholder: |
         Describe how you envision this feature working...
-        
+
         Include details about:
         - User interface (command line flags, configuration options)
         - Expected behavior
@@ -111,11 +111,11 @@ body:
         Provide specific use cases and examples of how this feature would be used
       placeholder: |
         Example use cases:
-        
+
         1. Use case: Multi-region deployment
            - Current limitation: Can only deploy to one region
            - With this feature: Could deploy to multiple regions simultaneously
-           
+
         2. Use case: Custom networking
            - Current limitation: Limited CIDR configuration
            - With this feature: Full subnet customization
