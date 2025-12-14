@@ -394,16 +394,7 @@ class E2ETestFramework:
         # CRITICAL: Use shared locking for both build and install to prevent race conditions
         # where one process builds while another installs a partially written file
         self.logger.info("Using release testing workflow")
-        
-        # Check if we should use shared installation (set by run_e2e.sh for multi-provider runs)
-        shared_install_root = os.environ.get('E2E_SHARED_INSTALL_ROOT')
-        if shared_install_root:
-            # Use shared installation directory across all provider configs
-            install_dir = Path(shared_install_root) / 'install'
-            install_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            # Use per-config installation directory (default behavior)
-            install_dir = self.results_dir / 'install'
+        install_dir = self.results_dir / 'install'
             
         self.installer_path, self.exasol_bin = self._build_and_install_release(install_dir, use_portable_deps=self.portable_deps)
         self.logger.info(f"Using installed exasol binary: {self.exasol_bin}")
@@ -794,13 +785,12 @@ class E2ETestFramework:
                 )
                 exasol_symlink = abs_install_dir / 'exasol'
                 extract_dir = abs_install_dir / 'exasol-deployer'  # For portable deps, files are in subdirectory
+                exasol_binary = extract_dir / 'exasol'
             else:
-                # Use --extract-only to avoid PATH modifications in e2e testing
-                # This extracts files without modifying shell configuration files
+                # Regular install without PATH modifications (installer creates symlink)
                 extract_dir = abs_install_dir / 'exasol-deployer'
-                
                 result = subprocess.run(
-                    ['/usr/bin/env', 'bash', str(abs_installer_path), '--extract-only', str(extract_dir)],
+                    ['/usr/bin/env', 'bash', str(abs_installer_path), '--install', str(abs_install_dir), '--yes', '--no-path'],
                     capture_output=True,
                     text=True,
                     timeout=60,  # 1 minute timeout
@@ -820,22 +810,13 @@ class E2ETestFramework:
                         error_msg += f"\nOutput:\n{result.stdout}\n{result.stderr}"
                     raise RuntimeError(error_msg)
                 
-                exasol_symlink = extract_dir / 'exasol'
-                
-                # Create symlink manually since --extract-only doesn't create it
-                exasol_symlink = install_dir / 'exasol'
+                exasol_symlink = abs_install_dir / 'exasol'
                 exasol_binary = extract_dir / 'exasol'
-                
-                if not exasol_binary.exists():
-                    raise RuntimeError(f"Extracted exasol binary not found: {exasol_binary}")
-                
-                # Remove existing symlink if it exists
-                if exasol_symlink.exists() or exasol_symlink.is_symlink():
-                    exasol_symlink.unlink()
-                
-                # Create symlink
-                exasol_symlink.symlink_to(exasol_binary)
             
+            # Verify extracted binary exists
+            if not exasol_binary.exists():
+                raise RuntimeError(f"Extracted exasol binary not found: {exasol_binary}")
+
             # Verify symlink exists and is executable
             if not exasol_symlink.exists():
                 raise RuntimeError(

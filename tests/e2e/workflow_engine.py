@@ -57,6 +57,7 @@ Dynamic validation checks use data from `exasol status` and `exasol health` comm
 import json
 import logging
 import os
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -99,6 +100,7 @@ class WorkflowStep:
     target_node: Optional[str] = None
     method: Optional[str] = None
     command: Optional[str] = None
+    script: Optional[str] = None
     checks: List[str] = field(default_factory=list)
     allow_failures: List[str] = field(default_factory=list)
     retry: Optional[Dict[str, int]] = None
@@ -573,6 +575,7 @@ class WorkflowExecutor:
             target_node=config.get('target_node'),
             method=config.get('method'),
             command=config.get('command'),
+            script=config.get('script'),
             checks=config.get('checks', []),
             allow_failures=config.get('allow_failures', []),
             retry=config.get('retry')
@@ -763,8 +766,8 @@ class WorkflowExecutor:
     def _execute_start_cluster(self, step: WorkflowStep):
         """Execute cluster start"""
         cmd = [str(self.exasol_bin), 'start', '--deployment-dir', str(self.deploy_dir)]
-        
-        result = self._run_command_with_streaming(cmd, timeout=600)
+        # Allow up to 20 minutes for start to handle slower provider boots (e.g., GCP)
+        result = self._run_command_with_streaming(cmd, timeout=1200)
         
         if result.returncode != 0:
             raise RuntimeError(f"Start cluster failed: {result.stderr}")
@@ -844,13 +847,31 @@ class WorkflowExecutor:
         - max_attempts: Number of retry attempts (default: 1)
         - delay_seconds: Delay between retries (default: 10)
         """
-        if not step.command:
-            raise ValueError("command is required for custom_command step")
+        if not step.command and not step.script:
+            raise ValueError("command or script is required for custom_command step")
         
-        # Substitute variables - use absolute path to avoid issues with relative paths
-        command = step.command
-        command = command.replace('$deployment_dir', str(self.deploy_dir.resolve()))
-        command = command.replace('$provider', self.provider)
+        script_dir = Path(__file__).resolve().parent / 'custom_commands'
+        command = None
+        if step.script:
+            script_spec = step.script
+            script_spec = script_spec.replace('$deployment_dir', str(self.deploy_dir.resolve()))
+            script_spec = script_spec.replace('$provider', self.provider)
+            script_parts = shlex.split(script_spec)
+            if not script_parts:
+                raise ValueError("script is required for custom_command step")
+            script_path = Path(script_parts[0])
+            if not script_path.is_absolute():
+                script_path = script_dir / script_parts[0]
+            if not script_path.exists():
+                raise RuntimeError(f"Custom command script not found: {script_path}")
+            if not os.access(script_path, os.X_OK):
+                raise RuntimeError(f"Custom command script is not executable: {script_path}")
+            script_parts[0] = str(script_path)
+            command = ' '.join(shlex.quote(part) for part in script_parts)
+        else:
+            command = step.command
+            command = command.replace('$deployment_dir', str(self.deploy_dir.resolve()))
+            command = command.replace('$provider', self.provider)
         
         # Get retry configuration
         max_attempts = 1

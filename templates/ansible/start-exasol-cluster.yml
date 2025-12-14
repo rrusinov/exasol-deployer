@@ -269,8 +269,10 @@
           when: all_boot_stages.stdout is defined
 
         - name: Check if all nodes reached stage 'd'
-          ansible.builtin.command:
-            cmd: "c4 ps -e '.[].Instances.Configs | to_entries | all(.value.ground.boot_stage == \"d\")'"
+          ansible.builtin.shell: |
+            stages=$(c4 ps -e 'map({node: .Name, instances: (.Instances.Configs | to_entries | map({instance: .key, stage: .value.ground.boot_stage}))}) | map({node: .node, stages: .instances | map(.stage)})')
+            echo "Cluster boot stages: ${stages}"
+            c4 ps -e '.[].Instances.Configs | to_entries | all(.value.ground.boot_stage == "d")'
           become_user: "{{ exa_user }}"
           register: stage_check
           until: (stage_check.stdout | default('') | regex_search('true')) is not none

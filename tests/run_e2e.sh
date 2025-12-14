@@ -327,8 +327,30 @@ discover_configs() {
     find "$SCRIPT_DIR/e2e/configs" -maxdepth 1 -type f -name '*.json' | sort
 }
 
+config_needs_portable_deps() {
+    local cfg="$1"
+    local cfg_dir sut_file sut_path
+
+    if grep -q '"use_portable_dependencies".*true' "$cfg" 2>/dev/null; then
+        return 0
+    fi
+
+    cfg_dir="$(dirname "$cfg")"
+    while IFS= read -r sut_file; do
+        if [[ -n "$sut_file" ]]; then
+            sut_path="$cfg_dir/$sut_file"
+            if [[ -f "$sut_path" ]] && grep -q '"use_portable_dependencies".*true' "$sut_path" 2>/dev/null; then
+                return 0
+            fi
+        fi
+    done < <(grep -o '"sut": *"[^"]*"' "$cfg" 2>/dev/null | sed 's/.*"sut": *"\([^"]*\)".*/\1/')
+
+    return 1
+}
+
 run_framework() {
     local config_file="$1"
+    local portable_flag="$PORTABLE_DEPS"
     shift
     local db_version_args=()
     if [[ -n "$DB_VERSION" ]]; then
@@ -347,7 +369,10 @@ run_framework() {
         debug_args=(--debug)
     fi
     local portable_deps_args=()
-    if [[ "$PORTABLE_DEPS" -eq 1 ]]; then
+    if [[ "$portable_flag" -eq 0 ]] && config_needs_portable_deps "$config_file"; then
+        portable_flag=1
+    fi
+    if [[ "$portable_flag" -eq 1 ]]; then
         portable_deps_args=(--portable-deps)
     fi
     
@@ -705,30 +730,6 @@ else
         declare -A cfg_pids=()
         declare -A cfg_results=()
 
-        # Set shared installation root for all provider configs to avoid redundant installations
-        export E2E_SHARED_INSTALL_ROOT="$parallel_root"
-
-        # Check if any config needs portable dependencies
-        portable_deps_needed=false
-        for cfg in "${filtered_configs[@]}"; do
-            # Check main config file
-            if grep -q '"use_portable_dependencies".*true' "$cfg" 2>/dev/null; then
-                portable_deps_needed=true
-                break
-            fi
-            # Check referenced SUT files
-            cfg_dir="$(dirname "$cfg")"
-            while IFS= read -r sut_file; do
-                if [[ -n "$sut_file" ]]; then
-                    sut_path="$cfg_dir/$sut_file"
-                    if [[ -f "$sut_path" ]] && grep -q '"use_portable_dependencies".*true' "$sut_path" 2>/dev/null; then
-                        portable_deps_needed=true
-                        break 2
-                    fi
-                fi
-            done < <(grep -o '"sut": *"[^"]*"' "$cfg" 2>/dev/null | sed 's/.*"sut": *"\([^"]*\)".*/\1/')
-        done
-
         # Determine parallelism limit (all configs)
         effective_parallel=${#filtered_configs[@]}
         current_jobs=0
@@ -757,7 +758,11 @@ else
                 debug_args=(--debug)
             fi
             portable_deps_args=()
-            if [[ "$portable_deps_needed" == "true" ]]; then
+            portable_flag="$PORTABLE_DEPS"
+            if [[ "$portable_flag" -eq 0 ]] && config_needs_portable_deps "$cfg"; then
+                portable_flag=1
+            fi
+            if [[ "$portable_flag" -eq 1 ]]; then
                 portable_deps_args=(--portable-deps)
             fi
             

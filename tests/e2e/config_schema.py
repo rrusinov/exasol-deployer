@@ -72,8 +72,8 @@ WORKFLOW_STEPS = {
     'custom_command': WorkflowStepSchema(
         name='custom_command',
         description='Execute a custom shell command with variable substitution',
-        required_fields=['step', 'command'],
-        optional_fields=['description'],
+        required_fields=['step'],
+        optional_fields=['description', 'command', 'script'],
         supported_providers=set()  # All providers
     ),
     'destroy': WorkflowStepSchema(
@@ -395,6 +395,13 @@ def validate_workflow_step(step: Dict, provider: str) -> List[str]:
                 errors.append("Field 'retry' must be an object")
             elif 'max_attempts' in retry and not isinstance(retry['max_attempts'], int):
                 errors.append("Field 'retry.max_attempts' must be an integer")
+    elif step_type == 'custom_command':
+        has_command = bool(step.get('command'))
+        has_script = bool(step.get('script'))
+        if not has_command and not has_script:
+            errors.append("Step 'custom_command' requires 'command' or 'script'")
+        if has_command and has_script:
+            errors.append("Step 'custom_command' cannot specify both 'command' and 'script'")
     
     return errors
 

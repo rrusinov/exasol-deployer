@@ -297,9 +297,6 @@ install_jq() {
     download_file "$url" "$jq_dir/jq" "jq v$version"
     chmod +x "$jq_dir/jq"
     
-    # Create convenience symlink
-    ln -sf "$jq_dir/jq" "$share_dir/jq-binary"
-    
     log_info "✓ jq v$version installed"
 }
 
