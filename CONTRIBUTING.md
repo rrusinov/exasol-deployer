@@ -364,14 +364,14 @@ Before creating a release, maintainers should:
 ### Cloud Provider Support
 
 Adding new cloud providers requires:
-- Terraform templates in `templates/terraform-<provider>/`
+- OpenTofu templates in `templates/terraform-<provider>/`
 - Cloud setup documentation in `clouds/CLOUD_SETUP_<PROVIDER>.md`
 - Provider-specific initialization logic
 - Comprehensive testing
 
 ### Template Development
 
-Terraform and Ansible templates follow:
+OpenTofu and Ansible templates follow:
 - Consistent variable naming
 - Proper resource tagging
 - Security best practices
