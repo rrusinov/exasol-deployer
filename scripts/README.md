@@ -228,6 +228,8 @@ These scripts require cloud provider CLI tools to be installed:
 - **GCP**: `gcloud` CLI ([installation](https://cloud.google.com/sdk/docs/install))
 - **Hetzner**: `hcloud` CLI ([installation](https://github.com/hetznercloud/cli))
 - **DigitalOcean**: `doctl` CLI ([installation](https://docs.digitalocean.com/reference/doctl/))
+- **Exoscale**: `exo` CLI v1.80.0 ([installation](https://github.com/exoscale/cli/releases/tag/v1.80.0))
+  - **Note**: Use v1.80.0 instead of v1.88.0 (latest has v3 API compatibility issues)
 - **libvirt**: `virsh` command (part of libvirt-client package)
 
 The scripts will skip providers whose CLI tools are not installed.
@@ -262,6 +264,8 @@ xdg-open report.html
 # Actually delete
 ./scripts/cleanup-resources.sh --provider aws --yes
 ```
+
+**Note for Exoscale**: Use exo CLI v1.80.0 (v1.88.0 has v3 API compatibility issues). If cleanup fails, use `./exasol destroy` from your deployment directory instead.
 
 ## Testing
 

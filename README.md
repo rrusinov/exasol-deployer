@@ -5,7 +5,7 @@
 [![Build and Release Installer](https://github.com/rrusinov/exasol-deployer/actions/workflows/release.yml/badge.svg)](https://github.com/rrusinov/exasol-deployer/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Shell](https://img.shields.io/badge/Shell-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Cloud Providers](https://img.shields.io/badge/Cloud-AWS%20%7C%20Azure%20%7C%20GCP%20%7C%20Hetzner%20%7C%20DigitalOcean%20%7C%20libvirt-orange.svg)](#cloud-provider-setup)
+[![Cloud Providers](https://img.shields.io/badge/Cloud-AWS%20%7C%20Azure%20%7C%20GCP%20%7C%20Hetzner%20%7C%20DigitalOcean%20%7C%20Exoscale%20%7C%20libvirt-orange.svg)](#cloud-provider-setup)
 
 This directory contains a deployment configuration for Exasol database.
 
@@ -17,6 +17,7 @@ This directory contains a deployment configuration for Exasol database.
   - [GCP] Google Cloud Platform
   - [HTZ] Hetzner Cloud
   - [DO] DigitalOcean
+  - [EXO] Exoscale
   - [LAB] libvirt/KVM (local or remote over SSH for Linux hosts)
 - **Multiple Database Versions**: Support for multiple Exasol database versions and architectures (x86_64, arm64)
 - **Cloud-Init Integration**: OS-agnostic user provisioning works across all Linux distributions
@@ -196,6 +197,7 @@ Before deploying, you need to set up credentials for your chosen cloud provider.
 - **[GCP (Google Cloud Platform)](clouds/CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
 - **[Hetzner Cloud](clouds/CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
 - **[DigitalOcean](clouds/CLOUD_SETUP_DIGITALOCEAN.md)** - Simple and affordable
+- **[Exoscale](clouds/CLOUD_SETUP_EXOSCALE.md)** - European cloud with automatic power control
 - **[Local libvirt/KVM](clouds/CLOUD_SETUP_LIBVIRT.md)** - Local testing and development
 
 **See the [Cloud Provider Setup Guide](clouds/CLOUD_SETUP.md) for detailed instructions.**
@@ -227,6 +229,9 @@ gcloud config get-value project  # Get project ID
 
 **Hetzner** / **DigitalOcean**:
 Get API token from provider console and use with `--hetzner-token` or `--digitalocean-token` flag.
+
+**Exoscale**:
+Get API credentials from Exoscale console and use with `--exoscale-api-key` and `--exoscale-api-secret` flags.
 
 **Local libvirt/KVM**:
 Install libvirt and KVM, then ensure your user is in the `libvirt` and `kvm` groups. See [Libvirt Setup Guide](clouds/CLOUD_SETUP_LIBVIRT.md).
@@ -265,6 +270,7 @@ If permissions are not available, generate them (only needed when templates chan
 - [GCP Setup Guide](clouds/CLOUD_SETUP_GCP.md)
 - [Hetzner Setup Guide](clouds/CLOUD_SETUP_HETZNER.md)
 - [DigitalOcean Setup Guide](clouds/CLOUD_SETUP_DIGITALOCEAN.md)
+- [Exoscale Setup Guide](clouds/CLOUD_SETUP_EXOSCALE.md)
 - [Libvirt Setup Guide](clouds/CLOUD_SETUP_LIBVIRT.md)
 
 ### 2. Initialize a Deployment
@@ -347,6 +353,17 @@ Match `--hetzner-network-zone` to your chosen location (default `eu-central` wor
 ```
 
 DigitalOcean currently provides only x86_64 droplets, so arm64 database versions are rejected during initialization for this provider.
+
+#### Exoscale Deployment
+
+```bash
+./exasol init \
+  --cloud-provider exoscale \
+  --deployment-dir ./my-exoscale-deployment \
+  --exoscale-zone ch-gva-2 \
+  --exoscale-api-key <your-api-key> \
+  --exoscale-api-secret <your-api-secret>
+```
 
 #### Local libvirt/KVM Deployment (Linux host, system libvirt only)
 
@@ -459,7 +476,7 @@ For cost optimization, you can stop the database. All providers follow the same 
 
 **How it works:**
 
-**For AWS/Azure/GCP (Automatic Power Control):**
+**For AWS/Azure/GCP/Exoscale (Automatic Power Control):**
 - `stop`: Powers off VMs via OpenTofu and verifies shutdown
 - `start`: Powers on VMs via OpenTofu, waits for database to become healthy (15 min timeout)
 
@@ -500,7 +517,7 @@ Initialize a new deployment directory with configuration files.
 **Flags:**
 
 **Required Flags**
-- `--cloud-provider string`: Cloud provider to target (`aws`, `azure`, `gcp`, `hetzner`, `digitalocean`, or `libvirt`).
+- `--cloud-provider string`: Cloud provider to target (`aws`, `azure`, `gcp`, `hetzner`, `digitalocean`, `exoscale`, or `libvirt`).
 
 **Common Flags**
 - `--deployment-dir string`: Directory for deployment files (default: current directory).
@@ -548,6 +565,11 @@ Initialize a new deployment directory with configuration files.
 - `--digitalocean-region string`: DigitalOcean region (default: `nyc3`).
 - `--digitalocean-token string`: DigitalOcean API token.
 
+**Exoscale-Specific Flags**
+- `--exoscale-zone string`: Exoscale zone (default: `ch-gva-2`).
+- `--exoscale-api-key string`: Exoscale API key.
+- `--exoscale-api-secret string`: Exoscale API secret.
+
 **Libvirt-Specific Flags**
 - `--libvirt-memory integer`: Memory per VM in GB (default: `4`).
 - `--libvirt-vcpus integer`: vCPUs per VM (default: `2`).
@@ -590,7 +612,7 @@ Start a stopped Exasol database deployment. This powers on cloud instances (if s
 
 1. Sets status to `start_in_progress`
 2. **Infrastructure start:**
-   - **AWS/Azure/GCP:** Powers on instances automatically via `tofu apply -var infra_desired_state=running`
+   - **AWS/Azure/GCP/Exoscale:** Powers on instances automatically via `tofu apply -var infra_desired_state=running`
    - **DigitalOcean/Hetzner/libvirt:** Displays provider-specific power-on instructions (you power on manually)
 3. Sets status to `started` and releases operation lock
 4. Calls `health --update --wait-for database_ready,15m`:
@@ -632,7 +654,7 @@ Stop a running Exasol database deployment. This gracefully stops database servic
    - `c4_cloud_command.service`
    - `exasol-admin-ui.service` (explicit ensure-stop)
 
-**For AWS/Azure/GCP:**
+**For AWS/Azure/GCP/Exoscale:**
 3. Powers off instances via `tofu apply -var infra_desired_state=stopped`
 4. Verifies VMs are powered off via SSH connectivity check
 5. Updates state to `stopped` or `stop_failed`
@@ -793,7 +815,7 @@ If you have orphaned resources or want to clean up multiple deployments at once,
 ./scripts/cleanup-resources.sh --provider aws --prefix myapp --yes
 ```
 
-**Supported providers:** aws, azure, gcp, hetzner, digitalocean, libvirt
+**Supported providers:** aws, azure, gcp, hetzner, digitalocean, exoscale, libvirt
 
 **Note:** The scripts in `scripts/` directory are not included in packaged releases as they require cloud provider CLI tools (aws, az, gcloud, hcloud, doctl, virsh) to be installed. See [Scripts README](scripts/README.md) for prerequisites and detailed information.
 

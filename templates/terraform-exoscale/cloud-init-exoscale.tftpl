@@ -1,0 +1,25 @@
+#cloud-config
+
+# Exoscale-specific cloud-init with private network configuration
+
+# Configure network interfaces (bring up eth1 with DHCP)
+write_files:
+  - path: /etc/netplan/60-exoscale-private.yaml
+    content: |
+      network:
+        version: 2
+        ethernets:
+          eth1:
+            dhcp4: true
+            dhcp4-overrides:
+              use-routes: false
+    permissions: '0644'
+
+# Run network configuration
+runcmd:
+  # Apply netplan configuration to bring up eth1
+  - netplan apply || true
+  # Wait for eth1 to get IP
+  - timeout 30 bash -c 'until ip addr show eth1 | grep -q "inet "; do sleep 1; done' || true
+
+${base_cloud_init}

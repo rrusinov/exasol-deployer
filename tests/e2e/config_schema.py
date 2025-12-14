@@ -22,7 +22,7 @@ class WorkflowStepSchema:
 
 # Supported cloud providers
 SUPPORTED_PROVIDERS = {
-    'aws', 'azure', 'gcp', 'digitalocean', 'hetzner', 'libvirt'
+    'aws', 'azure', 'gcp', 'digitalocean', 'hetzner', 'libvirt', 'exoscale'
 }
 
 # Workflow step types with their requirements
@@ -162,7 +162,7 @@ SUT_PARAMETERS = {
     'instance_type': {
         'type': 'string',
         'cli_flag': '--instance-type',
-        'providers': {'aws', 'azure', 'gcp', 'digitalocean', 'hetzner'},
+        'providers': {'aws', 'azure', 'gcp', 'digitalocean', 'hetzner', 'exoscale'},
         'description': 'Cloud instance type'
     },
     'libvirt_memory': {
@@ -288,6 +288,14 @@ SUT_PARAMETERS = {
         'cli_flag': '--digitalocean-token',
         'providers': {'digitalocean'},
         'description': 'DigitalOcean API token'
+    },
+    
+    # Exoscale-specific parameters
+    'exoscale_zone': {
+        'type': 'string',
+        'cli_flag': '--exoscale-zone',
+        'providers': {'exoscale'},
+        'description': 'Exoscale zone'
     },
     
     # Common security parameters

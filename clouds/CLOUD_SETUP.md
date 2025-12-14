@@ -31,6 +31,7 @@ The Exasol Cloud Deployer supports the following cloud providers:
 - **[GCP (Google Cloud Platform)](CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
 - **[Hetzner Cloud](CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
 - **[DigitalOcean](CLOUD_SETUP_DIGITALOCEAN.md)** - Simple and affordable cloud provider
+- **[Exoscale](CLOUD_SETUP_EXOSCALE.md)** - European cloud provider with automatic power control
 - **[Libvirt/KVM](CLOUD_SETUP_LIBVIRT.md)** - Local development and testing with KVM virtualization
 
 ## Quick Start by Provider
@@ -117,6 +118,20 @@ See [detailed Hetzner setup instructions](CLOUD_SETUP_HETZNER.md).
 
 See [detailed DigitalOcean setup instructions](CLOUD_SETUP_DIGITALOCEAN.md).
 
+### Exoscale
+```bash
+# Get API credentials from https://portal.exoscale.com/
+
+# Initialize deployment
+./exasol init \
+  --cloud-provider exoscale \
+  --exoscale-api-key <your-api-key> \
+  --exoscale-api-secret <your-api-secret> \
+  --deployment-dir ./my-exoscale-deployment
+```
+
+See [detailed Exoscale setup instructions](CLOUD_SETUP_EXOSCALE.md).
+
 ## Common Configuration Options
 
 All cloud providers support these common options:
@@ -139,15 +154,15 @@ All cloud providers support these common options:
 
 ## Feature Comparison
 
-| Feature | AWS | Azure | GCP | Hetzner | DigitalOcean | libvirt |
-|---------|-----|-------|-----|---------|--------------|---------|
-| Spot/Preemptible Instances | ✅ | ✅ | ✅ | ❌ | ❌ | N/A |
-| Automatic Power Control | ✅ | ✅ | ✅ | ❌ Manual | ❌ Manual | ❌ Manual |
-| Multiple Instance Types | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Custom VPC/Network | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Multiple Regions | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| ARM64 Support | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
-| Multiple Data Volumes | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Feature | AWS | Azure | GCP | Hetzner | DigitalOcean | Exoscale | libvirt |
+|---------|-----|-------|-----|---------|--------------|----------|---------|
+| Spot/Preemptible Instances | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | N/A |
+| Automatic Power Control | ✅ | ✅ | ✅ | ❌ Manual | ❌ Manual | ✅ | ❌ Manual |
+| Multiple Instance Types | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Custom VPC/Network | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Multiple Regions | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| ARM64 Support | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Multiple Data Volumes | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ## Security Best Practices
 
@@ -160,11 +175,16 @@ All cloud providers support these common options:
 
 ### Credential Management
 - **Never commit credentials**: Keep API tokens and passwords out of version control
-- **Use environment variables/token files**: Export credentials instead of hardcoding. When `--hetzner-token` or `--digitalocean-token` is omitted, `exasol init` will try `$HETZNER_TOKEN`/`$DIGITALOCEAN_TOKEN` first and then `~/.hetzner_token`/`~/.digitalocean_token`.
+- **Use environment variables/token files**: Export credentials instead of hardcoding. When `--hetzner-token`, `--digitalocean-token`, or `--exoscale-api-key`/`--exoscale-api-secret` are omitted, `exasol init` will try environment variables first and then credential files.
   ```bash
   export HETZNER_TOKEN="your-token"
+  export EXOSCALE_API_KEY="your-key"
+  export EXOSCALE_API_SECRET="your-secret"
   echo "$HETZNER_TOKEN" > ~/.hetzner_token
+  echo "$EXOSCALE_API_KEY" > ~/.exoscale_api_key
+  echo "$EXOSCALE_API_SECRET" > ~/.exoscale_api_secret
   ./exasol init --cloud-provider hetzner  # uses env/file automatically
+  ./exasol init --cloud-provider exoscale  # uses env/file automatically
   ```
 - **Host OS password**: The `host_password` for the `exasol` user is stored in `.credentials.json`. Retrieve it with `cat .credentials.json | jq -r '.host_password'` and rotate it regularly.
 - **Rotate credentials regularly**: Update API tokens and passwords periodically
@@ -227,10 +247,10 @@ az account show
 gcloud auth application-default login
 ```
 
-**Hetzner/DigitalOcean**: "Invalid API token"
-- Verify token is not expired
+**Hetzner/DigitalOcean/Exoscale**: "Invalid API token/credentials"
+- Verify token/credentials are not expired
 - Check token has correct permissions
-- Generate new token from web console
+- Generate new credentials from web console
 
 ### Network/Connectivity Issues
 - Verify the cloud provider's API is accessible

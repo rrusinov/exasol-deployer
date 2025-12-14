@@ -1,0 +1,12 @@
+{
+  "description": "Exoscale single node configuration",
+  "provider": "exoscale",
+  "parameters": {
+    "cluster_size": 1,
+    "instance_type": "standard.large",
+    "data_volumes_per_node": 1,
+    "data_volume_size": 20,
+    "root_volume_size": 52,
+    "exoscale_zone": "ch-gva-2"
+  }
+}

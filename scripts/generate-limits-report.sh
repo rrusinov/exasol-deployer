@@ -23,7 +23,7 @@ Generate HTML report of cloud resource limits across all providers and regions.
 
 Options:
   --output <FILE>    Output HTML file (default: limits-report.html)
-  --provider <NAME>  Only check specific provider (aws, azure, gcp, hetzner, digitalocean, libvirt)
+  --provider <NAME>  Only check specific provider (aws, azure, gcp, hetzner, digitalocean, exoscale, libvirt)
   --help             Show this help message
 
 Examples:
@@ -447,6 +447,97 @@ EOF
     echo "        </div>" >> "$output_file"
 }
 
+collect_exoscale_data() {
+    local output_file="$1"
+    
+    if ! command -v exo &>/dev/null; then
+        echo "<p class='warning'>Exoscale CLI not installed</p>" >> "$output_file"
+        return
+    fi
+    
+    cat >> "$output_file" <<EOF
+        <div class="region">
+            <h3>Exoscale</h3>
+            <h4>Compute Instances by Zone</h4>
+            <table class="quota-table">
+                <tr><th>Zone</th><th>Instances</th><th>Status</th></tr>
+EOF
+    
+    # Check each zone for instances
+    local total_instances=0
+    for zone in ch-gva-2 ch-dk-2 de-fra-1 de-muc-1 at-vie-1 bg-sof-1; do
+        local instance_data
+        instance_data=$(exo compute instance list --zone "$zone" -O json 2>/dev/null || echo "[]")
+        local instance_count
+        instance_count=$(echo "$instance_data" | jq -r 'length' 2>/dev/null || echo "0")
+        
+        if [[ "$instance_count" -gt 0 ]]; then
+            total_instances=$((total_instances + instance_count))
+            echo "                <tr><td>$zone</td><td>$instance_count</td><td>Active</td></tr>" >> "$output_file"
+        fi
+    done
+    
+    if [[ "$total_instances" -eq 0 ]]; then
+        echo "                <tr><td colspan='3'>No running instances</td></tr>" >> "$output_file"
+    fi
+    
+    cat >> "$output_file" <<EOF
+            </table>
+            <p><small>Note: Exoscale quotas are managed per organization. Contact support for limit increases.</small></p>
+EOF
+    
+    # List all running instances
+    if [[ "$total_instances" -gt 0 ]]; then
+        cat >> "$output_file" <<EOF
+            <h4>Running Instances</h4>
+            <table class="instances-table">
+                <tr><th>Name</th><th>Type</th><th>Zone</th><th>State</th></tr>
+EOF
+        for zone in ch-gva-2 ch-dk-2 de-fra-1 de-muc-1 at-vie-1 bg-sof-1; do
+            local instance_data
+            instance_data=$(exo compute instance list --zone "$zone" -O json 2>/dev/null || echo "[]")
+            local instance_count
+            instance_count=$(echo "$instance_data" | jq -r 'length' 2>/dev/null || echo "0")
+            
+            if [[ "$instance_count" -gt 0 ]]; then
+                echo "$instance_data" | jq -r '.[] | "<tr><td>\(.name)</td><td>\(.type // "N/A")</td><td>'"$zone"'</td><td>\(.state)</td></tr>"' >> "$output_file" 2>/dev/null || true
+            fi
+        done
+        echo "            </table>" >> "$output_file"
+    fi
+    
+    # Show block storage volumes
+    local total_volumes=0
+    for zone in ch-gva-2 ch-dk-2 de-fra-1 de-muc-1 at-vie-1 bg-sof-1; do
+        local volume_data
+        volume_data=$(exo storage block list --zone "$zone" -O json 2>/dev/null || echo "[]")
+        local volume_count
+        volume_count=$(echo "$volume_data" | jq -r 'length' 2>/dev/null || echo "0")
+        total_volumes=$((total_volumes + volume_count))
+    done
+    
+    if [[ "$total_volumes" -gt 0 ]]; then
+        cat >> "$output_file" <<EOF
+            <h4>Block Storage Volumes</h4>
+            <table class="instances-table">
+                <tr><th>Name</th><th>Size (GB)</th><th>Zone</th><th>State</th></tr>
+EOF
+        for zone in ch-gva-2 ch-dk-2 de-fra-1 de-muc-1 at-vie-1 bg-sof-1; do
+            local volume_data
+            volume_data=$(exo storage block list --zone "$zone" -O json 2>/dev/null || echo "[]")
+            local volume_count
+            volume_count=$(echo "$volume_data" | jq -r 'length' 2>/dev/null || echo "0")
+            
+            if [[ "$volume_count" -gt 0 ]]; then
+                echo "$volume_data" | jq -r ".[] | \"<tr><td>\\(.name)</td><td>\\(.size)</td><td>$zone</td><td>\\(.state)</td></tr>\"" >> "$output_file" 2>/dev/null || true
+            fi
+        done
+        echo "            </table>" >> "$output_file"
+    fi
+    
+    echo "        </div>" >> "$output_file"
+}
+
 collect_libvirt_data() {
     local output_file="$1"
     
@@ -499,7 +590,7 @@ generate_html() {
     
     generate_html_header > "$output_file"
     
-    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean" "libvirt")
+    local providers=("aws" "azure" "gcp" "hetzner" "digitalocean" "exoscale" "libvirt")
     
     if [[ -n "$provider_filter" ]]; then
         providers=("$provider_filter")
@@ -641,6 +732,24 @@ EOF
                     summary="CLI not installed"
                 fi
                 ;;
+            exoscale)
+                if command -v exo &>/dev/null; then
+                    local inst_count=0
+                    local vol_count=0
+                    for zone in ch-gva-2 ch-dk-2 de-fra-1 de-muc-1 at-vie-1 bg-sof-1; do
+                        local instance_data=$(exo compute instance list --zone "$zone" -O json 2>/dev/null || echo "[]")
+                        local volume_data=$(exo storage block list --zone "$zone" -O json 2>/dev/null || echo "[]")
+                        local zone_instances=$(echo "$instance_data" | jq -r 'length' 2>/dev/null || echo "0")
+                        local zone_volumes=$(echo "$volume_data" | jq -r 'length' 2>/dev/null || echo "0")
+                        inst_count=$((inst_count + zone_instances))
+                        vol_count=$((vol_count + zone_volumes))
+                    done
+                    summary="$inst_count instances"
+                    ip_summary="$vol_count volumes"
+                else
+                    summary="CLI not installed"
+                fi
+                ;;
             libvirt)
                 if command -v virsh &>/dev/null; then
                     local vm_count=$(virsh list --all 2>/dev/null | awk 'NR>2 && NF>0' | wc -l)
@@ -714,6 +823,9 @@ EOF
                 ;;
             digitalocean)
                 collect_digitalocean_data "$output_file"
+                ;;
+            exoscale)
+                collect_exoscale_data "$output_file"
                 ;;
             libvirt)
                 collect_libvirt_data "$output_file"

@@ -111,7 +111,7 @@ cmd_stop() {
     cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
     local infra_power_supported="false"
     case "$cloud_provider" in
-        aws|azure|gcp)
+        aws|azure|gcp|exoscale)
             infra_power_supported="true"
             ;;
         *)

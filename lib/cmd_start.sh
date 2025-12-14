@@ -116,7 +116,7 @@ cmd_start() {
     fi
     local infra_power_supported="false"
     case "$cloud_provider" in
-        aws|azure|gcp)
+        aws|azure|gcp|exoscale)
             infra_power_supported="true"
             ;;
         libvirt)

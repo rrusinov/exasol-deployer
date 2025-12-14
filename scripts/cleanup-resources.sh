@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Unified cloud resource cleanup script for Exasol Deployer
-# Supports: AWS, Azure, GCP, Hetzner, DigitalOcean, Libvirt
+# Supports: AWS, Azure, GCP, Hetzner, DigitalOcean, Exoscale, Libvirt
 
 set -euo pipefail
 
@@ -36,7 +36,7 @@ Usage: $0 --provider <PROVIDER> [OPTIONS]
 Cleanup cloud resources for Exasol Deployer.
 
 Required:
-  --provider <PROVIDER>    Cloud provider: aws, azure, gcp, hetzner, digitalocean, libvirt
+  --provider <PROVIDER>    Cloud provider: aws, azure, gcp, hetzner, digitalocean, exoscale, libvirt
 
 Optional:
   --tag <TAG>             Filter resources by tag/label (default: owner=exasol-deployer)
@@ -129,10 +129,10 @@ if [[ -z "$PROVIDER" ]]; then
 fi
 
 case "$PROVIDER" in
-    aws|azure|gcp|hetzner|digitalocean|libvirt)
+    aws|azure|gcp|hetzner|digitalocean|exoscale|libvirt)
         ;;
     *)
-        die "Unsupported provider: $PROVIDER. Supported: aws, azure, gcp, hetzner, digitalocean, libvirt"
+        die "Unsupported provider: $PROVIDER. Supported: aws, azure, gcp, hetzner, digitalocean, exoscale, libvirt"
         ;;
 esac
 
@@ -1149,6 +1149,182 @@ cleanup_digitalocean() {
 
 
 # ============================================================================
+# Exoscale Cleanup
+# ============================================================================
+cleanup_exoscale() {
+    check_cli_tool "exo" "Install: https://github.com/exoscale/cli"
+    
+    log_info "Fetching Exoscale resources with prefix '$PREFIX_FILTER'..."
+    
+    # Check if authenticated
+    if ! exo config show &>/dev/null; then
+        die "Not authenticated with Exoscale. Run: exo config"
+    fi
+    
+    # Test API connectivity
+    local api_test
+    api_test=$(exo compute instance list --zone ch-gva-2 -O json 2>&1)
+    if echo "$api_test" | grep -qi "not found\|404\|error"; then
+        log_error "Exoscale API error detected. The exo CLI may have compatibility issues."
+        log_error "API response: $(echo "$api_test" | head -2)"
+        log_warn "Workaround: Use 'exasol destroy' from your deployment directory instead."
+        return 1
+    fi
+    
+    # Get default zone from config (or use ch-gva-2 as fallback)
+    local default_zone
+    default_zone=$(exo config show 2>/dev/null | grep "Default Zone" | awk '{print $4}' || echo "ch-gva-2")
+    
+    # List instances across all zones
+    local instances=""
+    local volumes=""
+    local security_groups=""
+    local ssh_keys=""
+    
+    # Query each zone
+    for zone in ch-gva-2 ch-dk-2 de-fra-1 de-muc-1 at-vie-1 bg-sof-1; do
+        local zone_instances
+        zone_instances=$(exo compute instance list --zone "$zone" -O json 2>/dev/null | \
+            jq -r ".[] | select(.name | startswith(\"${PREFIX_FILTER}\")) | \"\(.name):\(.id):$zone\"" 2>/dev/null || echo "")
+        
+        if [[ -n "$zone_instances" ]]; then
+            instances="${instances}${zone_instances}"$'\n'
+        fi
+        
+        # List block storage volumes
+        local zone_volumes
+        zone_volumes=$(exo storage block list --zone "$zone" -O json 2>/dev/null | \
+            jq -r ".[] | select(.name | startswith(\"${PREFIX_FILTER}\")) | \"\(.name):\(.id):$zone\"" 2>/dev/null || echo "")
+        
+        if [[ -n "$zone_volumes" ]]; then
+            volumes="${volumes}${zone_volumes}"$'\n'
+        fi
+    done
+    
+    # List security groups (global)
+    security_groups=$(exo compute security-group list -O json 2>/dev/null | \
+        jq -r ".[] | select(.name | startswith(\"${PREFIX_FILTER}\")) | \"\(.name):\(.id)\"" 2>/dev/null || echo "")
+    
+    # List SSH keys (global)
+    ssh_keys=$(exo compute ssh-key list -O json 2>/dev/null | \
+        jq -r ".[] | select(.name | startswith(\"${PREFIX_FILTER}\")) | \"\(.name)\"" 2>/dev/null || echo "")
+    
+    echo ""
+    echo "=== EXOSCALE RESOURCES ==="
+    
+    if [[ -n "$instances" ]]; then
+        echo ""
+        echo "Instances:"
+        echo "$instances" | awk -F: '{if ($1) print "  " $3 ": " $1 " (" $2 ")"}'
+    fi
+    
+    if [[ -n "$volumes" ]]; then
+        echo ""
+        echo "Block Storage Volumes:"
+        echo "$volumes" | awk -F: '{if ($1) print "  " $3 ": " $1 " (" $2 ")"}'
+    fi
+    
+    if [[ -n "$security_groups" ]]; then
+        echo ""
+        echo "Security Groups:"
+        echo "$security_groups" | awk -F: '{if ($1) print "  " $1 " (" $2 ")"}'
+    fi
+    
+    if [[ -n "$ssh_keys" ]]; then
+        echo ""
+        echo "SSH Keys:"
+        echo "$ssh_keys" | awk '{if ($1) print "  " $1}'
+    fi
+    
+    # Count resources
+    local instance_count=0
+    local volume_count=0
+    local sg_count=0
+    local key_count=0
+    [[ -n "$instances" ]] && instance_count=$(echo "$instances" | grep -c ":" || echo "0")
+    [[ -n "$volumes" ]] && volume_count=$(echo "$volumes" | grep -c ":" || echo "0")
+    [[ -n "$security_groups" ]] && sg_count=$(echo "$security_groups" | grep -c ":" || echo "0")
+    [[ -n "$ssh_keys" ]] && key_count=$(echo "$ssh_keys" | grep -c . || echo "0")
+    
+    local total_count=$((instance_count + volume_count + sg_count + key_count))
+    
+    if [[ $total_count -eq 0 ]]; then
+        log_info "No Exoscale resources found with prefix '$PREFIX_FILTER'"
+        return 0
+    fi
+    
+    echo ""
+    echo "Total: $instance_count instance(s), $volume_count volume(s), $sg_count security group(s), $key_count SSH key(s)"
+    
+    if ! confirm_deletion "$total_count" "Exoscale"; then
+        return 0
+    fi
+    
+    log_info "Deleting Exoscale resources..."
+    
+    # Stop and delete instances first
+    local instances_to_delete=()
+    while IFS=: read -r name id zone; do
+        if [[ -n "$name" && -n "$id" && -n "$zone" ]]; then
+            log_info "  Stopping instance: $name in zone $zone (ID: $id)"
+            exo compute instance stop "$id" --zone "$zone" --force 2>/dev/null || \
+                log_warn "  Failed to stop instance: $name (may already be stopped)"
+            instances_to_delete+=("$name:$id:$zone")
+        fi
+    done <<< "$instances"
+    
+    # Wait for instances to be stopped
+    if [[ ${#instances_to_delete[@]} -gt 0 ]]; then
+        log_info "  Waiting for instances to stop..."
+        sleep 15
+        
+        # Now delete the stopped instances
+        for instance_info in "${instances_to_delete[@]}"; do
+            IFS=: read -r name id zone <<< "$instance_info"
+            log_info "  Deleting instance: $name in zone $zone (ID: $id)"
+            exo compute instance delete "$id" --zone "$zone" --force 2>/dev/null || \
+                log_warn "  Failed to delete instance: $name"
+        done
+    fi
+    
+    # Wait for instances to be deleted
+    if [[ -n "$instances" ]]; then
+        log_info "  Waiting for instances to be deleted..."
+        sleep 10
+    fi
+    
+    # Delete volumes
+    while IFS=: read -r name id zone; do
+        if [[ -n "$name" && -n "$id" && -n "$zone" ]]; then
+            log_info "  Deleting volume: $name in zone $zone (ID: $id)"
+            exo storage block delete "$id" --zone "$zone" --force 2>/dev/null || \
+                log_warn "  Failed to delete volume: $name"
+        fi
+    done <<< "$volumes"
+    
+    # Delete security groups
+    while IFS=: read -r name id; do
+        if [[ -n "$name" && -n "$id" ]]; then
+            log_info "  Deleting security group: $name (ID: $id)"
+            exo compute security-group delete "$id" --force 2>/dev/null || \
+                log_warn "  Failed to delete security group: $name"
+        fi
+    done <<< "$security_groups"
+    
+    # Delete SSH keys
+    while IFS= read -r name; do
+        if [[ -n "$name" ]]; then
+            log_info "  Deleting SSH key: $name"
+            exo compute ssh-key delete "$name" --force 2>/dev/null || \
+                log_warn "  Failed to delete SSH key: $name"
+        fi
+    done <<< "$ssh_keys"
+    
+    log_info "Exoscale cleanup completed"
+}
+
+
+# ============================================================================
 # Libvirt Cleanup
 # ============================================================================
 cleanup_libvirt() {
@@ -1274,6 +1450,9 @@ case "$PROVIDER" in
         ;;
     digitalocean)
         cleanup_digitalocean
+        ;;
+    exoscale)
+        cleanup_exoscale
         ;;
     libvirt)
         cleanup_libvirt
