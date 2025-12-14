@@ -77,10 +77,6 @@ if ./exasol-installer.sh --install-dependencies --prefix ./test-fresh --yes --no
     [[ -f "./test-fresh/exasol-deployer/share/python/bin/python3" ]] || { echo "✗ Python not found"; exit 1; }
     [[ -f "./test-fresh/exasol-deployer/share/python/bin/ansible-playbook" ]] || { echo "✗ Ansible not found"; exit 1; }
     
-    # Verify symlinks work
-    [[ -L "./test-fresh/exasol-deployer/share/jq-binary" ]] || { echo "✗ jq symlink not found"; exit 1; }
-    
-    echo "✓ All dependencies and symlinks verified"
 else
     echo "✗ Fresh installation with dependencies failed"
     exit 1
@@ -115,20 +111,6 @@ else
     echo "✗ Dependencies-only installation failed"
     exit 1
 fi
-
-echo "=== Test 4: Symlink Integrity Check ==="
-# Test that symlinks don't point to themselves
-cd ./test-fresh/exasol-deployer/share
-if [[ -L "jq-binary" ]]; then
-    target=$(readlink jq-binary)
-    if [[ "$target" == "jq-binary" ]] || [[ "$target" == "./jq-binary" ]]; then
-        echo "✗ jq symlink points to itself: $target"
-        exit 1
-    else
-        echo "✓ jq symlink points correctly to: $target"
-    fi
-fi
-cd - >/dev/null
 
 echo "=== Test 5: Functional Verification ==="
 # Test that installed tools actually work

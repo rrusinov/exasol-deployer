@@ -57,6 +57,7 @@ Dynamic validation checks use data from `exasol status` and `exasol health` comm
 import json
 import logging
 import os
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -99,6 +100,7 @@ class WorkflowStep:
     target_node: Optional[str] = None
     method: Optional[str] = None
     command: Optional[str] = None
+    script: Optional[str] = None
     checks: List[str] = field(default_factory=list)
     allow_failures: List[str] = field(default_factory=list)
     retry: Optional[Dict[str, int]] = None
@@ -162,11 +164,11 @@ class ValidationRegistry:
         # Fall back to registered static checks
         return self.checks.get(check_name)
 
-    def _run_exasol_command(self, command: str, *args) -> subprocess.CompletedProcess:
+    def _run_exasol_command(self, command: str, *args, timeout: int = 360) -> subprocess.CompletedProcess:
         """Run exasol CLI command"""
         cmd = [str(self.exasol_bin), command, '--deployment-dir', str(self.deploy_dir)]
         cmd.extend(args)
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=360)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
     def _read_state(self) -> Dict[str, Any]:
         """Read deployment state from .exasol.json"""
@@ -176,12 +178,18 @@ class ValidationRegistry:
                 return json.load(f)
         return {}
 
-    def _run_exasol_health(self) -> Dict[str, Any]:
+    def _run_exasol_health(self, verbosity: str = 'quiet', timeout: int = 360) -> Dict[str, Any]:
         """Run exasol health command and return parsed JSON"""
         try:
-            result = self._run_exasol_command('health', '--output-format', 'json')
+            cmd_args = ['health']
+            if verbosity == 'verbose':
+                cmd_args.append('--verbose')
+            elif verbosity == 'quiet':
+                cmd_args.append('--quiet')
+            cmd_args.extend(['--output-format', 'json'])
+            result = self._run_exasol_command(*cmd_args, timeout=timeout)
         except subprocess.TimeoutExpired as e:
-            self.logger.error(f"Health check command timed out after 360 seconds")
+            self.logger.error(f"Health check command timed out after {timeout} seconds")
             # Return structure indicating health check unavailable due to timeout
             return {
                 'status': 'timeout',
@@ -193,7 +201,7 @@ class ValidationRegistry:
                     'cos_ssh': {'passed': 0, 'failed': 0}
                 },
                 'issues_count': 0,
-                'issues': [f"Health check timed out after 360 seconds"]
+                'issues': [f"Health check timed out after {timeout} seconds"]
             }
         
         # Try to parse JSON output first, even if command failed
@@ -324,7 +332,7 @@ class ValidationRegistry:
             nodes = [n.strip() for n in node_selector.split(',')]
         
         def check_func(context: Dict[str, Any]) -> bool:
-            health_data = self._run_exasol_health()
+            health_data = self._run_exasol_health(timeout=60)
             if not health_data:
                 self.logger.error("Health command returned no data")
                 return False
@@ -422,7 +430,7 @@ class WorkflowExecutor:
 
     def __init__(self, deploy_dir: Path, provider: str, logger: logging.Logger,
                  log_callback: Optional[Callable] = None, db_version: Optional[str] = None,
-                 exasol_bin: Optional[Path] = None):
+                 exasol_bin: Optional[Path] = None, debug_mode: bool = False):
         self.deploy_dir = deploy_dir
         self.provider = provider
         self.logger = logger
@@ -431,6 +439,7 @@ class WorkflowExecutor:
         self.validation_registry = ValidationRegistry(deploy_dir, provider, logger, self.exasol_bin)
         self.context: Dict[str, Any] = {}
         self.db_version = db_version  # Optional database version override
+        self.debug_mode = debug_mode  # Enable verbose Ansible output and additional debugging
 
     def _run_command_with_streaming(self, cmd: List[str], timeout: int) -> subprocess.CompletedProcess:
         """Run a command and stream output in real-time to log_callback.
@@ -447,6 +456,17 @@ class WorkflowExecutor:
             'LC_ALL': 'en_US.UTF-8',
             'LANG': 'en_US.UTF-8'
         })
+        
+        # Add debug environment variables when debug mode is enabled
+        if self.debug_mode:
+            env.update({
+                'ANSIBLE_VERBOSITY': '3',  # Ansible verbose level (0-4)
+                'ANSIBLE_DEBUG': '1',      # Enable Ansible debug output
+                'ANSIBLE_STDOUT_CALLBACK': 'debug',  # Use debug callback for detailed output
+                'ANSIBLE_DISPLAY_SKIPPED_HOSTS': 'True',  # Show skipped hosts
+                'ANSIBLE_DISPLAY_OK_HOSTS': 'True',       # Show successful hosts
+            })
+            self.log_callback("Debug mode enabled - Ansible will run with verbose output")
         
         process = subprocess.Popen(
             cmd,
@@ -555,6 +575,7 @@ class WorkflowExecutor:
             target_node=config.get('target_node'),
             method=config.get('method'),
             command=config.get('command'),
+            script=config.get('script'),
             checks=config.get('checks', []),
             allow_failures=config.get('allow_failures', []),
             retry=config.get('retry')
@@ -708,6 +729,23 @@ class WorkflowExecutor:
             })
 
             if not check_passed and not allow_failure:
+                # Run verbose health check for debugging if this is a health_status check
+                if check_name.startswith('health_status'):
+                    self.logger.info("Running health checks for debugging...")
+                    try:
+                        import subprocess
+                        # Get JSON output for structured logging
+                        cmd = [str(self.exasol_bin), 'health', '--deployment-dir', str(self.deploy_dir), '--output-format', 'json', '--quiet']
+                        json_result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                        self.logger.info("Health check JSON: " + json_result.stdout.strip())
+
+                        # Get verbose text output for detailed debugging
+                        cmd = [str(self.exasol_bin), 'health', '--deployment-dir', str(self.deploy_dir), '--verbose', '--quiet']
+                        verbose_result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                        self.logger.info("Verbose health check output:\n" + verbose_result.stdout)
+                    except Exception as e:
+                        self.logger.error(f"Failed to run health checks for debugging: {e}")
+
                 step.validation_results = validation_results
                 raise RuntimeError(f"Validation check failed: {check_name}")
 
@@ -728,8 +766,8 @@ class WorkflowExecutor:
     def _execute_start_cluster(self, step: WorkflowStep):
         """Execute cluster start"""
         cmd = [str(self.exasol_bin), 'start', '--deployment-dir', str(self.deploy_dir)]
-        
-        result = self._run_command_with_streaming(cmd, timeout=600)
+        # Allow up to 20 minutes for start to handle slower provider boots (e.g., GCP)
+        result = self._run_command_with_streaming(cmd, timeout=1200)
         
         if result.returncode != 0:
             raise RuntimeError(f"Start cluster failed: {result.stderr}")
@@ -809,13 +847,31 @@ class WorkflowExecutor:
         - max_attempts: Number of retry attempts (default: 1)
         - delay_seconds: Delay between retries (default: 10)
         """
-        if not step.command:
-            raise ValueError("command is required for custom_command step")
+        if not step.command and not step.script:
+            raise ValueError("command or script is required for custom_command step")
         
-        # Substitute variables - use absolute path to avoid issues with relative paths
-        command = step.command
-        command = command.replace('$deployment_dir', str(self.deploy_dir.resolve()))
-        command = command.replace('$provider', self.provider)
+        script_dir = Path(__file__).resolve().parent / 'custom_commands'
+        command = None
+        if step.script:
+            script_spec = step.script
+            script_spec = script_spec.replace('$deployment_dir', str(self.deploy_dir.resolve()))
+            script_spec = script_spec.replace('$provider', self.provider)
+            script_parts = shlex.split(script_spec)
+            if not script_parts:
+                raise ValueError("script is required for custom_command step")
+            script_path = Path(script_parts[0])
+            if not script_path.is_absolute():
+                script_path = script_dir / script_parts[0]
+            if not script_path.exists():
+                raise RuntimeError(f"Custom command script not found: {script_path}")
+            if not os.access(script_path, os.X_OK):
+                raise RuntimeError(f"Custom command script is not executable: {script_path}")
+            script_parts[0] = str(script_path)
+            command = ' '.join(shlex.quote(part) for part in script_parts)
+        else:
+            command = step.command
+            command = command.replace('$deployment_dir', str(self.deploy_dir.resolve()))
+            command = command.replace('$provider', self.provider)
         
         # Get retry configuration
         max_attempts = 1

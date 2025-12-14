@@ -9,7 +9,7 @@ body:
     attributes:
       value: |
         Need help with Exasol Deployer? Please provide details about your question or issue.
-        
+
         **Note**: For bug reports, please use the "Bug Report" template instead.
 
   - type: textarea
@@ -19,7 +19,7 @@ body:
       description: What do you need help with?
       placeholder: |
         Please describe your question or the issue you're facing...
-        
+
         Be as specific as possible about:
         - What you're trying to accomplish
         - What you've already tried
@@ -110,7 +110,7 @@ body:
         If you're encountering errors or unexpected behavior, please include relevant output
       placeholder: |
         Paste any relevant command output, error messages, or log entries here...
-        
+
         Remember to remove or redact any sensitive information!
       render: shell
     validations:

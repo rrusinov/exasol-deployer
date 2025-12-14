@@ -129,7 +129,29 @@ lock_exists() {
     [[ -f "$lock_file" ]]
 }
 
-# Create lock file
+# Validate lock file structure and content
+validate_lock_file() {
+    local lock_file="$1"
+    
+    # Check if file exists and is readable
+    [[ -f "$lock_file" && -r "$lock_file" ]] || return 1
+    
+    # Validate JSON structure and extract PID safely
+    local jq_output
+    jq_output=$("${JQ_BINARY:-jq}" -r '.pid // empty' "$lock_file" 2>/dev/null) || return 1
+    
+    # Check if PID field exists and is numeric
+    [[ -n "$jq_output" && "$jq_output" =~ ^[0-9]+$ ]] || return 1
+    
+    # Check if PID process is still running
+    kill -0 "$jq_output" 2>/dev/null || return 1
+    
+    # Return the valid PID
+    echo "$jq_output"
+    return 0
+}
+
+# Create lock file with validation and retry logic
 lock_create() {
     local deploy_dir="$1"
     local operation="$2"
@@ -140,22 +162,53 @@ lock_create() {
         log_debug "lock_create: attempting for $operation at $lock_file"
     fi
 
-    # Clean up stale locks before attempting to acquire
-    cleanup_stale_lock "$deploy_dir"
+    # If lock file doesn't exist, proceed to creation
+    if [[ ! -f "$lock_file" ]]; then
+        if [[ "${EXASOL_LOG_LEVEL:-}" == "debug" ]]; then
+            log_debug "lock_create: no existing lock file, proceeding to creation"
+        fi
+    else
+        # Lock file exists - validate it
+        local valid_pid
+        if valid_pid=$(validate_lock_file "$lock_file"); then
+            # Lock file is valid and owned by active process
+            log_error "Lock already held by active process: PID $valid_pid"
+            return 1
+        else
+            # Lock file is invalid - start retry period
+            log_warn "Invalid lock file detected, starting 5-second validation period"
+            
+            local retry_count=0
+            local max_retries=5
+            
+            while [[ $retry_count -lt $max_retries ]]; do
+                sleep 1
+                retry_count=$((retry_count + 1))
+                
+                if valid_pid=$(validate_lock_file "$lock_file"); then
+                    # File became valid during retry period
+                    log_error "Lock became valid during retry, held by active process: PID $valid_pid"
+                    return 1
+                fi
+                
+                [[ "${EXASOL_LOG_LEVEL:-}" == "debug" ]] && log_debug "lock_create: retry $retry_count/$max_retries - lock file still invalid"
+            done
+            
+            # After retry period, file is still invalid - remove it
+            log_warn "Lock file remains invalid after 5 seconds, removing stale/corrupted lock: $lock_file"
+            rm -f "$lock_file"
+        fi
+    fi
 
-    # Try to create lock atomically (noclobber); if it fails, attempt one cleanup + retry
+    # Try to create lock atomically (noclobber)
     if ! ( set -o noclobber; : > "$lock_file" ) 2>/dev/null; then
-        [[ "${EXASOL_LOG_LEVEL:-}" == "debug" ]] && log_debug "lock_create: first noclobber failed for $lock_file, running cleanup"
-        cleanup_stale_lock "$deploy_dir"
-        if ! ( set -o noclobber; : > "$lock_file" ) 2>/dev/null; then
-            if [[ -f "$lock_file" ]]; then
-                log_error "Lock file already exists: $lock_file"
-                log_error "Another operation may be in progress."
-                return 1
-            fi
-            log_error "Unable to create lock file (permission or FS error): $lock_file"
+        if [[ -f "$lock_file" ]]; then
+            log_error "Lock file already exists: $lock_file"
+            log_error "Another operation may be in progress."
             return 1
         fi
+        log_error "Unable to create lock file (permission or FS error): $lock_file"
+        return 1
     fi
 
     [[ "${EXASOL_LOG_LEVEL:-}" == "debug" ]] && log_debug "lock_create: noclobber succeeded for $lock_file"
@@ -207,18 +260,16 @@ cleanup_stale_lock() {
         return 0
     fi
 
-    local pid
-    pid=$("${JQ_BINARY:-jq}" -r '.pid // empty' "$lock_file" 2>/dev/null || echo "")
-
-    if [[ -z "$pid" ]]; then
-        log_warn "Removing stale lock without PID information: $lock_file"
+    # Use the new validation function to check lock validity
+    local valid_pid
+    if valid_pid=$(validate_lock_file "$lock_file"); then
+        # Lock file is valid and process is running - don't remove
+        return 0
+    else
+        # Lock file is invalid or process is not running - remove it
+        log_warn "Removing invalid or stale lock: $lock_file"
         rm -f "$lock_file"
         return 0
-    fi
-
-    if ! kill -0 "$pid" 2>/dev/null; then
-        log_warn "Removing stale lock (PID $pid no longer running)"
-        rm -f "$lock_file"
     fi
 }
 

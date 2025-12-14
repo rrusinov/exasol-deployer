@@ -6,7 +6,6 @@
     "instance_type": "cpx31",
     "data_volumes_per_node": 2,
     "data_volume_size": 20,
-    "root_volume_size": 55,
-    "enable_multicast_overlay": true
+    "root_volume_size": 55
   }
 }

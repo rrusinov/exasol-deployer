@@ -1,0 +1,35 @@
+{% raw -%}
+# AWS-specific device discovery implementation
+# AWS uses NVMe devices with specific naming patterns for EBS volumes
+# Future agents: When adding AWS features, consider:
+# - Instance store NVMe devices (ephemeral storage)
+# - Different instance types may have different device naming
+# - EBS volume attachment order consistency
+
+provider_init_discovery() {
+    log "Initializing AWS EBS volume discovery"
+    # AWS doesn't require pre-discovery like Azure or libvirt
+    # Volumes are discovered on-demand using volume IDs
+}
+
+provider_find_device() {
+    local vol_id="$1"
+    local volume_index="$2"  # 0-based index, unused for AWS (uses vol_id directly)
+    
+    # AWS EBS volumes appear as NVMe devices with volume ID in the device name
+    # Remove hyphens from volume ID for device path matching
+    local vol_id_short="${vol_id//-/}"
+    
+    log "Looking for AWS EBS volume: $vol_id (normalized: $vol_id_short)"
+    
+    # Find device using NVMe naming pattern
+    local target_device
+    target_device=$(find_device_via_patterns "$vol_id" "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${vol_id_short}*") || true
+    
+    echo "$target_device"
+}
+
+provider_log_available_devices() {
+    log_available_devices "Available AWS NVMe volumes:" "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_*"
+}
+{%- endraw %}

@@ -147,6 +147,7 @@ Options:
   --configs <name[,name...]>    Run only the specified config files (e.g. aws,libvirt,aws-arm64)
   --parallel <n>                Override parallelism (0 = auto/all tests)
   --stop-on-error               Stop execution on first test failure (for debugging)
+  --debug                       Enable debug mode with verbose Ansible output
   --db-version <version>        Database version to use (e.g. 8.0.0-x86_64, overrides config)
   --results-dir <path>          Use specific execution directory (default: auto-generated)
   --rerun <exec-dir> <suite>    Rerun specific suite from execution directory
@@ -173,6 +174,7 @@ CONFIGS_FILTER=""
 CONFIGS_SPECIFIED=0
 PARALLEL=0
 STOP_ON_ERROR=0
+DEBUG=0
 DB_VERSION=""
 RERUN_EXEC_DIR=""
 RERUN_SUITE=""
@@ -228,6 +230,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --stop-on-error)
             STOP_ON_ERROR=1
+            shift
+            ;;
+        --debug)
+            DEBUG=1
             shift
             ;;
         --portable-deps)
@@ -321,8 +327,30 @@ discover_configs() {
     find "$SCRIPT_DIR/e2e/configs" -maxdepth 1 -type f -name '*.json' | sort
 }
 
+config_needs_portable_deps() {
+    local cfg="$1"
+    local cfg_dir sut_file sut_path
+
+    if grep -q '"use_portable_dependencies".*true' "$cfg" 2>/dev/null; then
+        return 0
+    fi
+
+    cfg_dir="$(dirname "$cfg")"
+    while IFS= read -r sut_file; do
+        if [[ -n "$sut_file" ]]; then
+            sut_path="$cfg_dir/$sut_file"
+            if [[ -f "$sut_path" ]] && grep -q '"use_portable_dependencies".*true' "$sut_path" 2>/dev/null; then
+                return 0
+            fi
+        fi
+    done < <(grep -o '"sut": *"[^"]*"' "$cfg" 2>/dev/null | sed 's/.*"sut": *"\([^"]*\)".*/\1/')
+
+    return 1
+}
+
 run_framework() {
     local config_file="$1"
+    local portable_flag="$PORTABLE_DEPS"
     shift
     local db_version_args=()
     if [[ -n "$DB_VERSION" ]]; then
@@ -336,8 +364,15 @@ run_framework() {
     if [[ "$STOP_ON_ERROR" -eq 1 ]]; then
         stop_on_error_args=(--stop-on-error)
     fi
+    local debug_args=()
+    if [[ "$DEBUG" -eq 1 ]]; then
+        debug_args=(--debug)
+    fi
     local portable_deps_args=()
-    if [[ "$PORTABLE_DEPS" -eq 1 ]]; then
+    if [[ "$portable_flag" -eq 0 ]] && config_needs_portable_deps "$config_file"; then
+        portable_flag=1
+    fi
+    if [[ "$portable_flag" -eq 1 ]]; then
         portable_deps_args=(--portable-deps)
     fi
     
@@ -347,6 +382,7 @@ run_framework() {
         "${results_dir_args[@]}" \
         --parallel "$PARALLEL" \
         "${stop_on_error_args[@]}" \
+        "${debug_args[@]}" \
         "${portable_deps_args[@]}" \
         "${db_version_args[@]}" \
         "$@"
@@ -694,30 +730,6 @@ else
         declare -A cfg_pids=()
         declare -A cfg_results=()
 
-        # Set shared installation root for all provider configs to avoid redundant installations
-        export E2E_SHARED_INSTALL_ROOT="$parallel_root"
-
-        # Check if any config needs portable dependencies
-        portable_deps_needed=false
-        for cfg in "${filtered_configs[@]}"; do
-            # Check main config file
-            if grep -q '"use_portable_dependencies".*true' "$cfg" 2>/dev/null; then
-                portable_deps_needed=true
-                break
-            fi
-            # Check referenced SUT files
-            cfg_dir="$(dirname "$cfg")"
-            while IFS= read -r sut_file; do
-                if [[ -n "$sut_file" ]]; then
-                    sut_path="$cfg_dir/$sut_file"
-                    if [[ -f "$sut_path" ]] && grep -q '"use_portable_dependencies".*true' "$sut_path" 2>/dev/null; then
-                        portable_deps_needed=true
-                        break 2
-                    fi
-                fi
-            done < <(grep -o '"sut": *"[^"]*"' "$cfg" 2>/dev/null | sed 's/.*"sut": *"\([^"]*\)".*/\1/')
-        done
-
         # Determine parallelism limit (all configs)
         effective_parallel=${#filtered_configs[@]}
         current_jobs=0
@@ -741,8 +753,16 @@ else
             if [[ "$STOP_ON_ERROR" -eq 1 ]]; then
                 stop_on_error_args=(--stop-on-error)
             fi
+            debug_args=()
+            if [[ "$DEBUG" -eq 1 ]]; then
+                debug_args=(--debug)
+            fi
             portable_deps_args=()
-            if [[ "$portable_deps_needed" == "true" ]]; then
+            portable_flag="$PORTABLE_DEPS"
+            if [[ "$portable_flag" -eq 0 ]] && config_needs_portable_deps "$cfg"; then
+                portable_flag=1
+            fi
+            if [[ "$portable_flag" -eq 1 ]]; then
                 portable_deps_args=(--portable-deps)
             fi
             
@@ -751,6 +771,7 @@ else
                 --results-dir "$cfg_results_dir" \
                 --parallel "$PARALLEL" \
                 "${stop_on_error_args[@]}" \
+                "${debug_args[@]}" \
                 "${db_version_args[@]}" \
                 "${portable_deps_args[@]}" \
                 "${provider_args[@]}" \
