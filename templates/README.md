@@ -1,6 +1,6 @@
 # Deployment Templates
 
-Infrastructure-as-code templates for deploying Exasol clusters across multiple cloud providers. The templates are organized to minimize code duplication while maintaining clarity.
+Infrastructure-as-code templates for deploying Exasol clusters across multiple cloud providers using OpenTofu. The templates are organized to minimize code duplication while maintaining clarity.
 
 ## Directory Structure
 

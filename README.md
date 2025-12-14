@@ -7,7 +7,7 @@
 [![Shell](https://img.shields.io/badge/Shell-Bash-green.svg)](https://www.gnu.org/software/bash/)
 [![Cloud Providers](https://img.shields.io/badge/Cloud-AWS%20%7C%20Azure%20%7C%20GCP%20%7C%20Hetzner%20%7C%20DigitalOcean%20%7C%20Exoscale%20%7C%20libvirt-orange.svg)](#cloud-provider-setup)
 
-This directory contains a deployment configuration for Exasol database.
+Deploy Exasol database clusters across multiple cloud providers with a single command.
 
 ## Features
 
@@ -22,197 +22,47 @@ This directory contains a deployment configuration for Exasol database.
 - **Multiple Database Versions**: Support for multiple Exasol database versions and architectures (x86_64, arm64)
 - **Cloud-Init Integration**: OS-agnostic user provisioning works across all Linux distributions
 - **Spot/Preemptible Instances**: Cost optimization with spot instances on AWS, Azure, and GCP
-- **Configurable Deployments**: Customize cluster size, instance types, storage, and network settings
-- **State Management**: Tracks deployment state with file-based locking for safe concurrent operations
-- **Infrastructure as Code**: Uses OpenTofu/Terraform for reproducible infrastructure provisioning
+- **Infrastructure as Code**: Uses OpenTofu for reproducible infrastructure provisioning
 - **Automated Configuration**: Ansible playbooks for complete cluster setup
-- **Credential Management**: Secure password generation and storage for database, AdminUI, and host OS access
-- **Dynamic Configuration**: All Terraform variables generated from command-line parameters and version configurations
-- **Permission Analysis**: Static permission analysis for cloud provider templates to help configure cloud accounts
+- **State Management**: Tracks deployment state with file-based locking for safe operations
 
-## Installation
+## Quick Start
 
-### Quick Install (Recommended)
-
-Install the latest release with a single command:
+### 1. Install
 
 ```bash
+# Standard installation
 curl -fsSL https://xsol.short.gy/sh | bash
-# Or with bundled dependencies (no system OpenTofu/Python/Ansible/jq needed; requires curl+unzip):
-# curl -fsSL https://xsol.short.gy/sh | bash -s -- --install-dependencies --yes
-```
 
-Or using the full URL:
+# Self-contained with all dependencies (no system requirements)
+curl -fsSL https://xsol.short.gy/sh | bash -s -- --install-dependencies
 
-```bash
+# Or use full URL
 curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh | bash
 ```
 
-### Self-Contained Installation (Zero Dependencies)
-
-Install with all dependencies (OpenTofu, Python, Ansible, jq) bundled locally:
-
-```bash
-# Install with dependencies (completely self-contained)
-curl -fsSL https://xsol.short.gy/sh | bash -s -- --install-dependencies --yes
-
-# Or download and run manually
-curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh -o exasol-deployer.sh
-chmod +x exasol-deployer.sh
-./exasol-deployer.sh --install-dependencies
-```
-
-This creates a completely portable installation (~250MB) that works on any Linux/macOS system without requiring system-wide OpenTofu, Python, or Ansible installations.
-
-### Manual Download
-
-Or download and run manually:
-
-```bash
-# Download the installer (short URL)
-curl -fsSL https://xsol.short.gy/sh -o exasol-deployer.sh
-
-# Or use the full URL
-curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh -o exasol-deployer.sh
-
-# Make it executable
-chmod +x exasol-deployer.sh
-
-# Run the installer
-./exasol-deployer.sh
-```
-
-The installer will:
-- Install to `~/.local/bin/exasol-deployer/` (or `~/bin/` on macOS)
-- Create a symlink at `~/.local/bin/exasol`
-- Configure your shell PATH automatically
-- Verify all prerequisites
-
-**Note:** For fresh installations, no confirmation is needed. To overwrite an existing installation non-interactively, add `--yes`.
-
-### Non-Interactive Installation
-
-For automation or CI/CD:
-
+**For overwrite an existing installation, add --yes:**
 ```bash
 curl -fsSL https://github.com/rrusinov/exasol-deployer/releases/latest/download/exasol-deployer.sh | bash -s -- --yes
 ```
 
-### Custom Installation Path
+See [Installation Guide](INSTALLATION.md) for detailed instructions and prerequisites.
 
-```bash
-./exasol-deployer.sh --prefix /opt/exasol --yes
-```
+### 2. Setup Cloud Provider
 
-### Verify Installation
+Configure credentials for your chosen cloud provider:
 
-```bash
-exasol version
-```
-
-For detailed build and installation documentation, see [Scripts and Build System Documentation](scripts/README.md).
-
-## Prerequisites
-
-### System Requirements
-
-- **Operating System**: Linux (recommended) or macOS
-- **Bash**: Version 4.0 or later
-- **GNU Core Utilities**: Required for script compatibility
-  - On Linux: Usually pre-installed
-  - On macOS: BSD tools may cause issues, install GNU versions (see below)
-
-### Required Software
-
-**Option 1: Zero Dependencies (Recommended)**
-Use the `--install-dependencies` flag to install everything locally:
-```bash
-curl -fsSL https://xsol.short.gy/sh | bash -s -- --install-dependencies --yes
-```
-This installs OpenTofu, Python, and Ansible in a local directory (~250MB) with no system dependencies.
-
-**Option 2: System Installation**
-- **OpenTofu** or Terraform (>= 1.0)
-- **Ansible** (>= 2.9)
-- **Python 3.6+** (required for Ansible)
-- **jq** (for JSON processing)
-- **Standard Unix tools**: grep, sed, awk, curl, ssh, date, mktemp, readlink/realpath
-- **Cloud provider credentials** configured (see [Cloud Setup Guide](clouds/CLOUD_SETUP.md))
-
-**For Development/Testing Only:**
-- **Python 3.6+** (required only for running unit tests in `tests/` directory)
-- **ShellCheck** (used by the shell lint test suite)
-
-**Note:** Cloud provider CLI tools (aws, az, gcloud) are **not required** for deployment. OpenTofu reads credentials from standard configuration files or environment variables.
-
-### Installation on macOS
-
-**Important:** macOS uses BSD versions of standard Unix tools, which have different behavior than GNU versions. You must install GNU tools:
-
-```bash
-# Install OpenTofu
-brew install opentofu
-
-# Install Ansible
-brew install ansible
-
-# Install jq
-brew install jq
-
-# Install GNU core utilities (REQUIRED on macOS)
-brew install coreutils findutils gnu-sed gawk grep bash
-
-# Add GNU tools to PATH (add to ~/.zshrc or ~/.bash_profile)
-export PATH="/usr/local/opt/coreutils/libexec/gnubin:$PATH"
-export PATH="/usr/local/opt/findutils/libexec/gnubin:$PATH"
-export PATH="/usr/local/opt/gnu-sed/libexec/gnubin:$PATH"
-export PATH="/usr/local/opt/gawk/libexec/gnubin:$PATH"
-export PATH="/usr/local/opt/grep/libexec/gnubin:$PATH"
-
-# Use Homebrew bash (version 5.x)
-sudo sh -c 'echo /usr/local/bin/bash >> /etc/shells'
-chsh -s /usr/local/bin/bash
-```
-
-### Installation on Linux
-
-```bash
-# Install OpenTofu
-# See: https://opentofu.org/docs/intro/install/
-
-# Install Ansible
-sudo apt-get update
-sudo apt-get install -y ansible
-
-# Install jq
-sudo apt-get install -y jq
-```
-
-## Cloud Provider Setup
-
-Before deploying, you need to set up credentials for your chosen cloud provider. We support:
-
-- **[AWS (Amazon Web Services)](clouds/CLOUD_SETUP_AWS.md)** - Most feature-complete
-- **[Azure (Microsoft Azure)](clouds/CLOUD_SETUP_AZURE.md)** - Full support with spot instances
-- **[GCP (Google Cloud Platform)](clouds/CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
-- **[Hetzner Cloud](clouds/CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
+- **[AWS](clouds/CLOUD_SETUP_AWS.md)** - Most feature-complete
+- **[Azure](clouds/CLOUD_SETUP_AZURE.md)** - Full support with spot instances  
+- **[GCP](clouds/CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
+- **[Hetzner](clouds/CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
 - **[DigitalOcean](clouds/CLOUD_SETUP_DIGITALOCEAN.md)** - Simple and affordable
 - **[Exoscale](clouds/CLOUD_SETUP_EXOSCALE.md)** - European cloud with automatic power control
-- **[Local libvirt/KVM](clouds/CLOUD_SETUP_LIBVIRT.md)** - Local testing and development
+- **[libvirt/KVM](clouds/CLOUD_SETUP_LIBVIRT.md)** - Local testing and development
 
-**See the [Cloud Provider Setup Guide](clouds/CLOUD_SETUP.md) for detailed instructions.**
+See [Cloud Provider Setup Guide](clouds/CLOUD_SETUP.md) for detailed instructions.
 
-### Quick Setup Examples
-
-**AWS** (Manual setup, no AWS CLI needed):
-```bash
-mkdir -p ~/.aws
-cat > ~/.aws/credentials <<EOF
-[default]
-aws_access_key_id = YOUR_ACCESS_KEY_ID
-aws_secret_access_key = YOUR_SECRET_ACCESS_KEY
-EOF
-chmod 600 ~/.aws/credentials
+### 3. Initialize Deployment
 ```
 
 **Azure**:
@@ -273,58 +123,31 @@ If permissions are not available, generate them (only needed when templates chan
 - [Exoscale Setup Guide](clouds/CLOUD_SETUP_EXOSCALE.md)
 - [Libvirt Setup Guide](clouds/CLOUD_SETUP_LIBVIRT.md)
 
-### 2. Initialize a Deployment
-
-#### AWS Deployment
+### 3. Initialize Deployment
 
 ```bash
-# Initialize with default settings (single-node, default version)
+# AWS example
 ./exasol init \
   --cloud-provider aws \
-  --deployment-dir ./my-aws-deployment
-
-# Initialize with specific version, cluster size, and spot instances
-./exasol init \
-  --cloud-provider aws \
-  --deployment-dir ./my-aws-deployment \
-  --db-version exasol-2025.1.8 \
-  --cluster-size 4 \
-  --instance-type c7a.16xlarge \
-  --data-volume-size 500 \
+  --deployment-dir ./my-deployment \
+  --cluster-size 3 \
   --aws-region us-east-1 \
   --aws-spot-instance
-```
 
-#### Azure Deployment
-
-```bash
-# Create (or reuse) service principal credentials file (default path)
-az ad sp create-for-rbac \
-  --name "exasol-deployer" \
-  --role contributor \
-  --scopes /subscriptions/<your-subscription-id> \
-  > ~/.azure_credentials
-chmod 600 ~/.azure_credentials
-
-# Initialize deployment (reads ~/.azure_credentials automatically)
+# Azure example  
 ./exasol init \
   --cloud-provider azure \
-  --deployment-dir ./my-azure-deployment \
+  --deployment-dir ./my-deployment \
   --azure-region eastus \
-  --azure-subscription <your-subscription-id> \
-  --cluster-size 3 \
+  --azure-subscription <subscription-id> \
   --azure-spot-instance
-```
 
-#### GCP Deployment
-
-```bash
+# GCP example
 ./exasol init \
   --cloud-provider gcp \
-  --deployment-dir ./my-gcp-deployment \
+  --deployment-dir ./my-deployment \
   --gcp-project my-project-id \
   --gcp-region us-central1 \
-  --cluster-size 2 \
   --gcp-spot-instance
 ```
 
@@ -394,83 +217,29 @@ The init command will:
 - Generate secure random passwords for database and AdminUI
 - Copy Terraform and Ansible templates
 
-### 3. Deploy the Infrastructure
+### 4. Deploy
 
 ```bash
 ./exasol deploy --deployment-dir ./my-deployment
 ```
 
-This will:
-1. Download required database files and c4 binary
-2. Initialize OpenTofu/Terraform
-3. Create AWS infrastructure (VPC, subnets, security groups, EC2 instances, EBS volumes)
-4. Configure instances with Ansible
-5. Set up the Exasol cluster
-
-### 4. Connect to Your Cluster
-
-After deployment, you can connect to nodes using the generated SSH config:
+### 5. Connect
 
 ```bash
-# Using SSH config
+# SSH to first node
 ssh -F ./my-deployment/ssh_config n11
-
-# Or directly
-ssh -i ./my-deployment/exasol-key.pem ubuntu@<public_ip>
-```
-
-Node naming convention:
-- First node: `n11`
-- Second node: `n12`
-- Third node: `n13`
-- And so on...
-
-### 5. Check Deployment Status
-
-```bash
-./exasol status --deployment-dir ./my-deployment
-```
-
-Output (JSON):
-```json
-{
-  "status": "database_ready",
-  "db_version": "exasol-2025.1.8",
-  "architecture": "x86_64",
-  "terraform_state_exists": true,
-  "created_at": "2025-01-15T10:30:00Z",
-  "updated_at": "2025-01-15T10:45:00Z"
-}
-```
-
-### 6. Run a Health Check
-
-Use the health command to verify SSH connectivity, COS endpoints, critical c4-managed services, and metadata consistency. Optional flags allow the command to refresh local files or attempt basic remediation such as restarting failed services.
-
-```bash
-# Read-only checks (default)
-./exasol health --deployment-dir ./my-deployment
-
-# Update inventory/ssh_config/INFO.txt if the cloud provider reassigned IPs
-./exasol health --deployment-dir ./my-deployment --update
-
-# Try to restart failed services automatically
-./exasol health --deployment-dir ./my-deployment --try-fix
-```
-
-### 7. Stop and Start the Database (Optional)
-
-For cost optimization, you can stop the database. All providers follow the same workflow:
-
-```bash
-# Stop the database (powers off VMs)
-./exasol stop --deployment-dir ./my-deployment
 
 # Check status
 ./exasol status --deployment-dir ./my-deployment
-# Status will be: "stopped"
+```
 
-# Start the database again
+### 6. Stop/Start (Cost Optimization)
+
+```bash
+# Stop database (powers off VMs, saves ~75% costs)
+./exasol stop --deployment-dir ./my-deployment
+
+# Start database again
 ./exasol start --deployment-dir ./my-deployment
 ```
 
@@ -492,35 +261,33 @@ For cost optimization, you can stop the database. All providers follow the same 
 - Stopped cluster: ~$0.50/hour (EBS volumes + stopped instance charges)
 - Savings: ~75% during non-working hours
 
-### 8. Destroy the Deployment
+### 7. Cleanup
 
 ```bash
-# With confirmation prompts
-./exasol destroy --deployment-dir ./my-deployment
-
-# Auto-approve (no prompts, removes deployment directory)
 ./exasol destroy --deployment-dir ./my-deployment --auto-approve
 ```
 
-**Warning**: This will destroy all resources including data volumes. Make sure to backup any important data first.
+## Documentation
 
-## Commands
+- **[Installation Guide](INSTALLATION.md)** - Installation and prerequisites
+- **[Command Reference](COMMANDS.md)** - Complete command documentation
+- **[Cloud Setup](clouds/CLOUD_SETUP.md)** - Cloud provider setup guides
+- **[Troubleshooting](TROUBLESHOOTING.md)** - Common issues and solutions
+- **[Testing](tests/README.md)** - Unit and E2E testing framework
+- **[Templates](templates/README.md)** - OpenTofu and Ansible templates
+- **[Scripts](scripts/README.md)** - Utility scripts for resource management
 
-### `init`
+## Documentation
 
-Initialize a new deployment directory with configuration files.
+- **[Installation Guide](INSTALLATION.md)** - Installation and prerequisites
+- **[Command Reference](COMMANDS.md)** - Complete command documentation
+- **[Cloud Setup](clouds/CLOUD_SETUP.md)** - Cloud provider setup guides
+- **[Troubleshooting](TROUBLESHOOTING.md)** - Common issues and solutions
+- **[Testing](tests/README.md)** - Unit and E2E testing framework
+- **[Templates](templates/README.md)** - OpenTofu and Ansible templates
+- **[Scripts](scripts/README.md)** - Utility scripts for resource management
 
-```bash
-./exasol init [flags]
-```
-
-**Flags:**
-
-**Required Flags**
-- `--cloud-provider string`: Cloud provider to target (`aws`, `azure`, `gcp`, `hetzner`, `digitalocean`, `exoscale`, or `libvirt`).
-
-**Common Flags**
-- `--deployment-dir string`: Directory for deployment files (default: current directory).
+## Resource Management
 - `--db-version string`: Database version (format: name-X.Y.Z[-arm64][-local], e.g., `exasol-2025.1.8`; x86_64 is implicit).
 - `--list-versions`: List all available database versions (with availability and architecture) and exit.
 - `--list-providers`: List all supported cloud providers and exit.
@@ -787,7 +554,7 @@ Database, AdminUI, and host OS credentials are stored in `.credentials.json` (pr
 
 ### Resource Limit Checking
 
-Before deploying, check your cloud provider resource limits and current usage:
+### Check Limits Before Deploying
 
 ```bash
 # Generate HTML report with all providers and regions
@@ -797,22 +564,14 @@ Before deploying, check your cloud provider resource limits and current usage:
 ./scripts/generate-limits-report.sh --provider azure --output azure-report.html
 ```
 
-### Bulk Resource Cleanup
-
-If you have orphaned resources or want to clean up multiple deployments at once, use the unified cleanup script:
+### Bulk Cleanup
 
 ```bash
 # List all resources without deleting (dry run)
 ./scripts/cleanup-resources.sh --provider azure --dry-run
 
-# Delete all resources with confirmation prompt
-./scripts/cleanup-resources.sh --provider hetzner
-
-# Delete resources without confirmation
-./scripts/cleanup-resources.sh --provider gcp --yes
-
-# Use custom prefix filter
-./scripts/cleanup-resources.sh --provider aws --prefix myapp --yes
+# Delete all resources with confirmation
+./scripts/cleanup-resources.sh --provider hetzner --yes
 ```
 
 **Supported providers:** aws, azure, gcp, hetzner, digitalocean, exoscale, libvirt
@@ -904,41 +663,28 @@ This is expected behavior for Hetzner, DigitalOcean, and libvirt. Follow the man
 
 ## Testing
 
-This project includes comprehensive test coverage:
+```bash
+# Run unit tests
+./tests/run_tests.sh
 
-- **Unit Tests**: Shell script tests for core functionality
-  ```bash
-  # Run all tests
-  ./tests/run_tests.sh
-  
-  # Run specific test
-  ./tests/test_common.sh
-  ```
+# Run E2E tests for specific provider
+./tests/run_e2e.sh --provider libvirt
 
-- **E2E Tests**: End-to-end integration tests across cloud providers
-  - See [Testing Framework Documentation](tests/README.md) for details
-  - Resource-aware scheduling prevents local memory exhaustion
-  - Supports workflow-based testing with validation
-  ```bash
-  # Run E2E tests for libvirt
-  ./tests/run_e2e.sh --provider libvirt
-  
-  # List available tests
-  ./tests/run_e2e.sh --list-tests
-  ```
+# List available tests
+./tests/run_e2e.sh --list-tests
+```
 
 ## Project Notes
 
-**Why bash and not Go/another compiled binary?**
-- Zero build toolchain required on the operator side; bash is ubiquitous on Linux/macOS runners and CI agents.
-- Tight integration with existing shell/Ansible/OpenTofu workflows (no cross-language shims needed).
-- Easier to vendor and tweak in-line with the Terraform/Ansible templates without rebuilding binaries.
-- Fast iteration for cloud releases; no cross-compilation or packaging pipeline to maintain for each platform.
-- Proven portability for the surrounding scripts (init/deploy/destroy/status) and test harness.
+**Why bash?**
+- Zero build toolchain required; bash is ubiquitous on Linux/macOS
+- Tight integration with existing shell/Ansible/OpenTofu workflows
+- Fast iteration for cloud releases without cross-compilation
+- Proven portability for scripts and test harness
 
 **Support & Community**
-- This is an open-source community project and is not officially supported by Exasol.
-- Contributions and community support are welcome via issues and pull requests.
+- Open-source community project, not officially supported by Exasol AG
+- Contributions welcome via issues and pull requests
+
 ## Trademark Notice
 
-Exasol is a trademark of Exasol AG. This project is not officially endorsed by or affiliated with Exasol AG beyond the open source license under which it is released.

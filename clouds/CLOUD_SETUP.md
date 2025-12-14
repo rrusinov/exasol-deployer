@@ -2,6 +2,17 @@
 
 This guide provides instructions for setting up credentials and accounts for each supported cloud provider to deploy Exasol using this deployer tool.
 
+## Prerequisites
+
+**Option 1: Zero Dependencies (Recommended)**
+Install with all dependencies bundled:
+```bash
+curl -fsSL https://xsol.short.gy/sh | bash -s -- --install-dependencies --yes
+```
+
+**Option 2: System Installation**
+Ensure you have OpenTofu, Ansible, Python, and jq installed on your system.
+
 ## Permission Requirements
 
 Before setting up cloud credentials, you can check the required permissions for your chosen cloud provider:

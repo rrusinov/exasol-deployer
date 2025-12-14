@@ -62,7 +62,7 @@ locals {
 
   # Exoscale-specific cloud-init template with private network configuration
   # Falls back to generic template if Exoscale-specific doesn't exist
-  cloud_init_template_path = fileexists("${path.module}/cloud-init-exoscale.tftpl") ? "${path.module}/cloud-init-exoscale.tftpl" : "${path.module}/.templates/cloud-init-generic.tftpl"
+  cloud_init_template_path = fileexists("${path.module}/.templates/cloud-init-exoscale.tftpl") ? "${path.module}/.templates/cloud-init-exoscale.tftpl" : "${path.module}/.templates/cloud-init-generic.tftpl"
 
   # Node volumes for Ansible inventory
   # Exoscale uses volume IDs for device paths
