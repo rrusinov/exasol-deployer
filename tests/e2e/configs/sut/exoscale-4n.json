@@ -1,0 +1,12 @@
+{
+  "description": "Exoscale 4-node cluster with power control testing",
+  "provider": "exoscale",
+  "parameters": {
+    "cluster_size": 4,
+    "instance_type": "standard.large",
+    "data_volumes_per_node": 2,
+    "data_volume_size": 20,
+    "root_volume_size": 52,
+    "exoscale_zone": "ch-gva-2"
+  }
+}

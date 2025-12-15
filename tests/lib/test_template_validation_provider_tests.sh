@@ -273,6 +273,53 @@ test_digitalocean_template_validation() {
     cleanup_test_dir "$test_dir"
 }
 
+# Test: Exoscale template validation
+test_exoscale_template_validation() {
+    echo ""
+    echo "Test: Exoscale template validation"
+
+    if ! command -v tofu >/dev/null 2>&1; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        echo -e "${YELLOW}⊘${NC} Skipping (tofu not available)"
+        return
+    fi
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+    cmd_init --cloud-provider exoscale --deployment-dir "$test_dir" --exoscale-api-key "EXOdummy-key-12345" --exoscale-api-secret "dummy-secret-for-testing" 2>/dev/null
+
+    if [[ ! -d "$test_dir/.templates" ]]; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Templates directory not created"
+        cleanup_test_dir "$test_dir"
+        return
+    fi
+
+    cd "$test_dir" || exit 1
+    local rc=0
+    if ! tofu_init_strict "Exoscale"; then
+        rc=$?
+        cd - >/dev/null || exit 1
+        cleanup_test_dir "$test_dir"
+        [[ $rc -eq 2 ]] && return 0
+        return
+    fi
+
+    if tofu validate >/dev/null 2>&1; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} Exoscale: tofu validate successful"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} Exoscale: tofu validate failed"
+    fi
+
+    cd - >/dev/null
+    cleanup_test_dir "$test_dir"
+}
+
 # Test: Libvirt template validation
 test_libvirt_template_validation() {
     echo ""

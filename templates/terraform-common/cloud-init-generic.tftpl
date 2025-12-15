@@ -1,1 +1,13 @@
-${base_cloud_init}
+#cloud-config
+
+# Generic cloud-init configuration for Exasol cluster setup
+
+write_files:
+  - path: /tmp/bootstrap-exasol-cluster.sh
+    content: ${jsonencode(base_cloud_init)}
+    permissions: '0755'
+
+# Run the exasol cluster bootstrap script
+runcmd:
+  # Run the exasol cluster bootstrap script
+  - /tmp/bootstrap-exasol-cluster.sh

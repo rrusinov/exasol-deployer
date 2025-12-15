@@ -7,7 +7,7 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)"
 source "$LIB_DIR/common.sh"
 
 # Supported cloud providers
-PROVIDERS=("aws" "azure" "gcp" "hetzner" "digitalocean" "libvirt")
+PROVIDERS=("aws" "azure" "gcp" "hetzner" "digitalocean" "exoscale" "libvirt")
 
 # Create permissions directory
 PERMISSIONS_DIR="$LIB_DIR/permissions"

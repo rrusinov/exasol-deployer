@@ -11,7 +11,7 @@ source "$LIB_DIR/state.sh"
 source "$LIB_DIR/versions.sh"
 
 # Supported cloud providers (keep Bash 3 compatible)
-SUPPORTED_PROVIDERS=("aws" "azure" "gcp" "hetzner" "digitalocean" "libvirt")
+SUPPORTED_PROVIDERS=("aws" "azure" "gcp" "hetzner" "digitalocean" "exoscale" "libvirt")
 
 get_supported_providers_list() {
     echo "${SUPPORTED_PROVIDERS[*]}"
@@ -25,6 +25,7 @@ get_provider_description() {
         gcp) echo "Google Cloud Platform" ;;
         hetzner) echo "Hetzner Cloud" ;;
         digitalocean) echo "DigitalOcean" ;;
+        exoscale) echo "Exoscale" ;;
         libvirt) echo "Local libvirt/KVM deployment" ;;
         *) echo "$provider" ;;
     esac
@@ -208,6 +209,11 @@ DigitalOcean-Specific Flags:
   --digitalocean-region <region> DigitalOcean region (default: "nyc3")
   --digitalocean-token <token>   DigitalOcean API token
 
+Exoscale-Specific Flags:
+  --exoscale-zone <zone>         Exoscale zone (default: "ch-gva-2")
+  --exoscale-api-key <key>       Exoscale API key
+  --exoscale-api-secret <secret> Exoscale API secret
+
 Libvirt-Specific Flags:
   --libvirt-memory <gb>          Memory per VM in GB (default: 4)
   --libvirt-vcpus <n>            vCPUs per VM (default: 2)
@@ -292,6 +298,11 @@ cmd_init() {
     # DigitalOcean-specific variables
     local digitalocean_region=""
     local digitalocean_token=""
+
+    # Exoscale-specific variables
+    local exoscale_zone=""
+    local exoscale_api_key=""
+    local exoscale_api_secret=""
 
     # Libvirt-specific variables
     local libvirt_memory_gb=4
@@ -433,6 +444,19 @@ cmd_init() {
                 digitalocean_token="$2"
                 shift 2
                 ;;
+            # Exoscale-specific options
+            --exoscale-zone)
+                exoscale_zone="$2"
+                shift 2
+                ;;
+            --exoscale-api-key)
+                exoscale_api_key="$2"
+                shift 2
+                ;;
+            --exoscale-api-secret)
+                exoscale_api_secret="$2"
+                shift 2
+                ;;
             # Libvirt-specific options
             --libvirt-memory)
                 libvirt_memory_gb="$2"
@@ -471,12 +495,12 @@ cmd_init() {
                 log_info "Supported cloud providers (stop/start capabilities):"
                 log_info "  provider       | services       | infra power"
                 log_info "  ------------------------------------------------------"
-                local ordered_providers=(aws azure gcp hetzner digitalocean)
+                local ordered_providers=(aws azure gcp hetzner digitalocean exoscale)
                 for provider in "${ordered_providers[@]}"; do
                     local services_box="[✓] services"
                     local infra_box=""
                     case "$provider" in
-                        aws|azure|gcp)
+                        aws|azure|gcp|exoscale)
                             infra_box="[✓] tofu power control"
                             ;;
                         hetzner|digitalocean)
@@ -607,6 +631,11 @@ cmd_init() {
         digitalocean_token=$(resolve_provider_token "$digitalocean_token" "DIGITALOCEAN_TOKEN" "$HOME/.digitalocean_token" "DigitalOcean")
     fi
 
+    if [[ "$cloud_provider" == "exoscale" ]]; then
+        exoscale_api_key=$(resolve_provider_token "$exoscale_api_key" "EXOSCALE_API_KEY" "$HOME/.exoscale_api_key" "Exoscale API Key")
+        exoscale_api_secret=$(resolve_provider_token "$exoscale_api_secret" "EXOSCALE_API_SECRET" "$HOME/.exoscale_api_secret" "Exoscale API Secret")
+    fi
+
     # Resolve Azure credentials from file for service principal authentication
     if [[ "$cloud_provider" == "azure" ]]; then
         local azure_credentials_data
@@ -708,6 +737,10 @@ cmd_init() {
         digitalocean_region=$(get_instance_type_region_default "$cloud_provider")
         log_info "Using default DigitalOcean region: $digitalocean_region"
     fi
+    if [[ "$cloud_provider" == "exoscale" && -z "$exoscale_zone" ]]; then
+        exoscale_zone=$(get_instance_type_region_default "$cloud_provider" "zone")
+        log_info "Using default Exoscale zone: $exoscale_zone"
+    fi
 
     # Generate passwords if not provided
     if [[ -z "$db_password" ]]; then
@@ -760,6 +793,9 @@ cmd_init() {
                 log_warn "  Note: --root-volume-size is ignored for DigitalOcean. Disk size is determined by the instance type (e.g., s-2vcpu-4gb = 80GB)"
             fi
             ;;
+        exoscale)
+            log_info "  Exoscale Zone: $exoscale_zone"
+            ;;
         libvirt)
             log_info "  Libvirt Memory: ${libvirt_memory_gb}GB"
             log_info "  Libvirt vCPUs: $libvirt_vcpus"
@@ -795,19 +831,18 @@ cmd_init() {
         log_debug "Copied common Terraform resources (common.tf, common-firewall.tf, common-outputs.tf, inventory.tftpl, cloud-init-generic.tftpl)"
     fi
 
-    # Then, copy cloud-provider-specific terraform templates
+    # Copy Ansible templates first (cloud-agnostic)
+    cp -r "$script_root/templates/ansible/"* "$templates_dir/" 2>/dev/null || true
+    log_debug "Copied Ansible templates"
+
+    # Then, copy cloud-provider-specific terraform templates (can override Ansible templates)
     if [[ -d "$script_root/templates/terraform-$cloud_provider" ]]; then
         cp -r "$script_root/templates/terraform-$cloud_provider/"* "$templates_dir/" 2>/dev/null || true
-        log_debug "Copied cloud-specific templates for $cloud_provider"
+        log_debug "Copied cloud-specific templates for $cloud_provider (may override Ansible templates)"
     else
         log_error "No templates found for cloud provider: $cloud_provider"
         die "Templates directory templates/terraform-$cloud_provider does not exist"
     fi
-
-
-    # Ansible templates are cloud-agnostic
-    cp -r "$script_root/templates/ansible/"* "$templates_dir/" 2>/dev/null || true
-    log_debug "Copied Ansible templates"
 
     # Write variables file based on cloud provider
     if [[ "$cloud_provider" == "gcp" && -z "$gcp_zone" ]]; then
@@ -849,6 +884,16 @@ cmd_init() {
         fi
     fi
 
+    # Validate Exoscale credentials
+    if [[ "$cloud_provider" == "exoscale" ]]; then
+        if [[ -z "$exoscale_api_key" ]]; then
+            die "Exoscale API key is required. Please provide via --exoscale-api-key or set EXOSCALE_API_KEY environment variable"
+        fi
+        if [[ -z "$exoscale_api_secret" ]]; then
+            die "Exoscale API secret is required. Please provide via --exoscale-api-secret or set EXOSCALE_API_SECRET environment variable"
+        fi
+    fi
+
     log_info "Creating variables file..."
     write_provider_variables "$deploy_dir" "$cloud_provider" \
         "$aws_region" "$aws_profile" "$aws_spot_instance" \
@@ -856,6 +901,7 @@ cmd_init() {
         "$gcp_region" "$gcp_zone" "$gcp_project" "$gcp_credentials_file" "$gcp_spot_instance" \
         "$hetzner_location" "$hetzner_network_zone" "$hetzner_token" \
         "$digitalocean_region" "$digitalocean_token" \
+        "$exoscale_zone" "$exoscale_api_key" "$exoscale_api_secret" \
         "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool" "$libvirt_uri" \
         "$instance_type" "$architecture" "$cluster_size" \
         "$data_volume_size" "$data_volumes_per_node" "$root_volume_size" \
@@ -901,7 +947,7 @@ EOF
     # Create README
     create_readme "$deploy_dir" "$cloud_provider" "$db_version" "$architecture" \
         "$cluster_size" "$instance_type" "$aws_region" "$azure_region" "$gcp_region" \
-        "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool"
+        "$exoscale_zone" "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool"
 
     # Generate INFO.txt file
     generate_info_files "$deploy_dir"
@@ -912,7 +958,7 @@ EOF
 
     # Show power control capabilities for the selected provider
     case "$cloud_provider" in
-        aws|azure|gcp)
+        aws|azure|gcp|exoscale)
             log_info "Power Control: Automatic (start/stop via cloud API)"
             ;;
         hetzner|digitalocean)
@@ -1074,22 +1120,25 @@ write_provider_variables() {
     local hetzner_token="${19}"
     local digitalocean_region="${20}"
     local digitalocean_token="${21}"
-    local libvirt_memory_gb="${22}"
-    local libvirt_vcpus="${23}"
-    local libvirt_network_bridge="${24}"
-    local libvirt_disk_pool="${25}"
-    local libvirt_uri="${26}"
-    local instance_type="${27}"
-    local architecture="${28}"
-    local cluster_size="${29}"
-    local data_volume_size="${30}"
-    local data_volumes_per_node="${31}"
-    local root_volume_size="${32}"
-    local allowed_cidr="${33}"
-    local owner="${34}"
-    local enable_multicast_overlay="${35}"
-    local host_password="${36}"
-    local libvirt_jump_host="${37}"
+    local exoscale_zone="${22}"
+    local exoscale_api_key="${23}"
+    local exoscale_api_secret="${24}"
+    local libvirt_memory_gb="${25}"
+    local libvirt_vcpus="${26}"
+    local libvirt_network_bridge="${27}"
+    local libvirt_disk_pool="${28}"
+    local libvirt_uri="${29}"
+    local instance_type="${30}"
+    local architecture="${31}"
+    local cluster_size="${32}"
+    local data_volume_size="${33}"
+    local data_volumes_per_node="${34}"
+    local root_volume_size="${35}"
+    local allowed_cidr="${36}"
+    local owner="${37}"
+    local enable_multicast_overlay="${38}"
+    local host_password="${39}"
+    local libvirt_jump_host="${40}"
 
     case "$cloud_provider" in
         aws)
@@ -1190,6 +1239,22 @@ write_provider_variables() {
                 "enable_multicast_overlay=$enable_multicast_overlay" \
                 "host_password=$host_password"
             ;;
+        exoscale)
+            write_variables_file "$deploy_dir" \
+                "exoscale_zone=$exoscale_zone" \
+                "exoscale_api_key=$exoscale_api_key" \
+                "exoscale_api_secret=$exoscale_api_secret" \
+                "instance_type=$instance_type" \
+                "instance_architecture=$architecture" \
+                "node_count=$cluster_size" \
+                "data_volume_size=$data_volume_size" \
+                "data_volumes_per_node=$data_volumes_per_node" \
+                "root_volume_size=$root_volume_size" \
+                "allowed_cidr=$allowed_cidr" \
+                "owner=$owner" \
+                "enable_multicast_overlay=$enable_multicast_overlay" \
+                "host_password=$host_password"
+            ;;
         libvirt)
             local libvirt_domain_type="kvm"
             local libvirt_firmware="efi"
@@ -1277,10 +1342,11 @@ create_readme() {
     local aws_region="$7"
     local azure_region="$8"
     local gcp_region="$9"
-    local libvirt_memory_gb="${10}"
-    local libvirt_vcpus="${11}"
-    local libvirt_network_bridge="${12}"
-    local libvirt_disk_pool="${13}"
+    local exoscale_zone="${10}"
+    local libvirt_memory_gb="${11}"
+    local libvirt_vcpus="${12}"
+    local libvirt_network_bridge="${13}"
+    local libvirt_disk_pool="${14}"
 
     local region_info=""
     local additional_config=""
@@ -1293,6 +1359,9 @@ create_readme() {
             ;;
         gcp)
             region_info="GCP Region: $gcp_region"
+            ;;
+        exoscale)
+            region_info="Exoscale Zone: $exoscale_zone"
             ;;
         libvirt)
             region_info="Local KVM Deployment"

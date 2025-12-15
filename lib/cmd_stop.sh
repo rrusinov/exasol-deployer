@@ -111,7 +111,7 @@ cmd_stop() {
     cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
     local infra_power_supported="false"
     case "$cloud_provider" in
-        aws|azure|gcp)
+        aws|azure|gcp|exoscale)
             infra_power_supported="true"
             ;;
         *)
@@ -149,7 +149,7 @@ cmd_stop() {
     if [[ "$infra_power_supported" == "true" ]]; then
         # Note: We enable refresh to ensure Terraform sees the current state (running=true)
         # This is important for all providers to detect state drift and apply changes correctly
-        if ! "${TOFU_BINARY:-tofu}" apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_state" -target="google_compute_instance.exasol_node" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped"; then
+        if ! "${TOFU_BINARY:-tofu}" apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_state" -target="google_compute_instance.exasol_node" -target="exoscale_compute_instance.exasol_nodes" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped"; then
             state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
             die "Infrastructure stop (tofu apply) failed"
         fi
