@@ -1069,10 +1069,13 @@ class TestReleaseWorkflow(unittest.TestCase):
         results_dir.mkdir(parents=True, exist_ok=True)
         
         try:
-            # Create framework - should automatically build and install
+            # Create framework - installation is now lazy
             framework = E2ETestFramework(str(self.config_file), results_dir)
             
-            # Property: installer_path should be set
+            # Trigger installation
+            framework._ensure_installation()
+            
+            # Property: installer_path should be set after installation
             self.assertIsNotNone(framework.installer_path,
                                "Installer path should be set after initialization")
             
@@ -1110,6 +1113,9 @@ class TestReleaseWorkflow(unittest.TestCase):
             if framework.file_handler:
                 framework.file_handler.flush()
             
+            # Trigger installation to generate logs
+            framework._ensure_installation()
+            
             # Find log file
             log_files = list(results_dir.glob('e2e_test_*.log'))
             self.assertEqual(len(log_files), 1, "Should have one log file")
@@ -1145,6 +1151,9 @@ class TestReleaseWorkflow(unittest.TestCase):
                     results_dir,
                     portable_deps=True
                 )
+                
+                # Trigger installation to test portable deps
+                framework._ensure_installation()
                 
                 # Verify portable_deps flag is set
                 self.assertTrue(framework.portable_deps, "portable_deps should be True when set via constructor")
@@ -1221,7 +1230,10 @@ class TestCommandPathConsistency(unittest.TestCase):
         try:
             framework = E2ETestFramework(str(self.config_file), results_dir)
             
-            # Property: exasol_bin should be set
+            # Trigger installation to test the binary path
+            framework._ensure_installation()
+            
+            # Property: exasol_bin should be set after installation
             self.assertIsNotNone(framework.exasol_bin,
                                "Exasol binary path should be set")
             

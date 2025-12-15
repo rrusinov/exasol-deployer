@@ -37,8 +37,8 @@ for vol_id in "${VOLUME_IDS[@]}"; do
     # Full UUID: d1206e7a-b272-477e-9aa5-83c558c72a6d
     # Device link: /dev/disk/by-id/virtio-d1206e7a-b272-477e-9
     
-    # Extract first 19 chars of UUID (matches virtio device naming)
-    vol_id_short="${vol_id:0:19}"
+    # Extract first 17 chars of UUID (matches virtio device naming)
+    vol_id_short="${vol_id:0:17}"
     
     # Find the virtio device link for this volume
     target_device=""

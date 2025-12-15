@@ -61,8 +61,7 @@ locals {
   overlay_data = local.overlay_data_common
 
   # Exoscale-specific cloud-init template with private network configuration
-  # Falls back to generic template if Exoscale-specific doesn't exist
-  cloud_init_template_path = fileexists("${path.module}/.templates/cloud-init-exoscale.tftpl") ? "${path.module}/.templates/cloud-init-exoscale.tftpl" : "${path.module}/.templates/cloud-init-generic.tftpl"
+  cloud_init_template_path = "${path.module}/.templates/cloud-init-exoscale.tftpl"
 
   # Node volumes for Ansible inventory
   # Exoscale uses volume IDs for device paths
@@ -102,34 +101,17 @@ resource "exoscale_security_group" "exasol_cluster" {
   description = "Security group for Exasol cluster"
 }
 
-resource "exoscale_security_group_rule" "ssh" {
-  security_group_id = exoscale_security_group.exasol_cluster.id
-  type              = "INGRESS"
-  protocol          = "TCP"
-  start_port        = 22
-  end_port          = 22
-  cidr              = var.allowed_cidr
-  description       = "SSH access"
-}
+# External access rules - dynamically created for each port using common firewall configuration
+resource "exoscale_security_group_rule" "external_access" {
+  for_each = local.exasol_firewall_ports
 
-resource "exoscale_security_group_rule" "exasol_db" {
   security_group_id = exoscale_security_group.exasol_cluster.id
   type              = "INGRESS"
   protocol          = "TCP"
-  start_port        = 8563
-  end_port          = 8563
+  start_port        = each.key
+  end_port          = each.key
   cidr              = var.allowed_cidr
-  description       = "Exasol database port"
-}
-
-resource "exoscale_security_group_rule" "exasol_admin_ui" {
-  security_group_id = exoscale_security_group.exasol_cluster.id
-  type              = "INGRESS"
-  protocol          = "TCP"
-  start_port        = 443
-  end_port          = 443
-  cidr              = var.allowed_cidr
-  description       = "Exasol Admin UI (HTTPS)"
+  description       = each.value
 }
 
 resource "exoscale_security_group_rule" "cluster_internal" {
@@ -157,7 +139,7 @@ resource "exoscale_security_group_rule" "cluster_internal_udp" {
 # ==============================================================================
 
 resource "exoscale_compute_instance" "exasol_nodes" {
-  count = var.infra_desired_state == "stopped" ? 0 : var.node_count
+  count = var.node_count
   
   name        = "exasol-node-${count.index + 1}-${random_id.instance.hex}"
   zone        = var.exoscale_zone
@@ -169,6 +151,9 @@ resource "exoscale_compute_instance" "exasol_nodes" {
   ssh_key = exoscale_ssh_key.exasol_auth.name
   
   security_group_ids = [exoscale_security_group.exasol_cluster.id]
+  
+  # Power state management - stop/start instances without destroying them
+  state = var.infra_desired_state == "stopped" ? "stopped" : "running"
   
   # Attach to private network with static IP
   network_interface {

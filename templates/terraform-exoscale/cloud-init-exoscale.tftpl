@@ -1,6 +1,7 @@
 #cloud-config
 
 # Exoscale-specific cloud-init with private network configuration
+# Extends the generic cloud-init with Exoscale-specific networking
 
 # Configure network interfaces (bring up eth1 with DHCP)
 write_files:
@@ -14,12 +15,15 @@ write_files:
             dhcp4-overrides:
               use-routes: false
     permissions: '0644'
+  - path: /tmp/bootstrap-exasol-cluster.sh
+    content: ${jsonencode(base_cloud_init)}
+    permissions: '0755'
 
-# Run network configuration
+# Run network configuration first, then standard bootstrap
 runcmd:
-  # Apply netplan configuration to bring up eth1
+  # Exoscale-specific: Apply netplan configuration to bring up eth1
   - netplan apply || true
-  # Wait for eth1 to get IP
+  # Exoscale-specific: Wait for eth1 to get IP
   - timeout 30 bash -c 'until ip addr show eth1 | grep -q "inet "; do sleep 1; done' || true
-
-${base_cloud_init}
+  # Standard: Run the exasol cluster bootstrap script
+  - /tmp/bootstrap-exasol-cluster.sh

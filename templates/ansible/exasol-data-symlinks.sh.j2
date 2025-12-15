@@ -76,7 +76,7 @@ find_device_via_patterns() {
 # 3. Add provider-specific comments for future agent modifications
 
 {% endraw %}{% set provider_template = 'exasol-data-symlinks-' + (cloud_provider | default('aws') | lower) + '.sh.j2' %}
-{% if provider_template in ['exasol-data-symlinks-aws.sh.j2', 'exasol-data-symlinks-gcp.sh.j2', 'exasol-data-symlinks-azure.sh.j2', 'exasol-data-symlinks-hetzner.sh.j2', 'exasol-data-symlinks-digitalocean.sh.j2', 'exasol-data-symlinks-libvirt.sh.j2'] %}
+{% if provider_template in ['exasol-data-symlinks-aws.sh.j2', 'exasol-data-symlinks-gcp.sh.j2', 'exasol-data-symlinks-azure.sh.j2', 'exasol-data-symlinks-hetzner.sh.j2', 'exasol-data-symlinks-digitalocean.sh.j2', 'exasol-data-symlinks-libvirt.sh.j2', 'exasol-data-symlinks-exoscale.sh.j2'] %}
 {% include provider_template %}
 {% else %}
 # Unknown provider - perform discovery and fail

@@ -390,14 +390,22 @@ class E2ETestFramework:
         if 'TF_REGISTRY_CLIENT_TIMEOUT' not in os.environ:
             self.extra_env['TF_REGISTRY_CLIENT_TIMEOUT'] = '30'
         
-        # Build and install release artifact (cached for all tests)
-        # CRITICAL: Use shared locking for both build and install to prevent race conditions
-        # where one process builds while another installs a partially written file
+        # Lazy installation - only install when actually needed for test execution
+        self.installer_path = None
+        self.exasol_bin = None
+        self._installation_done = False
+
+    def _ensure_installation(self):
+        """Ensure the exasol binary is installed (lazy installation)."""
+        if self._installation_done:
+            return
+            
         self.logger.info("Using release testing workflow")
         install_dir = self.results_dir / 'install'
-            
+        
         self.installer_path, self.exasol_bin = self._build_and_install_release(install_dir, use_portable_deps=self.portable_deps)
         self.logger.info(f"Using installed exasol binary: {self.exasol_bin}")
+        self._installation_done = True
 
     def _resolve_db_version(self, suite_db_version: Optional[Union[str, List[str]]]) -> Optional[str]:
         """Resolve database version with fallback support.
@@ -451,6 +459,7 @@ class E2ETestFramework:
         if not version.startswith('default'):
             return version
         
+        self._ensure_installation()
         try:
             result = subprocess.run(
                 [str(self.exasol_bin), 'init', '--list-versions'],
@@ -488,6 +497,7 @@ class E2ETestFramework:
         Also handles special aliases like 'default', 'default-local', 'default-arm64' by looking for
         the corresponding marker in the output.
         """
+        self._ensure_installation()
         try:
             result = subprocess.run(
                 [str(self.exasol_bin), 'init', '--list-versions'],
@@ -1805,6 +1815,9 @@ class E2ETestFramework:
             # Resolve database version with fallback support
             suite_db_version = test_case.get('db_version')
             resolved_db_version = self._resolve_db_version(suite_db_version)
+
+            # Ensure installation before test execution
+            self._ensure_installation()
 
             # Check if portable dependencies are needed for this test
             # Command-line --portable-deps overrides config-level use_portable_dependencies
