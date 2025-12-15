@@ -11,7 +11,7 @@ source "$LIB_DIR/state.sh"
 source "$LIB_DIR/versions.sh"
 
 # Supported cloud providers (keep Bash 3 compatible)
-SUPPORTED_PROVIDERS=("aws" "azure" "gcp" "hetzner" "digitalocean" "exoscale" "libvirt")
+SUPPORTED_PROVIDERS=("aws" "azure" "gcp" "hetzner" "digitalocean" "exoscale" "libvirt" "oci")
 
 get_supported_providers_list() {
     echo "${SUPPORTED_PROVIDERS[*]}"
@@ -27,6 +27,7 @@ get_provider_description() {
         digitalocean) echo "DigitalOcean" ;;
         exoscale) echo "Exoscale" ;;
         libvirt) echo "Local libvirt/KVM deployment" ;;
+        oci) echo "Oracle Cloud Infrastructure" ;;
         *) echo "$provider" ;;
     esac
 }
@@ -152,6 +153,43 @@ load_azure_credentials_file() {
     echo "$file_path|$client_id|$client_secret|$tenant_id|$subscription_id"
 }
 
+# Load OCI credentials from config file (standard OCI CLI format)
+load_oci_credentials_file() {
+    local file_path="${1:-}"
+
+    # Expand leading ~ to HOME for consistency
+    if [[ $file_path == ~/* ]]; then
+        file_path="${HOME}${file_path#~}"
+    fi
+
+    if [[ -z "$file_path" || ! -f "$file_path" ]]; then
+        echo ""
+        return 1
+    fi
+
+    # Parse OCI config file (INI format)
+    local tenancy_ocid user_ocid fingerprint key_file region
+    
+    # Read DEFAULT profile from OCI config
+    tenancy_ocid=$(grep -A 10 "^\[DEFAULT\]" "$file_path" | grep "^tenancy" | cut -d'=' -f2 | tr -d ' ' || true)
+    user_ocid=$(grep -A 10 "^\[DEFAULT\]" "$file_path" | grep "^user" | cut -d'=' -f2 | tr -d ' ' || true)
+    fingerprint=$(grep -A 10 "^\[DEFAULT\]" "$file_path" | grep "^fingerprint" | cut -d'=' -f2 | tr -d ' ' || true)
+    key_file=$(grep -A 10 "^\[DEFAULT\]" "$file_path" | grep "^key_file" | cut -d'=' -f2 | tr -d ' ' || true)
+    region=$(grep -A 10 "^\[DEFAULT\]" "$file_path" | grep "^region" | cut -d'=' -f2 | tr -d ' ' || true)
+
+    # Expand ~ in key_file path
+    if [[ "$key_file" == "~"* ]]; then
+        key_file="${key_file/#~/$HOME}"
+    fi
+
+    if [[ -z "$tenancy_ocid" || -z "$user_ocid" || -z "$fingerprint" || -z "$key_file" ]]; then
+        echo ""
+        return 1
+    fi
+
+    echo "$file_path|$tenancy_ocid|$user_ocid|$fingerprint|$key_file|$region"
+}
+
 # Show help for init command
 show_init_help() {
     cat <<'EOF'
@@ -161,7 +199,7 @@ Usage:
   exasol init --cloud-provider <provider> [flags]
 
 Required Flags:
-  --cloud-provider <string>      Cloud provider: aws, azure, gcp, hetzner, digitalocean, libvirt
+  --cloud-provider <string>      Cloud provider: aws, azure, gcp, hetzner, digitalocean, libvirt, oci
 
 Common Flags:
   --deployment-dir <path>        Directory to store deployment files (default: ".")
@@ -214,6 +252,15 @@ Exoscale-Specific Flags:
   --exoscale-api-key <key>       Exoscale API key
   --exoscale-api-secret <secret> Exoscale API secret
 
+OCI-Specific Flags:
+  --oci-region <region>          OCI region (default: "us-ashburn-1")
+  --oci-compartment-ocid <ocid>  OCI compartment OCID
+  --oci-tenancy-ocid <ocid>      OCI tenancy OCID (optional: auto-detected from ~/.oci/config)
+  --oci-user-ocid <ocid>         OCI user OCID (optional: auto-detected from ~/.oci/config)
+  --oci-fingerprint <fp>         OCI API key fingerprint (optional: auto-detected from ~/.oci/config)
+  --oci-private-key-path <path>  Path to OCI private key file (optional: auto-detected from ~/.oci/config)
+  --oci-config-file <path>       Path to OCI config file (default: "~/.oci/config")
+
 Libvirt-Specific Flags:
   --libvirt-memory <gb>          Memory per VM in GB (default: 4)
   --libvirt-vcpus <n>            vCPUs per VM (default: 2)
@@ -242,6 +289,12 @@ Examples:
 
   # Initialize GCP deployment with explicit project (overrides auto-detection)
   exasol init --cloud-provider gcp --gcp-project my-project --gcp-spot-instance
+
+  # Initialize OCI deployment (credentials auto-detected from ~/.oci/config)
+  exasol init --cloud-provider oci --oci-compartment-ocid <compartment-ocid>
+
+  # Initialize OCI deployment with explicit region and credentials
+  exasol init --cloud-provider oci --oci-region us-phoenix-1 --oci-compartment-ocid <compartment-ocid>
 
   # Initialize libvirt deployment for local testing
   exasol init --cloud-provider libvirt --libvirt-memory 8 --libvirt-vcpus 4
@@ -303,6 +356,15 @@ cmd_init() {
     local exoscale_zone=""
     local exoscale_api_key=""
     local exoscale_api_secret=""
+
+    # OCI-specific variables
+    local oci_region=""
+    local oci_compartment_ocid=""
+    local oci_tenancy_ocid=""
+    local oci_user_ocid=""
+    local oci_fingerprint=""
+    local oci_private_key_path=""
+    local oci_config_file="$HOME/.oci/config"
 
     # Libvirt-specific variables
     local libvirt_memory_gb=4
@@ -457,6 +519,35 @@ cmd_init() {
                 exoscale_api_secret="$2"
                 shift 2
                 ;;
+            # OCI-specific options
+            --oci-region)
+                oci_region="$2"
+                shift 2
+                ;;
+            --oci-compartment-ocid)
+                oci_compartment_ocid="$2"
+                shift 2
+                ;;
+            --oci-tenancy-ocid)
+                oci_tenancy_ocid="$2"
+                shift 2
+                ;;
+            --oci-user-ocid)
+                oci_user_ocid="$2"
+                shift 2
+                ;;
+            --oci-fingerprint)
+                oci_fingerprint="$2"
+                shift 2
+                ;;
+            --oci-private-key-path)
+                oci_private_key_path="$2"
+                shift 2
+                ;;
+            --oci-config-file)
+                oci_config_file="$2"
+                shift 2
+                ;;
             # Libvirt-specific options
             --libvirt-memory)
                 libvirt_memory_gb="$2"
@@ -495,7 +586,7 @@ cmd_init() {
                 log_info "Supported cloud providers (stop/start capabilities):"
                 log_info "  provider       | services       | infra power"
                 log_info "  ------------------------------------------------------"
-                local ordered_providers=(aws azure gcp hetzner digitalocean exoscale)
+                local ordered_providers=(aws azure gcp hetzner digitalocean exoscale oci)
                 for provider in "${ordered_providers[@]}"; do
                     local services_box="[✓] services"
                     local infra_box=""
@@ -503,7 +594,7 @@ cmd_init() {
                         aws|azure|gcp|exoscale)
                             infra_box="[✓] tofu power control"
                             ;;
-                        hetzner|digitalocean)
+                        hetzner|digitalocean|oci)
                             infra_box="[ ] manual power-on (in-guest shutdown)"
                             ;;
                         *)
@@ -636,6 +727,60 @@ cmd_init() {
         exoscale_api_secret=$(resolve_provider_token "$exoscale_api_secret" "EXOSCALE_API_SECRET" "$HOME/.exoscale_api_secret" "Exoscale API Secret")
     fi
 
+    # Resolve OCI credentials from config file for API key authentication
+    if [[ "$cloud_provider" == "oci" ]]; then
+        local oci_credentials_data
+        oci_credentials_data=$(load_oci_credentials_file "$oci_config_file") || true
+        local file_tenancy_ocid=""
+        local file_user_ocid=""
+        local file_fingerprint=""
+        local file_private_key_path=""
+        local file_region=""
+        
+        if [[ -n "$oci_credentials_data" ]]; then
+            IFS="|" read -r oci_config_file file_tenancy_ocid file_user_ocid file_fingerprint file_private_key_path file_region <<<"$oci_credentials_data"
+            log_info "Using OCI config file: $oci_config_file"
+        else
+            die "OCI config file not found or incomplete at $oci_config_file. Create it with 'oci setup config' or manually create ~/.oci/config."
+        fi
+
+        # Use explicit flags if provided, otherwise use config file values
+        if [[ -z "$oci_tenancy_ocid" ]]; then
+            oci_tenancy_ocid="$file_tenancy_ocid"
+        fi
+        if [[ -z "$oci_user_ocid" ]]; then
+            oci_user_ocid="$file_user_ocid"
+        fi
+        if [[ -z "$oci_fingerprint" ]]; then
+            oci_fingerprint="$file_fingerprint"
+        fi
+        if [[ -z "$oci_private_key_path" ]]; then
+            oci_private_key_path="$file_private_key_path"
+        fi
+        if [[ -z "$oci_region" ]]; then
+            oci_region="$file_region"
+        fi
+
+        # Validate required OCI credentials
+        if [[ -z "$oci_tenancy_ocid" || -z "$oci_user_ocid" || -z "$oci_fingerprint" || -z "$oci_private_key_path" ]]; then
+            die "OCI credentials are incomplete. Required: tenancy_ocid, user_ocid, fingerprint, private_key_path"
+        fi
+
+        # Validate compartment OCID is provided
+        if [[ -z "$oci_compartment_ocid" ]]; then
+            die "OCI compartment OCID is required. Please provide via --oci-compartment-ocid"
+        fi
+
+        # Validate private key file exists
+        local expanded_key_path="$oci_private_key_path"
+        if [[ $expanded_key_path == ~/* ]]; then
+            expanded_key_path="${HOME}${expanded_key_path#~}"
+        fi
+        if [[ ! -f "$expanded_key_path" ]]; then
+            die "OCI private key file not found: $oci_private_key_path"
+        fi
+    fi
+
     # Resolve Azure credentials from file for service principal authentication
     if [[ "$cloud_provider" == "azure" ]]; then
         local azure_credentials_data
@@ -741,6 +886,11 @@ cmd_init() {
         exoscale_zone=$(get_instance_type_region_default "$cloud_provider" "zone")
         log_info "Using default Exoscale zone: $exoscale_zone"
     fi
+    if [[ "$cloud_provider" == "oci" && -z "$oci_region" ]]; then
+        oci_region=$(get_instance_type_region_default "$cloud_provider")
+        log_info "Using default OCI region: $oci_region"
+    fi
+    fi
 
     # Generate passwords if not provided
     if [[ -z "$db_password" ]]; then
@@ -795,6 +945,11 @@ cmd_init() {
             ;;
         exoscale)
             log_info "  Exoscale Zone: $exoscale_zone"
+            ;;
+        oci)
+            log_info "  OCI Region: $oci_region"
+            log_info "  OCI Compartment: $oci_compartment_ocid"
+            log_info "  OCI Config File: $oci_config_file"
             ;;
         libvirt)
             log_info "  Libvirt Memory: ${libvirt_memory_gb}GB"
@@ -902,6 +1057,7 @@ cmd_init() {
         "$hetzner_location" "$hetzner_network_zone" "$hetzner_token" \
         "$digitalocean_region" "$digitalocean_token" \
         "$exoscale_zone" "$exoscale_api_key" "$exoscale_api_secret" \
+        "$oci_region" "$oci_compartment_ocid" "$oci_tenancy_ocid" "$oci_user_ocid" "$oci_fingerprint" "$oci_private_key_path" \
         "$libvirt_memory_gb" "$libvirt_vcpus" "$libvirt_network_bridge" "$libvirt_disk_pool" "$libvirt_uri" \
         "$instance_type" "$architecture" "$cluster_size" \
         "$data_volume_size" "$data_volumes_per_node" "$root_volume_size" \
@@ -961,7 +1117,7 @@ EOF
         aws|azure|gcp|exoscale)
             log_info "Power Control: Automatic (start/stop via cloud API)"
             ;;
-        hetzner|digitalocean)
+        hetzner|digitalocean|oci)
             log_info "Power Control: Manual start required (in-guest shutdown supported)"
             log_info "  Note: Use 'exasol start' for power-on instructions after stopping"
             ;;
@@ -1123,22 +1279,28 @@ write_provider_variables() {
     local exoscale_zone="${22}"
     local exoscale_api_key="${23}"
     local exoscale_api_secret="${24}"
-    local libvirt_memory_gb="${25}"
-    local libvirt_vcpus="${26}"
-    local libvirt_network_bridge="${27}"
-    local libvirt_disk_pool="${28}"
-    local libvirt_uri="${29}"
-    local instance_type="${30}"
-    local architecture="${31}"
-    local cluster_size="${32}"
-    local data_volume_size="${33}"
-    local data_volumes_per_node="${34}"
-    local root_volume_size="${35}"
-    local allowed_cidr="${36}"
-    local owner="${37}"
-    local enable_multicast_overlay="${38}"
-    local host_password="${39}"
-    local libvirt_jump_host="${40}"
+    local oci_region="${25}"
+    local oci_compartment_ocid="${26}"
+    local oci_tenancy_ocid="${27}"
+    local oci_user_ocid="${28}"
+    local oci_fingerprint="${29}"
+    local oci_private_key_path="${30}"
+    local libvirt_memory_gb="${31}"
+    local libvirt_vcpus="${32}"
+    local libvirt_network_bridge="${33}"
+    local libvirt_disk_pool="${34}"
+    local libvirt_uri="${35}"
+    local instance_type="${36}"
+    local architecture="${37}"
+    local cluster_size="${38}"
+    local data_volume_size="${39}"
+    local data_volumes_per_node="${40}"
+    local root_volume_size="${41}"
+    local allowed_cidr="${42}"
+    local owner="${43}"
+    local enable_multicast_overlay="${44}"
+    local host_password="${45}"
+    local libvirt_jump_host="${46}"
 
     case "$cloud_provider" in
         aws)
@@ -1244,6 +1406,25 @@ write_provider_variables() {
                 "exoscale_zone=$exoscale_zone" \
                 "exoscale_api_key=$exoscale_api_key" \
                 "exoscale_api_secret=$exoscale_api_secret" \
+                "instance_type=$instance_type" \
+                "instance_architecture=$architecture" \
+                "node_count=$cluster_size" \
+                "data_volume_size=$data_volume_size" \
+                "data_volumes_per_node=$data_volumes_per_node" \
+                "root_volume_size=$root_volume_size" \
+                "allowed_cidr=$allowed_cidr" \
+                "owner=$owner" \
+                "enable_multicast_overlay=$enable_multicast_overlay" \
+                "host_password=$host_password"
+            ;;
+        oci)
+            write_variables_file "$deploy_dir" \
+                "oci_region=$oci_region" \
+                "oci_compartment_ocid=$oci_compartment_ocid" \
+                "oci_tenancy_ocid=$oci_tenancy_ocid" \
+                "oci_user_ocid=$oci_user_ocid" \
+                "oci_fingerprint=$oci_fingerprint" \
+                "oci_private_key_path=$oci_private_key_path" \
                 "instance_type=$instance_type" \
                 "instance_architecture=$architecture" \
                 "node_count=$cluster_size" \
