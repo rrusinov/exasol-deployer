@@ -987,7 +987,8 @@ class E2ETestFramework:
                 'description': f"{sut_config.get('description', sut_name)} + {workflow_config.get('description', workflow_name)}",
                 'parameters': sut_config.get('parameters', {}),
                 'workflow': workflow_config.get('steps', []),
-                'db_version': sut_config.get('db_version')  # Pass through db_version from SUT config
+                'db_version': sut_config.get('db_version'),  # Pass through db_version from SUT config
+                'use_portable_dependencies': sut_config.get('use_portable_dependencies', False)  # Pass through portable deps flag
             }
         
         # Return config in the format expected by generate_test_plan
@@ -1165,7 +1166,8 @@ class E2ETestFramework:
                 'config_path': str(self.config_path),
                 'workflow': suite_config.get('workflow', []),
                 'sut_description': suite_config.get('sut_description', ''),
-                'db_version': suite_config.get('db_version')
+                'db_version': suite_config.get('db_version'),
+                'use_portable_dependencies': suite_config.get('use_portable_dependencies', False)
             }
             test_plan.append(test_case)
 
