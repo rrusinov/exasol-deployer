@@ -7,6 +7,21 @@
 # The definitions here serve as documentation and reference.
 # ==============================================================================
 
+# ==============================================================================
+# INFRASTRUCTURE STATE MANAGEMENT
+# ==============================================================================
+
+variable "infra_desired_state" {
+  description = "Desired state of infrastructure: 'running' or 'stopped'"
+  type        = string
+  default     = "running"
+  
+  validation {
+    condition     = contains(["running", "stopped"], var.infra_desired_state)
+    error_message = "infra_desired_state must be either 'running' or 'stopped'."
+  }
+}
+
 variable "instance_architecture" {
   description = "The architecture for the instances (e.g., 'x86_64' or 'arm64')."
   type        = string

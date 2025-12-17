@@ -58,6 +58,9 @@ locals {
   # VXLAN multicast overlay (uses common logic)
   overlay_data = local.overlay_data_common
 
+  # Power control capability
+  supports_power_control = true
+
   # OCI-specific cloud-init template
   # Template is copied to .templates/ in deployment directory during init
   cloud_init_template_path = "${path.module}/.templates/cloud-init-oci.tftpl"
@@ -69,6 +72,13 @@ locals {
       oci_core_volume.exasol_data[node_idx * var.data_volumes_per_node + vol_idx].id
     ]
   }
+
+  # Ingress source ranges: generated VCN plus optional VXLAN overlay network
+  overlay_network_cidr    = "172.16.0.0/16"
+  ingress_private_sources = concat(
+    [oci_core_vcn.exasol.cidr_block],
+    var.enable_multicast_overlay ? [local.overlay_network_cidr] : []
+  )
 }
 
 # ==============================================================================
@@ -160,37 +170,22 @@ resource "oci_core_default_security_list" "exasol" {
     }
   }
 
-  # Allow all traffic from private IP ranges (RFC 1918)
-  ingress_security_rules {
-    protocol = "all"
-    source   = "10.0.0.0/8"
-    description = "Allow all traffic from private Class A networks"
-  }
-
-  ingress_security_rules {
-    protocol = "all"
-    source   = "172.16.0.0/12"
-    description = "Allow all traffic from private Class B networks"
-  }
-
-  ingress_security_rules {
-    protocol = "all"
-    source   = "192.168.0.0/16"
-    description = "Allow all traffic from private Class C networks"
-  }
-
-  # Internal cluster communication (all ports between cluster nodes)
-  ingress_security_rules {
-    protocol = "all"
-    source   = oci_core_subnet.exasol.cidr_block
+  # Allow all traffic from generated private ranges (VCN CIDR and optional VXLAN overlay)
+  dynamic "ingress_security_rules" {
+    for_each = toset(local.ingress_private_sources)
+    content {
+      protocol    = "all"
+      source      = ingress_security_rules.value
+      description = "Allow all traffic within generated private ranges"
+    }
   }
 
   # VXLAN overlay network (UDP 4789) for multicast support
   dynamic "ingress_security_rules" {
-    for_each = var.enable_multicast_overlay ? [1] : []
+    for_each = var.enable_multicast_overlay ? toset(local.ingress_private_sources) : []
     content {
       protocol = "17" # UDP
-      source   = oci_core_subnet.exasol.cidr_block
+      source   = ingress_security_rules.value
 
       udp_options {
         min = 4789
@@ -283,8 +278,30 @@ resource "oci_core_instance" "exasol" {
 }
 
 # ==============================================================================
-# Block Volumes for Data Storage
+# Instance Power Control (for start/stop operations)
 # ==============================================================================
+
+# Stop instances when infra_desired_state = "stopped"
+resource "null_resource" "exasol_power_stop" {
+  count = var.infra_desired_state == "stopped" ? var.node_count : 0
+  
+  provisioner "local-exec" {
+    command = "oci compute instance action --instance-id ${oci_core_instance.exasol[count.index].id} --action SOFTSTOP --region ${var.oci_region}"
+  }
+
+  depends_on = [oci_core_instance.exasol]
+}
+
+# Start instances when infra_desired_state = "running"
+resource "null_resource" "exasol_power_start" {
+  count = var.infra_desired_state == "running" ? var.node_count : 0
+  
+  provisioner "local-exec" {
+    command = "oci compute instance action --instance-id ${oci_core_instance.exasol[count.index].id} --action START --region ${var.oci_region}"
+  }
+
+  depends_on = [oci_core_instance.exasol]
+}
 
 resource "oci_core_volume" "exasol_data" {
   count               = var.node_count * var.data_volumes_per_node
