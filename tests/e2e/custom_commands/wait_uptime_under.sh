@@ -12,7 +12,7 @@ main() {
     local threshold="${3:-300}"
 
     local uptime_secs
-    uptime_secs=$(ssh -F "$deployment_dir/ssh_config" -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "$target_host" "cat /proc/uptime | cut -d. -f1")
+    uptime_secs=$(ssh -F "$deployment_dir/ssh_config" -n -T -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "$target_host" "cat /proc/uptime | cut -d. -f1")
     echo "uptime=$uptime_secs"
     if [[ "$uptime_secs" -lt "$threshold" ]]; then
         return 0

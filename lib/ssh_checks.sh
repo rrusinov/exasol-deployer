@@ -69,6 +69,7 @@ ssh_run_with_retries() {
         local start_time=$(date +%s)
         
         if ssh_output=$(timeout "$timeout" ssh -F "$ssh_config" \
+            -n -T \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \

@@ -6,12 +6,12 @@ list_aws_instances() {
     local region="$1"
     local prefix_filter="${2:-}"
     
-    local filter_args=""
+    local filter_args=()
     if [[ -n "$prefix_filter" ]]; then
-        filter_args="--filters Name=tag:Name,Values=*${prefix_filter}*"
+        filter_args=(--filters "Name=tag:Name,Values=*${prefix_filter}*")
     fi
     
-    aws ec2 describe-instances --region "$region" $filter_args \
+    aws ec2 describe-instances --region "$region" "${filter_args[@]}" \
         --query "Reservations[].Instances[].{Name:Tags[?Key=='Name']|[0].Value,InstanceId:InstanceId,State:State.Name,Type:InstanceType}" \
         --output json 2>/dev/null || echo "[]"
 }
@@ -21,12 +21,12 @@ list_aws_volumes() {
     local region="$1"
     local prefix_filter="${2:-}"
     
-    local filter_args=""
+    local filter_args=()
     if [[ -n "$prefix_filter" ]]; then
-        filter_args="--filters Name=tag:Name,Values=*${prefix_filter}*"
+        filter_args=(--filters "Name=tag:Name,Values=*${prefix_filter}*")
     fi
     
-    aws ec2 describe-volumes --region "$region" $filter_args \
+    aws ec2 describe-volumes --region "$region" "${filter_args[@]}" \
         --query "Volumes[].{Name:Tags[?Key=='Name']|[0].Value,VolumeId:VolumeId,State:State,Size:Size}" \
         --output json 2>/dev/null || echo "[]"
 }

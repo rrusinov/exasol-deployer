@@ -23,19 +23,31 @@ runcmd:
       echo "Removed duplicate Oracle Cloud Agent users sudoers file" | systemd-cat -t cloud-init -p info
     fi
 
-  # Configure iptables to allow private network traffic
+  # Configure iptables to allow private network traffic and Exasol ports
   - |
+    # Install iptables-persistent to save rules across reboots
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent
+    
     # Allow all traffic from private IP ranges (RFC 1918)
     iptables -I INPUT 1 -s 192.168.0.0/16 -j ACCEPT
     iptables -I INPUT 1 -s 172.16.0.0/12 -j ACCEPT
     iptables -I INPUT 1 -s 10.0.0.0/8 -j ACCEPT
     
-    # Save iptables rules
-    if command -v iptables-save >/dev/null 2>&1; then
-      iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
-    fi
+    # Allow Exasol ports from anywhere
+    iptables -I INPUT -p tcp --dport 2581 -m state --state NEW -j ACCEPT   # BucketFS
+    iptables -I INPUT -p tcp --dport 8443 -m state --state NEW -j ACCEPT   # Admin UI
+    iptables -I INPUT -p tcp --dport 8563 -m state --state NEW -j ACCEPT   # Database
+    iptables -I INPUT -p tcp --dport 20002 -m state --state NEW -j ACCEPT  # Container SSH
+    iptables -I INPUT -p tcp --dport 20003 -m state --state NEW -j ACCEPT  # Confd API
     
-    echo "Configured iptables to allow private network traffic" | systemd-cat -t cloud-init -p info
+    # Save iptables rules persistently
+    iptables-save > /etc/iptables/rules.v4
+    
+    # Enable iptables-persistent service
+    systemctl enable netfilter-persistent
+    
+    echo "Configured persistent iptables rules for private network traffic and Exasol ports" | systemd-cat -t cloud-init -p info
   
   # Configure iSCSI for OCI block volumes
   - |

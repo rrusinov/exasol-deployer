@@ -109,7 +109,7 @@ health_fetch_remote_ips() {
     local deploy_dir="${5:-.}"  # Optional deploy_dir parameter
 
     local private_ip=""
-    private_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" hostname -I 2>/dev/null | awk '{print $1}' || true)
+    private_ip=$(ssh -F "$ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" hostname -I 2>/dev/null | awk '{print $1}' || true)
 
     # Extract node index from host_name (e.g., "n11" -> 0, "n12" -> 1)
     local node_index
@@ -136,15 +136,15 @@ health_fetch_remote_ips() {
         # Try cloud provider metadata services first (more reliable than ip.me)
         case "$cloud_provider" in
             aws)
-                public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                public_ip=$(ssh -F "$ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
                     "curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null" 2>/dev/null || true)
                 ;;
             azure)
-                public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                public_ip=$(ssh -F "$ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
                     "curl -s -H Metadata:true --max-time 2 'http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text' 2>/dev/null" 2>/dev/null || true)
                 ;;
             gcp)
-                public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                public_ip=$(ssh -F "$ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
                     "curl -s -H Metadata-Flavor:Google --max-time 2 'http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip' 2>/dev/null" 2>/dev/null || true)
                 ;;
         esac
@@ -152,7 +152,7 @@ health_fetch_remote_ips() {
 
         # If metadata services failed, try ip.me as last resort (may return incorrect IP for libvirt/NAT)
         if [[ ! "$public_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            public_ip=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+            public_ip=$(ssh -F "$ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
                 "curl -s --max-time 3 ip.me 2>/dev/null" 2>/dev/null || true)
             public_ip=$(echo "$public_ip" | tr -d '\r\n' | xargs)
         fi
@@ -538,7 +538,7 @@ health_check_volume_attachments() {
     local output_format="$5"
 
     local volume_info
-    volume_info=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+    volume_info=$(ssh -F "$ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
         "bash -lc 'shopt -s nullglob; count=0; broken=\"\"; sizes=\"\"; for link in /dev/exasol_data_*; do [[ -e \"\$link\" ]] || continue; [[ \"\$link\" == *table ]] && continue; if [[ -L \"\$link\" ]]; then target=\$(readlink -f \"\$link\" 2>/dev/null); if [[ -n \"\$target\" && -e \"\$target\" ]]; then count=\$((count+1)); size=\$(lsblk -b -n -o SIZE \"\$target\" 2>/dev/null | head -1); if [[ -n \"\$size\" ]]; then size_gb=\$((size / 1024 / 1024 / 1024)); sizes=\"\${sizes}\${sizes:+,}\${size_gb}GB\"; fi; else broken=\"\$broken \$link\"; fi; fi; done; echo \"\$count|\$broken|\$sizes\"'" 2>/dev/null || echo "0||")
 
     local volume_count="${volume_info%%|*}"
@@ -577,7 +577,7 @@ health_check_cluster_state() {
     # Check if c4 is available and can report cluster status
     # Get unique stages from all nodes
     local stages
-    stages=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+    stages=$(ssh -F "$ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
         "sudo -u exasol c4 ps -e '.[].Instances.Configs | to_entries | map(.value.ground.boot_stage) | unique | join(\",\")' 2>/dev/null" 2>/dev/null || echo "")
 
     if [[ -z "$stages" ]]; then
@@ -648,7 +648,7 @@ health_check_single_host() {
         # Service checks
         local service_results=""
         for service in "${HEALTH_REQUIRED_SERVICES[@]}"; do
-            if ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" sudo systemctl is-active "$service" >/dev/null 2>&1; then
+            if ssh -F "$ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" sudo systemctl is-active "$service" >/dev/null 2>&1; then
                 service_results="${service_results}${service}:active;"
             else
                 service_results="${service_results}${service}:failed;"
@@ -686,13 +686,13 @@ health_check_single_host() {
             # DB port check - test on localhost since DB listens on private IP
             # Try curl first (error JSON response means port is working!)
             local db_response
-            db_response=$(ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+            db_response=$(ssh -F "$ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
                 "curl -sk --max-time 5 'https://localhost:8563/' 2>/dev/null" 2>/dev/null || echo "")
             if [[ -n "$db_response" ]] && [[ "$db_response" == *"status"* || "$db_response" == *"WebSocket"* || "$db_response" == *"error"* ]]; then
                 port_8563_ok="true"
             else
                 # Fallback to testing from localhost via SSH
-                if ssh -F "$ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
+                if ssh -F "$ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout="$ssh_timeout" "$host_name" \
                     "timeout 3 bash -c 'cat < /dev/null > /dev/tcp/localhost/8563' 2>/dev/null" >/dev/null 2>&1; then
                     port_8563_ok="true"
                 fi

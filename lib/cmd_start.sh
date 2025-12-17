@@ -206,7 +206,7 @@ cmd_start() {
 
             if [[ -n "$first_host" ]]; then
                 log_debug "Checking c4.service status on $first_host"
-                if ssh -F "$deploy_dir/ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$first_host" \
+                if ssh -F "$deploy_dir/ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$first_host" \
                     "sudo systemctl is-active c4.service" >/dev/null 2>&1; then
                     log_info "Database services are active"
                 else

@@ -97,7 +97,9 @@ generate_oci_cleanup_summary() {
     
     echo "Compute Instances:"
     if [[ -n "$instances" ]]; then
-        echo "$instances" | sed 's/^/  /'
+        while IFS= read -r line; do
+            echo "  $line"
+        done <<< "$instances"
     else
         echo "  (none)"
     fi
@@ -111,7 +113,9 @@ generate_oci_cleanup_summary() {
     
     echo "Block Volumes:"
     if [[ -n "$volumes" ]]; then
-        echo "$volumes" | sed 's/^/  /'
+        while IFS= read -r line; do
+            echo "  $line"
+        done <<< "$volumes"
     else
         echo "  (none)"
     fi

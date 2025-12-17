@@ -182,7 +182,7 @@ cmd_stop() {
 
     for host in "${hosts[@]}"; do
         (
-            if ssh -F "$deploy_dir/ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$host" \
+            if ssh -F "$deploy_dir/ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$host" \
                 "true" >/dev/null 2>&1; then
                 echo "running" > "$temp_dir/$host"
             else
