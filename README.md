@@ -5,7 +5,7 @@
 [![Build and Release Installer](https://github.com/rrusinov/exasol-deployer/actions/workflows/release.yml/badge.svg)](https://github.com/rrusinov/exasol-deployer/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Shell](https://img.shields.io/badge/Shell-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Cloud Providers](https://img.shields.io/badge/Cloud-AWS%20%7C%20Azure%20%7C%20GCP%20%7C%20Hetzner%20%7C%20DigitalOcean%20%7C%20Exoscale%20%7C%20libvirt-orange.svg)](#cloud-provider-setup)
+[![Cloud Providers](https://img.shields.io/badge/Cloud-AWS%20%7C%20Azure%20%7C%20GCP%20%7C%20OCI%20%7C%20Hetzner%20%7C%20DigitalOcean%20%7C%20Exoscale%20%7C%20libvirt-orange.svg)](#cloud-provider-setup)
 
 Deploy Exasol database clusters across multiple cloud providers with a single command.
 
@@ -15,6 +15,7 @@ Deploy Exasol database clusters across multiple cloud providers with a single co
   - [AWS] Amazon Web Services
   - [AZR] Microsoft Azure
   - [GCP] Google Cloud Platform
+  - [OCI] Oracle Cloud Infrastructure
   - [HTZ] Hetzner Cloud
   - [DO] DigitalOcean
   - [EXO] Exoscale

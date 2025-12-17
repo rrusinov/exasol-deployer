@@ -1,0 +1,48 @@
+#!/bin/bash
+# OCI-specific device discovery for Exasol data symlinks
+
+provider_init_discovery() {
+    # OCI provides persistent device names via /dev/oracleoci/ symlinks
+    # No special initialization needed
+    return 0
+}
+
+provider_find_device() {
+    local vol_id="$1"
+    local volume_index="$2"
+    
+    # OCI creates persistent symlinks in /dev/oracleoci/
+    # Data volumes start from oraclevdb (first data volume)
+    # Boot volume is oraclevda, data volumes are oraclevdb, oraclevdc, etc.
+    local device_letter
+    case $volume_index in
+        0) device_letter="b" ;;
+        1) device_letter="c" ;;
+        2) device_letter="d" ;;
+        3) device_letter="e" ;;
+        4) device_letter="f" ;;
+        5) device_letter="g" ;;
+        *) device_letter="z" ;;  # fallback
+    esac
+    local device_path="/dev/oracleoci/oraclevd${device_letter}"
+    
+    if [[ -L "$device_path" ]]; then
+        # Follow the symlink to get the actual device
+        local actual_device
+        actual_device=$(readlink -f "$device_path")
+        if [[ -b "$actual_device" ]]; then
+            echo "$actual_device"
+            return 0
+        fi
+    fi
+    
+    return 1
+}
+
+provider_log_available_devices() {
+    echo "Available OCI persistent device symlinks:"
+    ls -la /dev/oracleoci/ 2>/dev/null || echo "No /dev/oracleoci/ directory found"
+    echo ""
+    echo "Available block devices:"
+    lsblk -d -o NAME,SIZE,TYPE | grep disk
+}

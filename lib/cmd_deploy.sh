@@ -157,9 +157,9 @@ cmd_deploy() {
         return 0
     fi
 
-    local ssh_attempts=10
-    local ssh_retry_delay=10
-    local ssh_timeout=10
+    local ssh_attempts=20
+    local ssh_retry_delay=15
+    local ssh_timeout=15
     ssh_parallelism="$cluster_size"
 
     log_info "Testing SSH connectivity to all nodes..."

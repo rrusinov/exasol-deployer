@@ -168,14 +168,15 @@ load_oci_credentials_file() {
     fi
 
     # Parse OCI config file (INI format)
-    local tenancy_ocid user_ocid fingerprint key_file region
+    local tenancy_ocid user_ocid fingerprint key_file region compartment_ocid
     
     # Read DEFAULT profile from OCI config
-    tenancy_ocid=$(grep -A 10 "^\[DEFAULT\]" "$file_path" | grep "^tenancy" | cut -d'=' -f2 | tr -d ' ' || true)
-    user_ocid=$(grep -A 10 "^\[DEFAULT\]" "$file_path" | grep "^user" | cut -d'=' -f2 | tr -d ' ' || true)
-    fingerprint=$(grep -A 10 "^\[DEFAULT\]" "$file_path" | grep "^fingerprint" | cut -d'=' -f2 | tr -d ' ' || true)
-    key_file=$(grep -A 10 "^\[DEFAULT\]" "$file_path" | grep "^key_file" | cut -d'=' -f2 | tr -d ' ' || true)
-    region=$(grep -A 10 "^\[DEFAULT\]" "$file_path" | grep "^region" | cut -d'=' -f2 | tr -d ' ' || true)
+    tenancy_ocid=$(grep -A 15 "^\[DEFAULT\]" "$file_path" | grep "^tenancy" | cut -d'=' -f2 | tr -d ' ' || true)
+    user_ocid=$(grep -A 15 "^\[DEFAULT\]" "$file_path" | grep "^user" | cut -d'=' -f2 | tr -d ' ' || true)
+    fingerprint=$(grep -A 15 "^\[DEFAULT\]" "$file_path" | grep "^fingerprint" | cut -d'=' -f2 | tr -d ' ' || true)
+    key_file=$(grep -A 15 "^\[DEFAULT\]" "$file_path" | grep "^key_file" | cut -d'=' -f2 | tr -d ' ' || true)
+    region=$(grep -A 15 "^\[DEFAULT\]" "$file_path" | grep "^region" | cut -d'=' -f2 | tr -d ' ' || true)
+    compartment_ocid=$(grep -A 15 "^\[DEFAULT\]" "$file_path" | grep "^compartment" | cut -d'=' -f2 | tr -d ' ' || true)
 
     # Expand ~ in key_file path
     if [[ "$key_file" == "~"* ]]; then
@@ -187,7 +188,7 @@ load_oci_credentials_file() {
         return 1
     fi
 
-    echo "$file_path|$tenancy_ocid|$user_ocid|$fingerprint|$key_file|$region"
+    echo "$file_path|$tenancy_ocid|$user_ocid|$fingerprint|$key_file|$region|$compartment_ocid"
 }
 
 # Show help for init command
@@ -736,9 +737,10 @@ cmd_init() {
         local file_fingerprint=""
         local file_private_key_path=""
         local file_region=""
+        local file_compartment_ocid=""
         
         if [[ -n "$oci_credentials_data" ]]; then
-            IFS="|" read -r oci_config_file file_tenancy_ocid file_user_ocid file_fingerprint file_private_key_path file_region <<<"$oci_credentials_data"
+            IFS="|" read -r oci_config_file file_tenancy_ocid file_user_ocid file_fingerprint file_private_key_path file_region file_compartment_ocid <<<"$oci_credentials_data"
             log_info "Using OCI config file: $oci_config_file"
         else
             die "OCI config file not found or incomplete at $oci_config_file. Create it with 'oci setup config' or manually create ~/.oci/config."
@@ -757,9 +759,10 @@ cmd_init() {
         if [[ -z "$oci_private_key_path" ]]; then
             oci_private_key_path="$file_private_key_path"
         fi
-        if [[ -z "$oci_region" ]]; then
-            oci_region="$file_region"
+        if [[ -z "$oci_compartment_ocid" ]]; then
+            oci_compartment_ocid="$file_compartment_ocid"
         fi
+        # Note: oci_region precedence is handled later with instance-types.conf taking priority over OCI config
 
         # Validate required OCI credentials
         if [[ -z "$oci_tenancy_ocid" || -z "$oci_user_ocid" || -z "$oci_fingerprint" || -z "$oci_private_key_path" ]]; then
@@ -768,7 +771,7 @@ cmd_init() {
 
         # Validate compartment OCID is provided
         if [[ -z "$oci_compartment_ocid" ]]; then
-            die "OCI compartment OCID is required. Please provide via --oci-compartment-ocid"
+            die "OCI compartment OCID is required. Please provide via --oci-compartment-ocid or add 'compartment=<ocid>' to your ~/.oci/config file"
         fi
 
         # Validate private key file exists
@@ -888,8 +891,17 @@ cmd_init() {
     fi
     if [[ "$cloud_provider" == "oci" && -z "$oci_region" ]]; then
         oci_region=$(get_instance_type_region_default "$cloud_provider")
-        log_info "Using default OCI region: $oci_region"
-    fi
+        log_info "Using default OCI region from instance-types.conf: $oci_region"
+        
+        # If still empty, fall back to OCI config file
+        if [[ -z "$oci_region" && -f "$oci_config_file" ]]; then
+            local file_region
+            file_region=$(grep "^region=" "$oci_config_file" | cut -d'=' -f2 | tr -d ' ')
+            if [[ -n "$file_region" ]]; then
+                oci_region="$file_region"
+                log_info "Using OCI region from config file as fallback: $oci_region"
+            fi
+        fi
     fi
 
     # Generate passwords if not provided
@@ -1114,10 +1126,10 @@ EOF
 
     # Show power control capabilities for the selected provider
     case "$cloud_provider" in
-        aws|azure|gcp|exoscale)
+        aws|azure|gcp|exoscale|oci)
             log_info "Power Control: Automatic (start/stop via cloud API)"
             ;;
-        hetzner|digitalocean|oci)
+        hetzner|digitalocean)
             log_info "Power Control: Manual start required (in-guest shutdown supported)"
             log_info "  Note: Use 'exasol start' for power-on instructions after stopping"
             ;;
