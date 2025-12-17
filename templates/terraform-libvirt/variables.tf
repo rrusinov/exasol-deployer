@@ -22,79 +22,6 @@ variable "libvirt_disk_pool" {
   default     = "default"
 }
 
-variable "instance_type" {
-  description = "The instance type mapping (used for compatibility with common framework)."
-  type        = string
-  # Value will be set in variables.auto.tfvars during initialization
-}
-
-variable "instance_architecture" {
-  description = "The architecture for the VM (e.g., 'x86_64' or 'arm64'). Value is determined from the selected database version."
-  type        = string
-  # Value will be set in variables.auto.tfvars during initialization
-
-  validation {
-    condition     = contains(["x86_64", "arm64"], var.instance_architecture)
-    error_message = "The instance_architecture must be either 'x86_64' or 'arm64'."
-  }
-}
-
-variable "node_count" {
-  description = "The number of nodes in the cluster. Set with --cluster-size during initialization."
-  type        = number
-  # Value will be set in variables.auto.tfvars during initialization
-}
-
-variable "allowed_cidr" {
-  description = "The CIDR block allowed to access the cluster for SSH and Admin UI. Set with --allowed-cidr during initialization."
-  type        = string
-  # Value will be set in variables.auto.tfvars during initialization
-  # For libvirt, this typically allows local network access
-}
-
-variable "host_password" {
-  description = "Host OS password for the exasol user (SSH/console access). Set with --host-password or generated automatically."
-  type        = string
-  sensitive   = true
-  # Value will be set in variables.auto.tfvars during initialization
-}
-
-variable "root_volume_size" {
-  description = "The size of the root volume in GB."
-  type        = number
-  default     = 50
-  # Fixed default value - not configurable via command line
-}
-
-variable "data_volume_size" {
-  description = "The size of the data volume in GB. Set with --data-volume-size during initialization."
-  type        = number
-  # Value will be set in variables.auto.tfvars during initialization
-}
-
-variable "data_volumes_per_node" {
-  description = "The number of data volumes to attach to each node."
-  type        = number
-  default     = 1
-  # Optional: Can be overridden in variables.auto.tfvars
-}
-
-variable "owner" {
-  description = "Owner tag for all resources. Set with --owner during initialization."
-  type        = string
-  # Value will be set in variables.auto.tfvars during initialization
-}
-
-variable "infra_desired_state" {
-  description = "Desired infrastructure power state ('running' or 'stopped')."
-  type        = string
-  default     = "running"
-
-  validation {
-    condition     = contains(["running", "stopped"], var.infra_desired_state)
-    error_message = "infra_desired_state must be either 'running' or 'stopped'."
-  }
-}
 variable "libvirt_uri" {
   description = "Libvirt connection URI (required; exasol init populates it via --libvirt-uri or virsh)."
   type        = string
@@ -122,10 +49,4 @@ variable "libvirt_firmware" {
   description = "Firmware to use for libvirt domains (e.g., \"efi\" on Linux/KVM). Leave empty to let libvirt select the default."
   type        = string
   default     = ""
-}
-
-variable "enable_multicast_overlay" {
-  description = "Enable VXLAN overlay network for multicast support. Set with --enable-multicast-overlay during initialization."
-  type        = bool
-  default     = false
 }

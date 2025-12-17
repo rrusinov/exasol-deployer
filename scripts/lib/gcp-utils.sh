@@ -11,12 +11,12 @@ list_gcp_instances() {
     local region="$1"
     local prefix_filter="${2:-}"
     
-    local filter_args=""
+    local filter_args=()
     if [[ -n "$prefix_filter" ]]; then
-        filter_args="--filter=name~${prefix_filter}"
+        filter_args=(--filter="name~${prefix_filter}")
     fi
     
-    gcloud compute instances list --regions="$region" $filter_args \
+    gcloud compute instances list --regions="$region" "${filter_args[@]}" \
         --format="json(name,status,machineType.scope(machineTypes),zone.scope(zones))" 2>/dev/null || echo "[]"
 }
 

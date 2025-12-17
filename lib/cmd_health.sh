@@ -658,7 +658,8 @@ health_check_single_host() {
         services_status="$service_results"
 
         # Volume check
-        volume_status=$(health_check_volume_attachments "$ssh_config" "$host_name" "$ssh_timeout" local_issues "json")
+        # Allow health_check_volume_attachments to return non-zero (it signals warnings) without aborting under set -e
+        volume_status=$(health_check_volume_attachments "$ssh_config" "$host_name" "$ssh_timeout" local_issues "json") || true
 
         # Cluster state (only for designated host)
         if [[ "$check_cluster_state" == "true" ]]; then

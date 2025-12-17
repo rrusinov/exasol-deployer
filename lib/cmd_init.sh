@@ -986,16 +986,16 @@ cmd_init() {
     script_root="$(cd "$LIB_DIR/.." && pwd)"
     log_info "Copying deployment templates..."
 
-    # First, copy common Terraform resources (SSH keys, random ID, cloud-init)
+    # First, copy common Terraform resources (SSH keys, random ID, cloud-init, variables)
     # These go directly into .templates/ so provider templates can reference them
-    # Note: common-variables.tf is documentation only, not copied
     if [[ -d "$script_root/templates/terraform-common" ]]; then
         cp "$script_root/templates/terraform-common/common.tf" "$templates_dir/" 2>/dev/null || true
         cp "$script_root/templates/terraform-common/common-firewall.tf" "$templates_dir/" 2>/dev/null || true
         cp "$script_root/templates/terraform-common/common-outputs.tf" "$templates_dir/" 2>/dev/null || true
+        cp "$script_root/templates/terraform-common/common-variables.tf" "$templates_dir/" 2>/dev/null || true
         cp "$script_root/templates/terraform-common/inventory.tftpl" "$templates_dir/" 2>/dev/null || true
         cp "$script_root/templates/terraform-common/cloud-init-generic.tftpl" "$templates_dir/" 2>/dev/null || true
-        log_debug "Copied common Terraform resources (common.tf, common-firewall.tf, common-outputs.tf, inventory.tftpl, cloud-init-generic.tftpl)"
+        log_debug "Copied common Terraform resources (common.tf, common-firewall.tf, common-outputs.tf, common-variables.tf, inventory.tftpl, cloud-init-generic.tftpl)"
     fi
 
     # Copy Ansible templates first (cloud-agnostic)
@@ -1609,6 +1609,7 @@ create_terraform_files() {
     ln -sf ".templates/common.tf" "$deploy_dir/common.tf"
     ln -sf ".templates/common-firewall.tf" "$deploy_dir/common-firewall.tf"
     ln -sf ".templates/common-outputs.tf" "$deploy_dir/common-outputs.tf"
+    ln -sf ".templates/common-variables.tf" "$deploy_dir/common-variables.tf"
     ln -sf ".templates/main.tf" "$deploy_dir/main.tf"
     ln -sf ".templates/variables.tf" "$deploy_dir/variables.tf"
     ln -sf ".templates/outputs.tf" "$deploy_dir/outputs.tf"
