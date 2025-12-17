@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate HTML report of cloud resource limits - Refactored Version
+# Generate HTML report of cloud resource limits
 
 set -euo pipefail
 
@@ -14,25 +14,6 @@ source "$SCRIPT_DIR/lib/hetzner-utils.sh"
 
 # Global temp directory for cleanup trap
 TEMP_DIR=""
-
-# Configuration arrays - centralized region/location definitions
-declare -A PROVIDER_REGIONS=(
-    ["aws"]="us-east-1 us-east-2 us-west-1 us-west-2 eu-west-1 eu-west-2 eu-west-3 eu-central-1 eu-north-1 ap-southeast-1 ap-southeast-2 ap-northeast-1 ap-northeast-2 ap-northeast-3 ap-south-1 ca-central-1 sa-east-1"
-    ["azure"]="eastus eastus2 westus westus2 centralus westeurope northeurope uksouth swedencentral southeastasia eastasia japaneast australiaeast canadacentral southafricanorth centralindia"
-    ["gcp"]="us-central1 us-east1 us-east4 us-west1 us-west2 us-west3 us-west4 europe-west1 europe-west2 europe-west3 europe-west4 europe-west6 europe-north1 asia-east1 asia-east2 asia-northeast1 asia-northeast2 asia-northeast3 asia-south1 asia-southeast1 asia-southeast2 australia-southeast1"
-    ["exoscale"]="ch-gva-2 ch-dk-2 de-fra-1 de-muc-1 at-vie-1 bg-sof-1"
-)
-
-declare -A PROVIDER_CLI_COMMANDS=(
-    ["aws"]="aws"
-    ["azure"]="az"
-    ["gcp"]="gcloud"
-    ["oci"]="oci"
-    ["hetzner"]="hcloud"
-    ["digitalocean"]="doctl"
-    ["exoscale"]="exo"
-    ["libvirt"]="virsh"
-)
 
 # Cleanup function for trap
 cleanup_temp() {
@@ -59,98 +40,6 @@ Examples:
 Note: Report scans all major regions by default and shows tags (owner, creator, project).
 EOF
     exit 0
-}
-
-# Utility function: Check if CLI tool is available
-check_cli_available() {
-    local provider="$1"
-    local cli_cmd="${PROVIDER_CLI_COMMANDS[$provider]}"
-    
-    if ! command -v "$cli_cmd" &>/dev/null; then
-        return 1
-    fi
-    
-    # Special case for Hetzner - also check configuration
-    if [[ "$provider" == "hetzner" ]]; then
-        if ! hcloud context list &>/dev/null 2>&1 && [[ -z "${HCLOUD_TOKEN:-}" ]]; then
-            return 1
-        fi
-    fi
-    
-    return 0
-}
-
-# Utility function: Generate CLI not available warning
-generate_cli_warning() {
-    local provider="$1"
-    local output_file="$2"
-    local cli_cmd="${PROVIDER_CLI_COMMANDS[$provider]}"
-    
-    if [[ "$provider" == "hetzner" ]]; then
-        echo "<p class='warning'>Hetzner not configured</p>" >> "$output_file"
-    else
-        echo "<p class='warning'>$cli_cmd CLI not installed</p>" >> "$output_file"
-    fi
-}
-
-# Utility function: Calculate percentage
-calculate_percentage() {
-    local current="$1"
-    local limit="$2"
-    
-    if [[ "$limit" == "N/A" ]] || [[ "$limit" == "null" ]] || [[ "$limit" == "0" ]]; then
-        echo "N/A"
-        return
-    fi
-    
-    awk "BEGIN {printf \"%.1f\", ($current/$limit)*100}" 2>/dev/null || echo "N/A"
-}
-
-# Utility function: Generate HTML table header
-generate_quota_table_header() {
-    local output_file="$1"
-    local region_name="$2"
-    local provider_name="$3"
-    
-    cat >> "$output_file" <<EOF
-        <div class="region">
-            <h3>$provider_name: $region_name</h3>
-            <h4>Resource Quotas</h4>
-            <table class="quota-table">
-                <tr><th>Resource</th><th>Current</th><th>Limit</th><th>Usage %</th></tr>
-EOF
-}
-
-# Utility function: Generate instances table header
-generate_instances_table_header() {
-    local output_file="$1"
-    local title="$2"
-    shift 2
-    local columns=("$@")
-    
-    cat >> "$output_file" <<EOF
-            <h4>$title</h4>
-            <table class="instances-table">
-                <tr>
-EOF
-    
-    for col in "${columns[@]}"; do
-        echo "                    <th>$col</th>" >> "$output_file"
-    done
-    
-    echo "                </tr>" >> "$output_file"
-}
-
-# Utility function: Close HTML table
-close_html_table() {
-    local output_file="$1"
-    echo "            </table>" >> "$output_file"
-}
-
-# Utility function: Close HTML region div
-close_html_region() {
-    local output_file="$1"
-    echo "        </div>" >> "$output_file"
 }
 
 generate_html_header() {
@@ -218,12 +107,18 @@ collect_aws_data() {
     local region="$1"
     local output_file="$2"
     
-    if ! check_cli_available "aws"; then
-        generate_cli_warning "aws" "$output_file"
+    if ! command -v aws &>/dev/null; then
+        echo "<p class='warning'>AWS CLI not installed</p>" >> "$output_file"
         return
     fi
     
-    generate_quota_table_header "$output_file" "$region" "Region"
+    cat >> "$output_file" <<EOF
+        <div class="region">
+            <h3>Region: $region</h3>
+            <h4>Resource Quotas</h4>
+            <table class="quota-table">
+                <tr><th>Resource</th><th>Current</th><th>Limit</th><th>Usage %</th></tr>
+EOF
     
     # Get quotas
     local vcpu_limit eip_limit
@@ -237,8 +132,10 @@ collect_aws_data() {
     vcpu_used="N/A"
     
     # Calculate percentages
-    local eip_pct
-    eip_pct=$(calculate_percentage "$eip_count" "$eip_limit")
+    local eip_pct="N/A"
+    if [[ "$eip_limit" != "N/A" ]] && [[ "$eip_limit" != "0" ]]; then
+        eip_pct=$(awk "BEGIN {printf \"%.1f\", ($eip_count/$eip_limit)*100}")
+    fi
     
     cat >> "$output_file" <<EOF
                 <tr><td>vCPUs (Standard)</td><td>$vcpu_used</td><td>$vcpu_limit</td><td>-</td></tr>
@@ -249,25 +146,33 @@ EOF
     
     # List running instances
     if [[ "$instance_count" -gt 0 ]]; then
-        generate_instances_table_header "$output_file" "Running Instances" "Instance ID" "Type" "State" "Public IP" "Tags"
-        aws ec2 describe-instances --region "$region" \
-            --filters "Name=instance-state-name,Values=running" \
-            --query 'Reservations[].Instances[].[InstanceId,InstanceType,State.Name,PublicIpAddress,Tags]' \
-            --output json 2>/dev/null | jq -r '.[] | 
-                . as $inst | 
-                ($inst[4] // [] | map(select(.Key | test("owner|creator|project"; "i")) | "\(.Key)=\(.Value)") | join(", ")) as $tags |
-                "<tr><td>\($inst[0])</td><td>\($inst[1])</td><td>\($inst[2])</td><td>\($inst[3] // "N/A")</td><td>\($tags)</td></tr>"' >> "$output_file"
-        close_html_table "$output_file"
+        {
+            cat <<EOF
+            <h4>Running Instances</h4>
+            <table class="instances-table">
+                <tr><th>Instance ID</th><th>Type</th><th>State</th><th>Public IP</th><th>Tags</th></tr>
+EOF
+            aws ec2 describe-instances --region "$region" \
+                --filters "Name=instance-state-name,Values=running" \
+                --query 'Reservations[].Instances[].[InstanceId,InstanceType,State.Name,PublicIpAddress,Tags]' \
+                --output json 2>/dev/null | jq -r '.[] | 
+                    . as $inst | 
+                    ($inst[4] // [] | map(select(.Key | test("owner|creator|project"; "i")) | "\(.Key)=\(.Value)") | join(", ")) as $tags |
+                    "<tr><td>\($inst[0])</td><td>\($inst[1])</td><td>\($inst[2])</td><td>\($inst[3] // "N/A")</td><td>\($tags)</td></tr>"'
+            echo "            </table>"
+        } >> "$output_file"
     fi
     
-    close_html_region "$output_file"
+    echo "        </div>" >> "$output_file"
 }
 
 # Parallel wrapper for AWS regions
 collect_aws_data_parallel() {
     local temp_dir="$1"
-    local regions
-    read -ra regions <<< "${PROVIDER_REGIONS[aws]}"
+    local regions=("us-east-1" "us-east-2" "us-west-1" "us-west-2" 
+                   "eu-west-1" "eu-west-2" "eu-west-3" "eu-central-1" "eu-north-1"
+                   "ap-southeast-1" "ap-southeast-2" "ap-northeast-1" "ap-northeast-2" "ap-northeast-3" "ap-south-1"
+                   "ca-central-1" "sa-east-1")
     
     for region in "${regions[@]}"; do
         {
@@ -281,12 +186,18 @@ collect_azure_data() {
     local location="$1"
     local output_file="$2"
     
-    if ! check_cli_available "azure"; then
-        generate_cli_warning "azure" "$output_file"
+    if ! command -v az &>/dev/null; then
+        echo "<p class='warning'>Azure CLI not installed</p>" >> "$output_file"
         return
     fi
     
-    generate_quota_table_header "$output_file" "$location" "Location"
+    cat >> "$output_file" <<EOF
+        <div class="region">
+            <h3>Location: $location</h3>
+            <h4>Resource Quotas</h4>
+            <table class="quota-table">
+                <tr><th>Resource</th><th>Current</th><th>Limit</th><th>Usage %</th></tr>
+EOF
     
     # Get quotas
     local quotas
@@ -306,9 +217,13 @@ collect_azure_data() {
     vm_count=$(az vm list --query "[?location=='$location'] | length(@)" --output tsv 2>/dev/null || echo "0")
     
     # Calculate percentages
-    local vcpu_pct ip_pct
-    vcpu_pct=$(calculate_percentage "$vcpu_current" "$vcpu_limit")
-    ip_pct=$(calculate_percentage "$ip_current" "$ip_limit")
+    local vcpu_pct="N/A" ip_pct="N/A"
+    if [[ "$vcpu_limit" != "N/A" ]] && [[ "$vcpu_limit" != "0" ]]; then
+        vcpu_pct=$(awk "BEGIN {printf \"%.1f\", ($vcpu_current/$vcpu_limit)*100}")
+    fi
+    if [[ "$ip_limit" != "N/A" ]] && [[ "$ip_limit" != "0" ]]; then
+        ip_pct=$(awk "BEGIN {printf \"%.1f\", ($ip_current/$ip_limit)*100}")
+    fi
     
     cat >> "$output_file" <<EOF
                 <tr><td>vCPUs (Regional Total)</td><td>$vcpu_current</td><td>$vcpu_limit</td><td>$vcpu_pct%</td></tr>
@@ -319,21 +234,29 @@ EOF
     
     # List running VMs in this location
     if [[ "$vm_count" -gt 0 ]]; then
-        generate_instances_table_header "$output_file" "Running Virtual Machines" "Name" "Size" "Location" "State" "Tags"
-        az vm list --query "[?location=='$location']" --output json 2>/dev/null | jq -r '.[] | 
-            (.tags // {} | to_entries | map(select(.key | test("owner|creator|project"; "i")) | "\(.key)=\(.value)") | join(", ")) as $tags |
-            "<tr><td>\(.name)</td><td>\(.hardwareProfile.vmSize)</td><td>\(.location)</td><td>\(.provisioningState)</td><td>\($tags)</td></tr>"' >> "$output_file"
-        close_html_table "$output_file"
+        {
+            cat <<EOF
+            <h4>Running Virtual Machines</h4>
+            <table class="instances-table">
+                <tr><th>Name</th><th>Size</th><th>Location</th><th>State</th><th>Tags</th></tr>
+EOF
+            az vm list --query "[?location=='$location']" --output json 2>/dev/null | jq -r '.[] | 
+                (.tags // {} | to_entries | map(select(.key | test("owner|creator|project"; "i")) | "\(.key)=\(.value)") | join(", ")) as $tags |
+                "<tr><td>\(.name)</td><td>\(.hardwareProfile.vmSize)</td><td>\(.location)</td><td>\(.provisioningState)</td><td>\($tags)</td></tr>"'
+            echo "            </table>"
+        } >> "$output_file"
     fi
     
-    close_html_region "$output_file"
+    echo "        </div>" >> "$output_file"
 }
 
 # Parallel wrapper for Azure locations
 collect_azure_data_parallel() {
     local temp_dir="$1"
-    local locations
-    read -ra locations <<< "${PROVIDER_REGIONS[azure]}"
+    local locations=("eastus" "eastus2" "westus" "westus2" "centralus" 
+                     "westeurope" "northeurope" "uksouth" "swedencentral"
+                     "southeastasia" "eastasia" "japaneast" "australiaeast" 
+                     "canadacentral" "southafricanorth" "centralindia")
     
     for location in "${locations[@]}"; do
         {
@@ -347,8 +270,8 @@ collect_gcp_data() {
     local region="$1"
     local output_file="$2"
     
-    if ! check_cli_available "gcp"; then
-        generate_cli_warning "gcp" "$output_file"
+    if ! command -v gcloud &>/dev/null; then
+        echo "<p class='warning'>GCP CLI not installed</p>" >> "$output_file"
         return
     fi
     
@@ -359,7 +282,13 @@ collect_gcp_data() {
         return
     fi
     
-    generate_quota_table_header "$output_file" "$region (Project: $project)" "Region"
+    cat >> "$output_file" <<EOF
+        <div class="region">
+            <h3>Region: $region (Project: $project)</h3>
+            <h4>Resource Quotas</h4>
+            <table class="quota-table">
+                <tr><th>Resource</th><th>Current</th><th>Limit</th><th>Usage %</th></tr>
+EOF
     
     # Get quotas
     local quotas
@@ -374,10 +303,16 @@ collect_gcp_data() {
     ip_limit=$(echo "$quotas" | jq -r '.quotas[] | select(.metric=="STATIC_ADDRESSES") | .limit' 2>/dev/null || echo "N/A")
     
     # Calculate percentages
-    local cpu_pct inst_pct ip_pct
-    cpu_pct=$(calculate_percentage "$cpu_current" "$cpu_limit")
-    inst_pct=$(calculate_percentage "$inst_current" "$inst_limit")
-    ip_pct=$(calculate_percentage "$ip_current" "$ip_limit")
+    local cpu_pct="N/A" inst_pct="N/A" ip_pct="N/A"
+    if [[ "$cpu_limit" != "N/A" ]] && [[ "$cpu_limit" != "0" ]]; then
+        cpu_pct=$(awk "BEGIN {printf \"%.1f\", ($cpu_current/$cpu_limit)*100}")
+    fi
+    if [[ "$inst_limit" != "N/A" ]] && [[ "$inst_limit" != "0" ]]; then
+        inst_pct=$(awk "BEGIN {printf \"%.1f\", ($inst_current/$inst_limit)*100}")
+    fi
+    if [[ "$ip_limit" != "N/A" ]] && [[ "$ip_limit" != "0" ]]; then
+        ip_pct=$(awk "BEGIN {printf \"%.1f\", ($ip_current/$ip_limit)*100}")
+    fi
     
     cat >> "$output_file" <<EOF
                 <tr><td>vCPUs (Regional Total)</td><td>$cpu_current</td><td>$cpu_limit</td><td>$cpu_pct%</td></tr>
@@ -388,21 +323,29 @@ EOF
     
     # List running instances
     if [[ "$inst_current" != "0" ]]; then
-        generate_instances_table_header "$output_file" "Running Instances" "Name" "Machine Type" "Zone" "Status" "Labels"
-        gcloud compute instances list --filter="zone:$region*" --format=json 2>/dev/null | jq -r '.[] | 
-            (.labels // {} | to_entries | map(select(.key | test("owner|creator|project"; "i")) | "\(.key)=\(.value)") | join(", ")) as $labels |
-            "<tr><td>\(.name)</td><td>\(.machineType | split("/")[-1])</td><td>\(.zone | split("/")[-1])</td><td>\(.status)</td><td>\($labels)</td></tr>"' >> "$output_file"
-        close_html_table "$output_file"
+        {
+            cat <<EOF
+            <h4>Running Instances</h4>
+            <table class="instances-table">
+                <tr><th>Name</th><th>Machine Type</th><th>Zone</th><th>Status</th><th>Labels</th></tr>
+EOF
+            gcloud compute instances list --filter="zone:$region*" --format=json 2>/dev/null | jq -r '.[] | 
+                (.labels // {} | to_entries | map(select(.key | test("owner|creator|project"; "i")) | "\(.key)=\(.value)") | join(", ")) as $labels |
+                "<tr><td>\(.name)</td><td>\(.machineType | split("/")[-1])</td><td>\(.zone | split("/")[-1])</td><td>\(.status)</td><td>\($labels)</td></tr>"'
+            echo "            </table>"
+        } >> "$output_file"
     fi
     
-    close_html_region "$output_file"
+    echo "        </div>" >> "$output_file"
 }
 
 # Parallel wrapper for GCP regions
 collect_gcp_data_parallel() {
     local temp_dir="$1"
-    local regions
-    read -ra regions <<< "${PROVIDER_REGIONS[gcp]}"
+    local regions=("us-central1" "us-east1" "us-east4" "us-west1" "us-west2" "us-west3" "us-west4" 
+                   "europe-west1" "europe-west2" "europe-west3" "europe-west4" "europe-west6" "europe-north1"
+                   "asia-east1" "asia-east2" "asia-northeast1" "asia-northeast2" "asia-northeast3"
+                   "asia-south1" "asia-southeast1" "asia-southeast2" "australia-southeast1")
     
     for region in "${regions[@]}"; do
         {
@@ -414,11 +357,6 @@ collect_gcp_data_parallel() {
 
 collect_oci_data_parallel() {
     local temp_dir="$1"
-    
-    if ! check_cli_available "oci"; then
-        generate_cli_warning "oci" "$temp_dir/oci-unknown.html"
-        return
-    fi
     
     # Get compartment OCID and region
     local compartment_ocid
@@ -439,8 +377,13 @@ collect_oci_data_parallel() {
 collect_hetzner_data() {
     local output_file="$1"
     
-    if ! check_cli_available "hetzner"; then
-        generate_cli_warning "hetzner" "$output_file"
+    if ! command -v hcloud &>/dev/null; then
+        echo "<p class='warning'>Hetzner CLI not installed</p>" >> "$output_file"
+        return
+    fi
+    
+    if ! hcloud context list &>/dev/null 2>&1 && [[ -z "${HCLOUD_TOKEN:-}" ]]; then
+        echo "<p class='warning'>Hetzner not configured</p>" >> "$output_file"
         return
     fi
     
@@ -450,12 +393,18 @@ collect_hetzner_data() {
 collect_digitalocean_data() {
     local output_file="$1"
     
-    if ! check_cli_available "digitalocean"; then
-        generate_cli_warning "digitalocean" "$output_file"
+    if ! command -v doctl &>/dev/null; then
+        echo "<p class='warning'>DigitalOcean CLI not installed</p>" >> "$output_file"
         return
     fi
     
-    generate_quota_table_header "$output_file" "DigitalOcean" ""
+    cat >> "$output_file" <<EOF
+        <div class="region">
+            <h3>DigitalOcean</h3>
+            <h4>Resource Quotas</h4>
+            <table class="quota-table">
+                <tr><th>Resource</th><th>Current</th><th>Limit</th><th>Usage %</th></tr>
+EOF
     
     local droplet_limit droplet_count ip_limit volume_limit
     local account_data
@@ -468,8 +417,10 @@ collect_digitalocean_data() {
     droplet_data=$(doctl compute droplet list --output json 2>/dev/null || echo "[]")
     droplet_count=$(echo "$droplet_data" | jq -r 'length' 2>/dev/null || echo "0")
     
-    local droplet_pct
-    droplet_pct=$(calculate_percentage "$droplet_count" "$droplet_limit")
+    local droplet_pct="N/A"
+    if [[ "$droplet_limit" != "N/A" ]] && [[ "$droplet_limit" != "null" ]] && [[ "$droplet_limit" != "0" ]]; then
+        droplet_pct=$(awk "BEGIN {printf \"%.1f\", ($droplet_count/$droplet_limit)*100}" 2>/dev/null || echo "N/A")
+    fi
     
     cat >> "$output_file" <<EOF
                 <tr><td>Droplets</td><td>$droplet_count</td><td>$droplet_limit</td><td>$droplet_pct%</td></tr>
@@ -480,30 +431,37 @@ EOF
     
     # List running droplets
     if [[ "$droplet_count" -gt 0 ]]; then
-        generate_instances_table_header "$output_file" "Running Droplets" "Name" "Size" "Region" "Status"
+        cat >> "$output_file" <<EOF
+            <h4>Running Droplets</h4>
+            <table class="instances-table">
+                <tr><th>Name</th><th>Size</th><th>Region</th><th>Status</th></tr>
+EOF
         echo "$droplet_data" | jq -r '.[] | "<tr><td>\(.name)</td><td>\(.size.slug)</td><td>\(.region.slug)</td><td>\(.status)</td></tr>"' >> "$output_file" 2>/dev/null || true
-        close_html_table "$output_file"
+        echo "            </table>" >> "$output_file"
     fi
     
-    close_html_region "$output_file"
+    echo "        </div>" >> "$output_file"
 }
 
 collect_exoscale_data() {
     local output_file="$1"
     
-    if ! check_cli_available "exoscale"; then
-        generate_cli_warning "exoscale" "$output_file"
+    if ! command -v exo &>/dev/null; then
+        echo "<p class='warning'>Exoscale CLI not installed</p>" >> "$output_file"
         return
     fi
     
-    generate_quota_table_header "$output_file" "Exoscale" ""
+    cat >> "$output_file" <<EOF
+        <div class="region">
+            <h3>Exoscale</h3>
+            <h4>Compute Instances by Zone</h4>
+            <table class="quota-table">
+                <tr><th>Zone</th><th>Instances</th><th>Status</th></tr>
+EOF
     
     # Check each zone for instances
     local total_instances=0
-    local zones
-    read -ra zones <<< "${PROVIDER_REGIONS[exoscale]}"
-    
-    for zone in "${zones[@]}"; do
+    for zone in ch-gva-2 ch-dk-2 de-fra-1 de-muc-1 at-vie-1 bg-sof-1; do
         local instance_data
         instance_data=$(exo compute instance list --zone "$zone" -O json 2>/dev/null || echo "[]")
         local instance_count
@@ -526,8 +484,12 @@ EOF
     
     # List all running instances
     if [[ "$total_instances" -gt 0 ]]; then
-        generate_instances_table_header "$output_file" "Running Instances" "Name" "Type" "Zone" "State"
-        for zone in "${zones[@]}"; do
+        cat >> "$output_file" <<EOF
+            <h4>Running Instances</h4>
+            <table class="instances-table">
+                <tr><th>Name</th><th>Type</th><th>Zone</th><th>State</th></tr>
+EOF
+        for zone in ch-gva-2 ch-dk-2 de-fra-1 de-muc-1 at-vie-1 bg-sof-1; do
             local instance_data
             instance_data=$(exo compute instance list --zone "$zone" -O json 2>/dev/null || echo "[]")
             local instance_count
@@ -537,12 +499,12 @@ EOF
                 echo "$instance_data" | jq -r '.[] | "<tr><td>\(.name)</td><td>\(.type // "N/A")</td><td>'"$zone"'</td><td>\(.state)</td></tr>"' >> "$output_file" 2>/dev/null || true
             fi
         done
-        close_html_table "$output_file"
+        echo "            </table>" >> "$output_file"
     fi
     
     # Show block storage volumes
     local total_volumes=0
-    for zone in "${zones[@]}"; do
+    for zone in ch-gva-2 ch-dk-2 de-fra-1 de-muc-1 at-vie-1 bg-sof-1; do
         local volume_data
         volume_data=$(exo storage block list --zone "$zone" -O json 2>/dev/null || echo "[]")
         local volume_count
@@ -551,8 +513,12 @@ EOF
     done
     
     if [[ "$total_volumes" -gt 0 ]]; then
-        generate_instances_table_header "$output_file" "Block Storage Volumes" "Name" "Size (GB)" "Zone" "State"
-        for zone in "${zones[@]}"; do
+        cat >> "$output_file" <<EOF
+            <h4>Block Storage Volumes</h4>
+            <table class="instances-table">
+                <tr><th>Name</th><th>Size (GB)</th><th>Zone</th><th>State</th></tr>
+EOF
+        for zone in ch-gva-2 ch-dk-2 de-fra-1 de-muc-1 at-vie-1 bg-sof-1; do
             local volume_data
             volume_data=$(exo storage block list --zone "$zone" -O json 2>/dev/null || echo "[]")
             local volume_count
@@ -562,21 +528,27 @@ EOF
                 echo "$volume_data" | jq -r ".[] | \"<tr><td>\\(.name)</td><td>\\(.size)</td><td>$zone</td><td>\\(.state)</td></tr>\"" >> "$output_file" 2>/dev/null || true
             fi
         done
-        close_html_table "$output_file"
+        echo "            </table>" >> "$output_file"
     fi
     
-    close_html_region "$output_file"
+    echo "        </div>" >> "$output_file"
 }
 
 collect_libvirt_data() {
     local output_file="$1"
     
-    if ! check_cli_available "libvirt"; then
-        generate_cli_warning "libvirt" "$output_file"
+    if ! command -v virsh &>/dev/null; then
+        echo "<p class='warning'>libvirt not installed</p>" >> "$output_file"
         return
     fi
     
-    generate_quota_table_header "$output_file" "libvirt (Local/KVM)" ""
+    cat >> "$output_file" <<EOF
+        <div class="region">
+            <h3>libvirt (Local/KVM)</h3>
+            <h4>Resource Quotas</h4>
+            <table class="quota-table">
+                <tr><th>Resource</th><th>Current</th><th>Limit</th><th>Usage %</th></tr>
+EOF
     
     local vm_count running_count
     vm_count=$(virsh list --all 2>/dev/null | awk 'NR>2 && NF>0' | wc -l)
@@ -591,145 +563,18 @@ EOF
     
     # List running VMs
     if [[ "$running_count" -gt 0 ]]; then
-        generate_instances_table_header "$output_file" "Running VMs" "Name" "State" "ID"
-        virsh list --state-running 2>/dev/null | awk 'NR>2 && NF>0 {printf "                <tr><td>%s</td><td>%s</td><td>%s</td></tr>\n", $2, $3, $1}' >> "$output_file"
-        close_html_table "$output_file"
+        {
+            cat <<EOF
+            <h4>Running VMs</h4>
+            <table class="instances-table">
+                <tr><th>Name</th><th>State</th><th>ID</th></tr>
+EOF
+            virsh list --state-running 2>/dev/null | awk 'NR>2 && NF>0 {printf "                <tr><td>%s</td><td>%s</td><td>%s</td></tr>\n", $2, $3, $1}'
+            echo "            </table>"
+        } >> "$output_file"
     fi
     
-    close_html_region "$output_file"
-}
-
-# Utility function: Extract summary data from temp files
-extract_summary_data() {
-    local provider="$1"
-    local temp_dir="$2"
-    local summary=""
-    local ip_summary=""
-    
-    case "$provider" in
-        aws)
-            if check_cli_available "aws"; then
-                local total_instances=0 total_ips=0
-                local regions
-                read -ra regions <<< "${PROVIDER_REGIONS[aws]}"
-                for region in "${regions[@]}"; do
-                    if [[ -f "$temp_dir/aws-$region.html" ]]; then
-                        local inst=$(grep -o "Running Instances</td><td>[0-9]*" "$temp_dir/aws-$region.html" | grep -o "[0-9]*$" || echo "0")
-                        local ips=$(grep -o "Public IPs (Elastic)</td><td>[0-9]*" "$temp_dir/aws-$region.html" | grep -o "[0-9]*$" || echo "0")
-                        total_instances=$((total_instances + inst))
-                        total_ips=$((total_ips + ips))
-                    fi
-                done
-                summary="$total_instances instances"
-                ip_summary="$total_ips IPs"
-            else
-                summary="CLI not installed"
-            fi
-            ;;
-        azure)
-            if check_cli_available "azure"; then
-                local vm_count=0 ip_count=0
-                local locations
-                read -ra locations <<< "${PROVIDER_REGIONS[azure]}"
-                for location in "${locations[@]}"; do
-                    if [[ -f "$temp_dir/azure-$location.html" ]]; then
-                        local vms=$(grep -o "Running Instances</td><td>[0-9]*" "$temp_dir/azure-$location.html" | grep -o "[0-9]*$" || echo "0")
-                        local ips=$(grep -o "Public IPs</td><td>[0-9]*" "$temp_dir/azure-$location.html" | grep -o "[0-9]*$" || echo "0")
-                        vm_count=$((vm_count + vms))
-                        ip_count=$((ip_count + ips))
-                    fi
-                done
-                summary="$vm_count VMs"
-                ip_summary="$ip_count IPs"
-            else
-                summary="CLI not installed"
-            fi
-            ;;
-        gcp)
-            if check_cli_available "gcp"; then
-                local inst_count=0 ip_count=0
-                local regions
-                read -ra regions <<< "${PROVIDER_REGIONS[gcp]}"
-                for region in "${regions[@]}"; do
-                    if [[ -f "$temp_dir/gcp-$region.html" ]]; then
-                        local insts=$(grep -o "Running Instances</td><td>[0-9]*" "$temp_dir/gcp-$region.html" | grep -o "[0-9]*$" || echo "0")
-                        local ips=$(grep -o "Public IPs (Static)</td><td>[0-9]*" "$temp_dir/gcp-$region.html" | grep -o "[0-9]*$" || echo "0")
-                        inst_count=$((inst_count + insts))
-                        ip_count=$((ip_count + ips))
-                    fi
-                done
-                summary="$inst_count instances"
-                ip_summary="$ip_count IPs"
-            else
-                summary="CLI not installed"
-            fi
-            ;;
-        oci)
-            if check_cli_available "oci"; then
-                local region
-                region=$(oci iam region-subscription list --query "data[?\"is-home-region\"].\"region-name\" | [0]" --raw-output 2>/dev/null || echo "unknown")
-                if [[ -f "$temp_dir/oci-$region.html" ]]; then
-                    local inst_count=$(grep -o "Compute Instances</td><td>[0-9]*" "$temp_dir/oci-$region.html" | grep -o "[0-9]*$" || echo "0")
-                    local vol_count=$(grep -o "Block Volumes</td><td>[0-9]*" "$temp_dir/oci-$region.html" | grep -o "[0-9]*$" || echo "0")
-                    summary="$inst_count instances"
-                    ip_summary="$vol_count volumes"
-                else
-                    summary="No data"
-                fi
-            else
-                summary="CLI not installed"
-            fi
-            ;;
-        hetzner)
-            if check_cli_available "hetzner"; then
-                local server_data=$(hcloud server list -o json 2>/dev/null || echo "[]")
-                local server_count=$(echo "$server_data" | jq -r 'length' 2>/dev/null || echo "0")
-                summary="$server_count servers"
-            else
-                summary="Not configured"
-            fi
-            ;;
-        digitalocean)
-            if check_cli_available "digitalocean"; then
-                local droplet_data=$(doctl compute droplet list --output json 2>/dev/null || echo "[]")
-                local droplet_count=$(echo "$droplet_data" | jq -r 'length' 2>/dev/null || echo "0")
-                local ip_count=$(doctl compute floating-ip list --output json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
-                summary="$droplet_count droplets"
-                ip_summary="$ip_count IPs"
-            else
-                summary="CLI not installed"
-            fi
-            ;;
-        exoscale)
-            if check_cli_available "exoscale"; then
-                local inst_count=0 vol_count=0
-                local zones
-                read -ra zones <<< "${PROVIDER_REGIONS[exoscale]}"
-                for zone in "${zones[@]}"; do
-                    local instance_data=$(exo compute instance list --zone "$zone" -O json 2>/dev/null || echo "[]")
-                    local volume_data=$(exo storage block list --zone "$zone" -O json 2>/dev/null || echo "[]")
-                    local zone_instances=$(echo "$instance_data" | jq -r 'length' 2>/dev/null || echo "0")
-                    local zone_volumes=$(echo "$volume_data" | jq -r 'length' 2>/dev/null || echo "0")
-                    inst_count=$((inst_count + zone_instances))
-                    vol_count=$((vol_count + zone_volumes))
-                done
-                summary="$inst_count instances"
-                ip_summary="$vol_count volumes"
-            else
-                summary="CLI not installed"
-            fi
-            ;;
-        libvirt)
-            if check_cli_available "libvirt"; then
-                local vm_count=$(virsh list --all 2>/dev/null | awk 'NR>2 && NF>0' | wc -l)
-                summary="$vm_count VMs"
-            else
-                summary="Not installed"
-            fi
-            ;;
-    esac
-    
-    echo "$summary|$ip_summary"
+    echo "        </div>" >> "$output_file"
 }
 
 generate_html() {
@@ -766,22 +611,22 @@ EOF
     for prov in "${providers[@]}"; do
         case "$prov" in
             aws)
-                if check_cli_available "aws"; then
+                if command -v aws &>/dev/null; then
                     collect_aws_data_parallel "$temp_dir" &
                 fi
                 ;;
             azure)
-                if check_cli_available "azure"; then
+                if command -v az &>/dev/null; then
                     collect_azure_data_parallel "$temp_dir" &
                 fi
                 ;;
             gcp)
-                if check_cli_available "gcp"; then
+                if command -v gcloud &>/dev/null; then
                     collect_gcp_data_parallel "$temp_dir" &
                 fi
                 ;;
             oci)
-                if check_cli_available "oci"; then
+                if command -v oci &>/dev/null; then
                     collect_oci_data_parallel "$temp_dir" &
                 fi
                 ;;
@@ -814,10 +659,135 @@ EOF
     # Generate HTML from collected data
     for prov in "${providers[@]}"; do
         # Extract summary data from already-collected files
-        local summary_data
-        summary_data=$(extract_summary_data "$prov" "$temp_dir")
-        local summary="${summary_data%|*}"
-        local ip_summary="${summary_data#*|}"
+        local summary=""
+        local ip_summary=""
+        case "$prov" in
+            aws)
+                if command -v aws &>/dev/null; then
+                    local total_instances=0
+                    local total_ips=0
+                    for region in us-east-1 us-east-2 us-west-1 us-west-2 \
+                                  eu-west-1 eu-west-2 eu-west-3 eu-central-1 eu-north-1 \
+                                  ap-southeast-1 ap-southeast-2 ap-northeast-1 ap-northeast-2 ap-northeast-3 ap-south-1 \
+                                  ca-central-1 sa-east-1; do
+                        if [[ -f "$temp_dir/aws-$region.html" ]]; then
+                            local inst=$(grep -o "Running Instances</td><td>[0-9]*" "$temp_dir/aws-$region.html" | grep -o "[0-9]*$" || echo "0")
+                            local ips=$(grep -o "Public IPs (Elastic)</td><td>[0-9]*" "$temp_dir/aws-$region.html" | grep -o "[0-9]*$" || echo "0")
+                            total_instances=$((total_instances + inst))
+                            total_ips=$((total_ips + ips))
+                        fi
+                    done
+                    summary="$total_instances instances"
+                    ip_summary="$total_ips IPs"
+                else
+                    summary="CLI not installed"
+                fi
+                ;;
+            azure)
+                if command -v az &>/dev/null; then
+                    local vm_count=0
+                    local ip_count=0
+                    for location in eastus eastus2 westus westus2 centralus \
+                                    westeurope northeurope uksouth swedencentral \
+                                    southeastasia eastasia japaneast australiaeast \
+                                    canadacentral southafricanorth centralindia; do
+                        if [[ -f "$temp_dir/azure-$location.html" ]]; then
+                            local vms=$(grep -o "Running Instances</td><td>[0-9]*" "$temp_dir/azure-$location.html" | grep -o "[0-9]*$" || echo "0")
+                            local ips=$(grep -o "Public IPs</td><td>[0-9]*" "$temp_dir/azure-$location.html" | grep -o "[0-9]*$" || echo "0")
+                            vm_count=$((vm_count + vms))
+                            ip_count=$((ip_count + ips))
+                        fi
+                    done
+                    summary="$vm_count VMs"
+                    ip_summary="$ip_count IPs"
+                else
+                    summary="CLI not installed"
+                fi
+                ;;
+            gcp)
+                if command -v gcloud &>/dev/null; then
+                    local inst_count=0
+                    local ip_count=0
+                    for region in us-central1 us-east1 us-east4 us-west1 us-west2 us-west3 us-west4 \
+                                  europe-west1 europe-west2 europe-west3 europe-west4 europe-west6 europe-north1 \
+                                  asia-east1 asia-east2 asia-northeast1 asia-northeast2 asia-northeast3 \
+                                  asia-south1 asia-southeast1 asia-southeast2 australia-southeast1; do
+                        if [[ -f "$temp_dir/gcp-$region.html" ]]; then
+                            local insts=$(grep -o "Running Instances</td><td>[0-9]*" "$temp_dir/gcp-$region.html" | grep -o "[0-9]*$" || echo "0")
+                            local ips=$(grep -o "Public IPs (Static)</td><td>[0-9]*" "$temp_dir/gcp-$region.html" | grep -o "[0-9]*$" || echo "0")
+                            inst_count=$((inst_count + insts))
+                            ip_count=$((ip_count + ips))
+                        fi
+                    done
+                    summary="$inst_count instances"
+                    ip_summary="$ip_count IPs"
+                else
+                    summary="CLI not installed"
+                fi
+                ;;
+            oci)
+                if command -v oci &>/dev/null; then
+                    local region
+                    region=$(oci iam region-subscription list --query "data[?\"is-home-region\"].\"region-name\" | [0]" --raw-output 2>/dev/null || echo "unknown")
+                    if [[ -f "$temp_dir/oci-$region.html" ]]; then
+                        local inst_count=$(grep -o "Compute Instances</td><td>[0-9]*" "$temp_dir/oci-$region.html" | grep -o "[0-9]*$" || echo "0")
+                        local vol_count=$(grep -o "Block Volumes</td><td>[0-9]*" "$temp_dir/oci-$region.html" | grep -o "[0-9]*$" || echo "0")
+                        summary="$inst_count instances"
+                        ip_summary="$vol_count volumes"
+                    else
+                        summary="No data"
+                    fi
+                else
+                    summary="CLI not installed"
+                fi
+                ;;
+            hetzner)
+                if command -v hcloud &>/dev/null && (hcloud context list &>/dev/null 2>&1 || [[ -n "${HCLOUD_TOKEN:-}" ]]); then
+                    local server_data=$(hcloud server list -o json 2>/dev/null || echo "[]")
+                    local server_count=$(echo "$server_data" | jq -r 'length' 2>/dev/null || echo "0")
+                    summary="$server_count servers"
+                else
+                    summary="Not configured"
+                fi
+                ;;
+            digitalocean)
+                if command -v doctl &>/dev/null; then
+                    local droplet_data=$(doctl compute droplet list --output json 2>/dev/null || echo "[]")
+                    local droplet_count=$(echo "$droplet_data" | jq -r 'length' 2>/dev/null || echo "0")
+                    local ip_count=$(doctl compute floating-ip list --output json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
+                    summary="$droplet_count droplets"
+                    ip_summary="$ip_count IPs"
+                else
+                    summary="CLI not installed"
+                fi
+                ;;
+            exoscale)
+                if command -v exo &>/dev/null; then
+                    local inst_count=0
+                    local vol_count=0
+                    for zone in ch-gva-2 ch-dk-2 de-fra-1 de-muc-1 at-vie-1 bg-sof-1; do
+                        local instance_data=$(exo compute instance list --zone "$zone" -O json 2>/dev/null || echo "[]")
+                        local volume_data=$(exo storage block list --zone "$zone" -O json 2>/dev/null || echo "[]")
+                        local zone_instances=$(echo "$instance_data" | jq -r 'length' 2>/dev/null || echo "0")
+                        local zone_volumes=$(echo "$volume_data" | jq -r 'length' 2>/dev/null || echo "0")
+                        inst_count=$((inst_count + zone_instances))
+                        vol_count=$((vol_count + zone_volumes))
+                    done
+                    summary="$inst_count instances"
+                    ip_summary="$vol_count volumes"
+                else
+                    summary="CLI not installed"
+                fi
+                ;;
+            libvirt)
+                if command -v virsh &>/dev/null; then
+                    local vm_count=$(virsh list --all 2>/dev/null | awk 'NR>2 && NF>0' | wc -l)
+                    summary="$vm_count VMs"
+                else
+                    summary="Not installed"
+                fi
+                ;;
+        esac
         
         # Determine badge class
         local badge_class="badge"
@@ -848,27 +818,30 @@ EOF
         
         case "$prov" in
             aws)
-                local regions
-                read -ra regions <<< "${PROVIDER_REGIONS[aws]}"
-                for region in "${regions[@]}"; do
+                for region in us-east-1 us-east-2 us-west-1 us-west-2 \
+                              eu-west-1 eu-west-2 eu-west-3 eu-central-1 eu-north-1 \
+                              ap-southeast-1 ap-southeast-2 ap-northeast-1 ap-northeast-2 ap-northeast-3 ap-south-1 \
+                              ca-central-1 sa-east-1; do
                     if [[ -f "$temp_dir/aws-$region.html" ]]; then
                         cat "$temp_dir/aws-$region.html" >> "$output_file"
                     fi
                 done
                 ;;
             azure)
-                local locations
-                read -ra locations <<< "${PROVIDER_REGIONS[azure]}"
-                for location in "${locations[@]}"; do
+                for location in eastus eastus2 westus westus2 centralus \
+                                westeurope northeurope uksouth swedencentral \
+                                southeastasia eastasia japaneast australiaeast \
+                                canadacentral southafricanorth centralindia; do
                     if [[ -f "$temp_dir/azure-$location.html" ]]; then
                         cat "$temp_dir/azure-$location.html" >> "$output_file"
                     fi
                 done
                 ;;
             gcp)
-                local regions
-                read -ra regions <<< "${PROVIDER_REGIONS[gcp]}"
-                for region in "${regions[@]}"; do
+                for region in us-central1 us-east1 us-east4 us-west1 us-west2 us-west3 us-west4 \
+                              europe-west1 europe-west2 europe-west3 europe-west4 europe-west6 europe-north1 \
+                              asia-east1 asia-east2 asia-northeast1 asia-northeast2 asia-northeast3 \
+                              asia-south1 asia-southeast1 asia-southeast2 australia-southeast1; do
                     if [[ -f "$temp_dir/gcp-$region.html" ]]; then
                         cat "$temp_dir/gcp-$region.html" >> "$output_file"
                     fi
@@ -947,3 +920,4 @@ main() {
 }
 
 main "$@"
+
