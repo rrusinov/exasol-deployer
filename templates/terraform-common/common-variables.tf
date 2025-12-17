@@ -2,9 +2,9 @@
 # COMMON VARIABLES (shared across all cloud providers)
 # These variables are used by all cloud providers with the same definition.
 #
-# NOTE: These variables are redefined in each provider's variables.tf for
-# better organization and to allow provider-specific documentation/examples.
-# The definitions here serve as documentation and reference.
+# NOTE: This file is copied into every deployment and provides the shared
+# variable definitions used by all providers. Provider-specific variables live
+# in the corresponding terraform-<provider>/variables.tf.
 # ==============================================================================
 
 # ==============================================================================

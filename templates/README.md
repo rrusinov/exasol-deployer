@@ -47,16 +47,7 @@ These files contain **reusable elements** that are identical across all cloud pr
   - Copies SSH keys from default cloud user
 
 ### `common-variables.tf`
-Standard variables used by all providers:
-- `instance_architecture` - x86_64 or arm64
-- `node_count` - Number of cluster nodes
-- `allowed_cidr` - IP range for access
-- `root_volume_size` - OS disk size
-- `data_volume_size` - Data disk size
-- `data_volumes_per_node` - Number of data disks per node
-- `owner` - Resource owner tag/label
-- `enable_spot_instances` - Cost optimization flag
-- `instance_type` - VM/instance type (provider-specific value)
+Shared variable definitions used by all providers. Copied into each deployment so provider modules can rely on a single set of common variables (`node_count`, `instance_architecture`, `infra_desired_state`, storage sizes, etc.). Provider-specific `variables.tf` files now only contain provider-only inputs (regions, credentials, etc.).
 
 ### `common-outputs.tf`
 Helper outputs used by all providers:
@@ -96,7 +87,7 @@ Each cloud provider has its own directory with provider-specific resources:
 ## How Templates Are Used
 
 1. **Init Time**: When running `exasol init --cloud-provider <provider>`, the system:
-   - Copies `terraform-common/` to `.templates/terraform-common/`
+   - Copies `terraform-common/` files (including `common-variables.tf`) into `.templates/`
    - Copies `terraform-<provider>/` to `.templates/`
    - Copies `ansible/` to `.templates/`
    - Creates symlinks in deployment directory
