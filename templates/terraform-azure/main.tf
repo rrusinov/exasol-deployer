@@ -309,6 +309,9 @@ locals {
   # VXLAN multicast overlay (uses common logic)
   overlay_data = local.overlay_data_common
 
+  # Volume attachment details (empty for Azure - uses direct volume attachment)
+  node_volume_attachments = {}
+
   # Generic cloud-init template (shared across providers)
   # Template is copied to .templates/ in deployment directory during init
   cloud_init_template_path = "${path.module}/.templates/cloud-init-generic.tftpl"

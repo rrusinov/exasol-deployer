@@ -779,6 +779,11 @@ cmd_health() {
                 shift
                 ;;
             --wait-for)
+                # Check if wait-for value is provided
+                if [[ $# -lt 2 ]]; then
+                    log_error "--wait-for requires a status value (optionally with timeout, e.g., database_ready,15m)"
+                    return 1
+                fi
                 # Parse comma-separated status,timeout format
                 local wait_for_value="$2"
                 if [[ "$wait_for_value" =~ ^([^,]+),(.+)$ ]]; then

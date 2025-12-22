@@ -3,9 +3,8 @@
   "provider": "oci",
   "parameters": {
     "cluster_size": 1,
-    "instance_type": "VM.Standard.E4.Flex",
-    "data_volumes_per_node": 1,
-    "data_volume_size": 20,
+    "data_volumes_per_node": 3,
+    "data_volume_size": 50,
     "root_volume_size": 52
   }
 }

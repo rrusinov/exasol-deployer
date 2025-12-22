@@ -270,4 +270,4 @@ sudo iscsiadm -m session -P 3
 
 ---
 
-**Next Steps**: After setup, proceed with [deployment](../README.md#quick-start) using the examples above.
+**Next Steps**: After setup, proceed with [deployment](../README.md) using the examples above.

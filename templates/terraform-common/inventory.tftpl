@@ -1,6 +1,6 @@
 [exasol_nodes]
 %{~ for idx, ip in public_ips }
-n${idx + 11} ansible_host=${ip} ansible_user=exasol private_ip=${private_ips[idx]} data_volume_ids='${jsonencode(node_volumes[idx])}' cloud_provider=${cloud_provider}%{~ if length(overlay_data) > 0 } overlay_ip=${overlay_data[idx].overlay_ip} is_seed_node=${overlay_data[idx].is_seed} seed_nodes='${jsonencode(overlay_data[idx].seed_nodes)}'%{~ endif }
+n${idx + 11} ansible_host=${ip} ansible_user=exasol private_ip=${private_ips[idx]} data_volume_ids='${jsonencode(node_volumes[idx])}' data_volume_attachments='${jsonencode(try(node_volume_attachments[idx], []))}' cloud_provider=${cloud_provider}%{~ if length(overlay_data) > 0 } overlay_ip=${overlay_data[idx].overlay_ip} is_seed_node=${overlay_data[idx].is_seed} seed_nodes='${jsonencode(overlay_data[idx].seed_nodes)}'%{~ endif }
 %{~ endfor }
 
 [exasol_nodes:vars]

@@ -1,10 +1,13 @@
 [Unit]
 Description=Create stable Exasol data volume symlinks
 Documentation=https://github.com/exasol/exasol-deployer
-# Run after local filesystems are mounted and devices are available
-After=local-fs.target
+# Run after network is online (for metadata access) and local filesystems are mounted
+After=network-online.target local-fs.target
 # Ensure udev has finished processing devices
 After=systemd-udev-settle.service
+# For iSCSI-based providers (OCI): Wait for iSCSI volumes to be attached
+After=open-iscsi.service
+Wants=open-iscsi.service
 # Run before any services that might need these symlinks
 Before=docker.service
 DefaultDependencies=no
@@ -18,7 +21,8 @@ StandardError=journal
 
 # Security hardening
 ProtectSystem=strict
-ReadWritePaths=/dev
+ReadWritePaths=/dev /etc/iscsi /var/lib/iscsi /run/lock
+StateDirectory=iscsi
 PrivateTmp=yes
 NoNewPrivileges=yes
 

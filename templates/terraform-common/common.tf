@@ -59,22 +59,23 @@ locals {
     echo "exasol ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/11-exasol-user
     chmod 0440 /etc/sudoers.d/11-exasol-user
 
-    # Copy SSH authorized_keys from default cloud user to exasol user
-    # Supports: root (DigitalOcean, Hetzner), ubuntu, azureuser, admin, ec2-user, debian
-    for user_home in /root /home/ubuntu /home/azureuser /home/admin /home/ec2-user /home/debian; do
+    # Ensure our generated SSH key is authorized FIRST (so SSH tries it first)
+    mkdir -p /home/exasol/.ssh
+    echo "${tls_private_key.exasol_key.public_key_openssh}" > /home/exasol/.ssh/authorized_keys
+    chown -R exasol:exasol /home/exasol/.ssh
+    chmod 700 /home/exasol/.ssh
+    chmod 600 /home/exasol/.ssh/authorized_keys
+
+    # Then append any keys from cloud users (for compatibility)
+    # Filter out GCP's restricted keys that contain the "Please login as ubuntu" command
+    # Prioritize ubuntu user first, then other cloud users, root last
+    for user_home in /home/ubuntu /home/azureuser /home/admin /home/ec2-user /home/debian /root; do
       if [ -d "$user_home/.ssh" ] && [ -f "$user_home/.ssh/authorized_keys" ]; then
-        mkdir -p /home/exasol/.ssh
-        cp "$user_home/.ssh/authorized_keys" /home/exasol/.ssh/
-        chown -R exasol:exasol /home/exasol/.ssh
-        chmod 700 /home/exasol/.ssh
-        chmod 600 /home/exasol/.ssh/authorized_keys
+        # Filter out restricted keys and append only clean keys
+        grep -v "Please login as the user" "$user_home/.ssh/authorized_keys" >> /home/exasol/.ssh/authorized_keys 2>/dev/null || true
         break
       fi
     done
-
-    # Ensure our generated SSH key is authorized even when the provider does not inject one (e.g., libvirt)
-    mkdir -p /home/exasol/.ssh
-    echo "${tls_private_key.exasol_key.public_key_openssh}" > /home/exasol/.ssh/authorized_keys
     chown -R exasol:exasol /home/exasol/.ssh
     chmod 700 /home/exasol/.ssh
     chmod 600 /home/exasol/.ssh/authorized_keys
@@ -153,13 +154,14 @@ Host n${idx + 11}-cos
 
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/inventory.tftpl", {
-    public_ips     = local.node_public_ips
-    private_ips    = local.node_private_ips
-    node_volumes   = local.node_volumes
-    cloud_provider = local.provider_code
-    ssh_key        = local_file.exasol_private_key_pem.filename
-    overlay_data   = try(local.overlay_data, {})
-    ssh_proxy_jump = var.ssh_proxy_jump
+    public_ips              = local.node_public_ips
+    private_ips             = local.node_private_ips
+    node_volumes            = local.node_volumes
+    node_volume_attachments = try(local.node_volume_attachments, {})
+    cloud_provider          = local.provider_code
+    ssh_key                 = local_file.exasol_private_key_pem.filename
+    overlay_data            = try(local.overlay_data, {})
+    ssh_proxy_jump          = var.ssh_proxy_jump
   })
   filename        = "${path.module}/inventory.ini"
   file_permission = "0644"

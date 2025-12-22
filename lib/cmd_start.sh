@@ -116,7 +116,7 @@ cmd_start() {
     fi
     local infra_power_supported="false"
     case "$cloud_provider" in
-        aws|azure|gcp|exoscale|oci)
+        aws|azure|gcp|exoscale)
             infra_power_supported="true"
             ;;
         libvirt)
@@ -154,7 +154,7 @@ cmd_start() {
         log_info "Powering on instances via tofu..."
         # Note: We enable refresh to ensure Terraform sees the current state (running=false)
         # This is important for all providers to detect state drift and apply changes correctly
-        if ! "${TOFU_BINARY:-tofu}" apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_state" -target="google_compute_instance.exasol_node" -target="exoscale_compute_instance.exasol_nodes" -target="null_resource.exasol_power_stop" -target="null_resource.exasol_power_start" -target="libvirt_domain.exasol_node" -var "infra_desired_state=running"; then
+        if ! "${TOFU_BINARY:-tofu}" apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_state" -target="google_compute_instance.exasol_node" -target="exoscale_compute_instance.exasol_nodes" -target="libvirt_domain.exasol_node" -var "infra_desired_state=running"; then
             state_set_status "$deploy_dir" "$STATE_START_FAILED"
             operation_success  # Release lock
             die "Infrastructure start (tofu apply) failed"
@@ -282,6 +282,23 @@ cmd_start() {
                 log_info "  CLI: hcloud server poweron <server-name>"
                 log_info ""
                 log_info "To list all servers: hcloud server list"
+                ;;
+            oci)
+                log_error ""
+                log_error "=================================================================="
+                log_error "IMPORTANT: ORACLE CLOUD MANUAL START REQUIRED"
+                log_error "=================================================================="
+                log_error "You must manually start instances from OCI Console or API."
+                log_error ""
+                log_error "To start your instances:"
+                log_error "1. Open Oracle Cloud Console: https://console.oracle.com/"
+                log_error "2. Navigate to Compute > Instances"
+                log_error "3. Select your instances and click 'Start'"
+                log_error ""
+                log_error "After starting instances, press ENTER to continue with cluster startup..."
+                log_error "=================================================================="
+                log_error ""
+                read -r
                 ;;
             *)
                 log_info "Please manually power on the machines using your provider's interface."

@@ -92,6 +92,7 @@ generate_oci_cleanup_summary() {
     # Get instances
     local instances_json
     instances_json=$(list_oci_instances "$compartment_ocid" "$prefix_filter")
+    instances_json=$(echo "$instances_json" | jq '[.[] | select(.state != "TERMINATED" and .state != "TERMINATING")]' 2>/dev/null || echo "[]")
     local instances
     instances=$(echo "$instances_json" | jq -r '.[] | "\(.state): \(.name) (\(.id))"' 2>/dev/null || echo "")
     
@@ -108,6 +109,7 @@ generate_oci_cleanup_summary() {
     # Get volumes
     local volumes_json
     volumes_json=$(list_oci_volumes "$compartment_ocid" "$prefix_filter")
+    volumes_json=$(echo "$volumes_json" | jq '[.[] | select(.state != "TERMINATED" and .state != "TERMINATING")]' 2>/dev/null || echo "[]")
     local volumes
     volumes=$(echo "$volumes_json" | jq -r '.[] | "\(.state): \(.name) (\(.id))"' 2>/dev/null || echo "")
     

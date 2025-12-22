@@ -60,6 +60,9 @@ locals {
   # VXLAN multicast overlay (uses common logic)
   overlay_data = local.overlay_data_common
 
+  # Volume attachment details (empty for Exoscale - uses direct volume attachment)
+  node_volume_attachments = {}
+
   # Exoscale-specific cloud-init template with private network configuration
   cloud_init_template_path = "${path.module}/.templates/cloud-init-exoscale.tftpl"
 

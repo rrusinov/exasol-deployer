@@ -1,6 +1,6 @@
 {
   "provider": "oci",
-  "description": "OCI E2E test configurations with power control and reboot resilience testing",
+  "description": "OCI E2E test configurations with manual power control (deploy/destroy only) and reboot resilience testing",
   "max_concurrent_nodes": 4,
   "test_suites": [
     {
@@ -8,11 +8,7 @@
       "workflow": "workflow/simple.json"
     },
     {
-      "sut": "sut/oci-2n.json",
-      "workflow": "workflow/basic.json"
-    },
-    {
-      "sut": "sut/oci-2n.json",
+      "sut": "sut/oci-4n.json",
       "workflow": "workflow/node-reboot.json"
     }
   ]

@@ -59,7 +59,7 @@ locals {
   overlay_data = local.overlay_data_common
 
   # Power control capability
-  supports_power_control = true
+  supports_power_control = false
 
   # OCI-specific cloud-init template
   # Template is copied to .templates/ in deployment directory during init
@@ -70,6 +70,18 @@ locals {
     for node_idx in range(var.node_count) : node_idx => [
       for vol_idx in range(var.data_volumes_per_node) :
       oci_core_volume.exasol_data[node_idx * var.data_volumes_per_node + vol_idx].id
+    ]
+  }
+
+  # Volume attachment connection details for Ansible (IQN, portal, port)
+  node_volume_attachments = {
+    for node_idx in range(var.node_count) : node_idx => [
+      for vol_idx in range(var.data_volumes_per_node) : {
+        id   = oci_core_volume.exasol_data[node_idx * var.data_volumes_per_node + vol_idx].id
+        iqn  = oci_core_volume_attachment.exasol_data[node_idx * var.data_volumes_per_node + vol_idx].iqn
+        ipv4 = oci_core_volume_attachment.exasol_data[node_idx * var.data_volumes_per_node + vol_idx].ipv4
+        port = oci_core_volume_attachment.exasol_data[node_idx * var.data_volumes_per_node + vol_idx].port
+      }
     ]
   }
 
@@ -278,30 +290,11 @@ resource "oci_core_instance" "exasol" {
 }
 
 # ==============================================================================
-# Instance Power Control (for start/stop operations)
+# Instance Power Control
 # ==============================================================================
 
-# Stop instances when infra_desired_state = "stopped"
-resource "null_resource" "exasol_power_stop" {
-  count = var.infra_desired_state == "stopped" ? var.node_count : 0
-  
-  provisioner "local-exec" {
-    command = "oci compute instance action --instance-id ${oci_core_instance.exasol[count.index].id} --action SOFTSTOP --region ${var.oci_region}"
-  }
-
-  depends_on = [oci_core_instance.exasol]
-}
-
-# Start instances when infra_desired_state = "running"
-resource "null_resource" "exasol_power_start" {
-  count = var.infra_desired_state == "running" ? var.node_count : 0
-  
-  provisioner "local-exec" {
-    command = "oci compute instance action --instance-id ${oci_core_instance.exasol[count.index].id} --action START --region ${var.oci_region}"
-  }
-
-  depends_on = [oci_core_instance.exasol]
-}
+# OCI instances use manual power control (like DigitalOcean/Hetzner)
+# Power control is handled through in-guest shutdown and manual power-on
 
 resource "oci_core_volume" "exasol_data" {
   count               = var.node_count * var.data_volumes_per_node
@@ -323,31 +316,16 @@ resource "oci_core_volume_attachment" "exasol_data" {
   display_name    = "exasol-data-attachment-${floor(count.index / var.data_volumes_per_node) + 1}-${(count.index % var.data_volumes_per_node) + 1}-${random_id.instance.hex}"
   device          = "/dev/oracleoci/oraclevd${substr("bcdefghijklmnopqrstuvwxyz", count.index % var.data_volumes_per_node, 1)}"
 
+  # Timeouts for volume attachment operations
+  timeouts {
+    create = "10m"
+    delete = "10m"
+  }
+
   # Wait for instance to be running before attaching volumes
   depends_on = [oci_core_instance.exasol]
-
-  # SSH connection for remote-exec provisioner
-  connection {
-    type        = "ssh"
-    host        = oci_core_instance.exasol[floor(count.index / var.data_volumes_per_node)].public_ip
-    user        = "exasol"
-    private_key = tls_private_key.exasol_key.private_key_pem
-    timeout     = "10m"
-  }
-
-  # Automatically connect iSCSI volume after attachment
-  provisioner "remote-exec" {
-    inline = [
-      "sudo iscsiadm -m node -o new -T ${self.iqn} -p ${self.ipv4}:${self.port}",
-      "sudo iscsiadm -m node -o update -T ${self.iqn} -n node.startup -v automatic", 
-      "sudo iscsiadm -m node -T ${self.iqn} -p ${self.ipv4}:${self.port} -l",
-      "sleep 5",
-      "sudo udevadm trigger",
-      "sudo udevadm settle"
-    ]
-  }
 }
 
-# Power Control - OCI instances are managed via lifecycle management
-# OCI doesn't support direct state control via Terraform like AWS
-# Power control is handled through instance lifecycle (create/destroy)
+# Power Control - OCI instances use manual power control
+# Start: Manual power-on via OCI console/CLI
+# Stop: In-guest shutdown via Ansible (poweroff command)

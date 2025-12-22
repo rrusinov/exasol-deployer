@@ -93,13 +93,13 @@
       block:
         - name: Wait for system to be ready
           ansible.builtin.wait_for_connection:
-            timeout: 600
+            timeout: 1200
 
         - name: Wait for cloud-init to complete
           ansible.builtin.command: cloud-init status --wait
           changed_when: false
           register: cloud_init_wait
-          retries: 30
+          retries: 60
           delay: 10
           until: cloud_init_wait.rc == 0
           failed_when: false
@@ -116,8 +116,8 @@
             executable: /bin/bash
           changed_when: false
           register: apt_lock_wait
-          retries: 60
-          delay: 5
+          retries: 30
+          delay: 10
           until: apt_lock_wait.rc == 0
 
         - name: Set hostname to n11, n12, etc.
@@ -191,6 +191,7 @@
             user: "{{ exa_user }}"
             state: present
             key: "{{ exasol_user_pub_key['content'] | b64decode }}"
+            exclusive: false
 
         - name: Distribute n11's exasol private key to all nodes
           ansible.builtin.copy:
@@ -319,6 +320,14 @@
           ansible.builtin.set_fact:
             volume_ids_list: "{{ data_volume_ids | from_json if data_volume_ids is string else data_volume_ids }}"
 
+        - name: Capture raw OCI volume attachments data
+          ansible.builtin.set_fact:
+            _oci_volume_attachments_raw: "{{ data_volume_attachments | default([]) }}"
+
+        - name: Parse OCI volume attachments from inventory
+          ansible.builtin.set_fact:
+            oci_volume_attachments_list: "{{ _oci_volume_attachments_raw | from_json if _oci_volume_attachments_raw is string else (_oci_volume_attachments_raw | list) }}"
+
         - name: Render volume ids for template substitution
           ansible.builtin.set_fact:
             volume_ids_rendered: "{{ volume_ids_list | map('quote') | join(' ') }}"
@@ -336,6 +345,23 @@
           ansible.builtin.copy:
             src: exasol-data-symlinks.service
             dest: /etc/systemd/system/exasol-data-symlinks.service
+            owner: root
+            group: root
+            mode: "0644"
+          notify: Reload systemd
+
+        - name: Ensure c4_cloud_command drop-in directory exists
+          ansible.builtin.file:
+            path: /etc/systemd/system/c4_cloud_command.service.d
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Require data symlink completion before c4_cloud_command
+          ansible.builtin.template:
+            src: c4-cloud-command-override.conf.j2
+            dest: /etc/systemd/system/c4_cloud_command.service.d/10-exasol-data-symlinks.conf
             owner: root
             group: root
             mode: "0644"
@@ -489,8 +515,8 @@
         group: "{{ exa_user }}"
         mode: "0644"
       register: db_download
-      retries: 3
-      delay: 5
+      retries: 90
+      delay: 10
 
     - name: Transfer local c4 binary
       when: c4_is_local | bool
@@ -510,8 +536,8 @@
         group: "{{ exa_user }}"
         mode: "0755"
       register: c4_download
-      retries: 3
-      delay: 5
+      retries: 10
+      delay: 10
 
     - name: "PROGRESS: Artifact transfer complete"
       ansible.builtin.debug:

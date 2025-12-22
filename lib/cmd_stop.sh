@@ -111,7 +111,7 @@ cmd_stop() {
     cloud_provider=$(state_read "$deploy_dir" "cloud_provider" 2>/dev/null || echo "unknown")
     local infra_power_supported="false"
     case "$cloud_provider" in
-        aws|azure|gcp|exoscale|oci)
+        aws|azure|gcp|exoscale)
             infra_power_supported="true"
             ;;
         *)
@@ -149,13 +149,32 @@ cmd_stop() {
     if [[ "$infra_power_supported" == "true" ]]; then
         # Note: We enable refresh to ensure Terraform sees the current state (running=true)
         # This is important for all providers to detect state drift and apply changes correctly
-        if ! "${TOFU_BINARY:-tofu}" apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_state" -target="google_compute_instance.exasol_node" -target="exoscale_compute_instance.exasol_nodes" -target="null_resource.exasol_power_stop" -target="null_resource.exasol_power_start" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped"; then
+        if ! "${TOFU_BINARY:-tofu}" apply -auto-approve -target="aws_ec2_instance_state.exasol_node_state" -target="azapi_resource_action.vm_power_state" -target="google_compute_instance.exasol_node" -target="exoscale_compute_instance.exasol_nodes" -target="libvirt_domain.exasol_node" -var "infra_desired_state=stopped"; then
             state_set_status "$deploy_dir" "$STATE_STOP_FAILED"
             die "Infrastructure stop (tofu apply) failed"
         fi
     else
         log_warn "Provider '$cloud_provider' does not support power control via tofu; relying on in-guest shutdown."
         log_info ""
+        
+        # Special warning for Oracle Cloud about billing implications
+        if [[ "$cloud_provider" == "oci" ]]; then
+            log_error ""
+            log_error "=================================================================="
+            log_error "IMPORTANT: ORACLE CLOUD BILLING WARNING"
+            log_error "=================================================================="
+            log_error "In-guest shutdown using 'poweroff' command does NOT stop billing!"
+            log_error "You MUST also stop instances from OCI Console or API to stop billing."
+            log_error ""
+            log_error "To stop billing for your instances:"
+            log_error "1. Open Oracle Cloud Console: https://console.oracle.com/"
+            log_error "2. Navigate to Compute > Instances"
+            log_error "3. Select your instances and click 'Stop'"
+            log_error ""
+            log_error "Failure to stop instances via Console/API will result in continued billing."
+            log_error "=================================================================="
+            log_error ""
+        fi
 
         # Allow time for in-guest shutdown to complete before SSH verification
         local shutdown_grace=${EXASOL_SHUTDOWN_GRACE_SECONDS:-20}

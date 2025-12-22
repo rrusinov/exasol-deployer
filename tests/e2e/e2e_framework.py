@@ -823,8 +823,14 @@ class E2ETestFramework:
                 exasol_symlink = abs_install_dir / 'exasol'
                 exasol_binary = extract_dir / 'exasol'
             
-            # Verify extracted binary exists
-            if not exasol_binary.exists():
+            # Verify extracted binary exists (with retry for filesystem sync)
+            import time
+            for attempt in range(3):
+                if exasol_binary.exists():
+                    break
+                if attempt < 2:
+                    time.sleep(1.0)  # Wait for filesystem sync
+            else:
                 raise RuntimeError(f"Extracted exasol binary not found: {exasol_binary}")
 
             # Verify symlink exists and is executable

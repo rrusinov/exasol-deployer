@@ -568,13 +568,13 @@ cleanup_aws() {
             # List instances
             # shellcheck disable=SC2016
             aws ec2 describe-instances --region "$region" \
-                --filters "Name=vpc-id,Values=$vpc" \
+                --filters "Name=vpc-id,Values=$vpc" "Name=instance-state-name,Values=pending,running,stopping,stopped,shutting-down" \
                 --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],State.Name]' \
                 --output table 2>/dev/null || true
             
             # List volumes
             aws ec2 describe-volumes --region "$region" \
-                --filters "Name=tag:VpcId,Values=$vpc" \
+                --filters "Name=tag:VpcId,Values=$vpc" "Name=status,Values=available,in-use" \
                 --query 'Volumes[].[VolumeId,Size,State]' \
                 --output table 2>/dev/null || true
         done
