@@ -1,0 +1,66 @@
+#cloud-config
+# OCI-specific cloud-init configuration for Exasol cluster nodes
+
+write_files:
+  - path: /tmp/bootstrap-exasol-cluster.sh
+    content: ${jsonencode(base_cloud_init)}
+    permissions: '0755'
+
+# Run the exasol cluster bootstrap script
+runcmd:
+  # Run the exasol cluster bootstrap script
+  - /tmp/bootstrap-exasol-cluster.sh
+  
+  # Clean up Oracle Cloud Agent duplicate sudoers entries
+  - |
+    # Remove duplicate Oracle Cloud Agent sudoers files to prevent warnings
+    if [ -f /etc/sudoers.d/090-oca-vss-plugin-commands ]; then
+      rm -f /etc/sudoers.d/090-oca-vss-plugin-commands
+      echo "Removed duplicate Oracle Cloud Agent VSS plugin sudoers file" | systemd-cat -t cloud-init -p info
+    fi
+    if [ -f /etc/sudoers.d/100-oracle-cloud-agent-users ]; then
+      rm -f /etc/sudoers.d/100-oracle-cloud-agent-users
+      echo "Removed duplicate Oracle Cloud Agent users sudoers file" | systemd-cat -t cloud-init -p info
+    fi
+
+  # Configure iptables to allow private network traffic and Exasol ports
+  - |
+    # Install iptables-persistent to save rules across reboots
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent
+    
+    # Allow all traffic from private IP ranges (RFC 1918)
+    iptables -I INPUT 1 -s 192.168.0.0/16 -j ACCEPT
+    iptables -I INPUT 1 -s 172.16.0.0/12 -j ACCEPT
+    iptables -I INPUT 1 -s 10.0.0.0/8 -j ACCEPT
+    
+    # Allow Exasol ports from anywhere
+    iptables -I INPUT -p tcp --dport 2581 -m state --state NEW -j ACCEPT   # BucketFS
+    iptables -I INPUT -p tcp --dport 8443 -m state --state NEW -j ACCEPT   # Admin UI
+    iptables -I INPUT -p tcp --dport 8563 -m state --state NEW -j ACCEPT   # Database
+    iptables -I INPUT -p tcp --dport 20002 -m state --state NEW -j ACCEPT  # Container SSH
+    iptables -I INPUT -p tcp --dport 20003 -m state --state NEW -j ACCEPT  # Confd API
+    
+    # Save iptables rules persistently
+    iptables-save > /etc/iptables/rules.v4
+    
+    # Enable iptables-persistent service
+    systemctl enable netfilter-persistent
+    
+    echo "Configured persistent iptables rules for private network traffic and Exasol ports" | systemd-cat -t cloud-init -p info
+  
+  # Configure iSCSI for OCI block volumes
+  - |
+    # Enable and start iSCSI service
+    systemctl enable iscsid
+    systemctl start iscsid
+    
+    # Install open-iscsi if not present
+    apt-get update
+    apt-get install -y open-iscsi
+    
+    # Restart iSCSI service to ensure it's running
+    systemctl restart iscsid
+
+  # Log completion
+  - echo "OCI-specific cloud-init configuration completed" | systemd-cat -t cloud-init -p info

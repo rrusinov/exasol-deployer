@@ -14,7 +14,7 @@
   tasks:
     - name: Wait for SSH to become available (VM may still be booting)
       ansible.builtin.wait_for_connection:
-        timeout: 300
+        timeout: 600
         delay: 15
         sleep: 5
 
@@ -74,7 +74,7 @@
       ansible.builtin.command: ip route show default
       register: default_route
       retries: 30
-      delay: 2
+      delay: 10
       until: default_route.rc == 0 and default_route.stdout | length > 0
       changed_when: false
       failed_when: false
@@ -96,8 +96,8 @@
         name: exasol-overlay.service
       register: overlay_service_status
       until: overlay_service_status.status.ActiveState == "active"
-      retries: 6
-      delay: 5
+      retries: 30
+      delay: 10
       changed_when: false
       failed_when: false
 
@@ -140,6 +140,26 @@
       when:
         - start_overlay is defined
         - not (start_overlay.skipped | default(false))
+
+    - name: Ensure c4_cloud_command drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/system/c4_cloud_command.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Require data symlink completion before c4_cloud_command
+      ansible.builtin.template:
+        src: c4-cloud-command-override.conf.j2
+        dest: /etc/systemd/system/c4_cloud_command.service.d/10-exasol-data-symlinks.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Reload systemd after updating c4 override
+      ansible.builtin.systemd:
+        daemon_reload: yes
 
     - name: Start exasol-data-symlinks.service (if exists)
       ansible.builtin.systemd:
@@ -231,7 +251,7 @@
       register: c4_status_wait
       until: c4_status_wait.status.ActiveState == "active"
       retries: 30
-      delay: 5
+      delay: 10
       when: start_c4.changed
       failed_when: false
 
@@ -239,8 +259,8 @@
       ansible.builtin.command: c4 ps
       become_user: "{{ exa_user }}"
       register: c4_ps_check
-      retries: 12
-      delay: 5
+      retries: 30
+      delay: 10
       until: c4_ps_check.rc == 0
       when: start_c4.changed
       failed_when: false

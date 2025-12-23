@@ -136,6 +136,10 @@ template_validation_run() {
             check_tool_availability
             test_exoscale_template_validation
             ;;
+        oci)
+            check_tool_availability
+            test_oci_template_validation
+            ;;
         libvirt)
             check_tool_availability
             test_libvirt_template_validation
@@ -149,6 +153,7 @@ template_validation_run() {
             test_hetzner_template_validation
             test_digitalocean_template_validation
             test_exoscale_template_validation
+            test_oci_template_validation
             test_libvirt_template_validation
             test_ansible_playbook_validation
             test_ansible_template_validation

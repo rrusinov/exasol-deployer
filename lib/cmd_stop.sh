@@ -156,6 +156,25 @@ cmd_stop() {
     else
         log_warn "Provider '$cloud_provider' does not support power control via tofu; relying on in-guest shutdown."
         log_info ""
+        
+        # Special warning for Oracle Cloud about billing implications
+        if [[ "$cloud_provider" == "oci" ]]; then
+            log_error ""
+            log_error "=================================================================="
+            log_error "IMPORTANT: ORACLE CLOUD BILLING WARNING"
+            log_error "=================================================================="
+            log_error "In-guest shutdown using 'poweroff' command does NOT stop billing!"
+            log_error "You MUST also stop instances from OCI Console or API to stop billing."
+            log_error ""
+            log_error "To stop billing for your instances:"
+            log_error "1. Open Oracle Cloud Console: https://console.oracle.com/"
+            log_error "2. Navigate to Compute > Instances"
+            log_error "3. Select your instances and click 'Stop'"
+            log_error ""
+            log_error "Failure to stop instances via Console/API will result in continued billing."
+            log_error "=================================================================="
+            log_error ""
+        fi
 
         # Allow time for in-guest shutdown to complete before SSH verification
         local shutdown_grace=${EXASOL_SHUTDOWN_GRACE_SECONDS:-20}
@@ -182,7 +201,7 @@ cmd_stop() {
 
     for host in "${hosts[@]}"; do
         (
-            if ssh -F "$deploy_dir/ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$host" \
+            if ssh -F "$deploy_dir/ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$host" \
                 "true" >/dev/null 2>&1; then
                 echo "running" > "$temp_dir/$host"
             else

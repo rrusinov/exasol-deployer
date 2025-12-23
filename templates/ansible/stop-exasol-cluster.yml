@@ -89,7 +89,7 @@
       changed_when: false
       failed_when: false
       until: wait_state_result.stdout != '"running"' and wait_state_result.rc == 0
-      retries: 30 # 30 retries * 10 seconds = 5 minutes total
+      retries: 60 # 60 retries * 10 seconds = 10 minutes total
       delay: 10
       loop: "{{ running_databases | default([]) }}"
       run_once: true
@@ -179,8 +179,8 @@
       ansible.builtin.command: systemctl is-active --quiet c4.service
       register: c4_stop_check
       until: c4_stop_check.rc != 0
-      retries: 60 # 60 retries * 5 seconds = 5 minutes total
-      delay: 5
+      retries: 60 # 60 retries * 10 seconds = 10 minutes total
+      delay: 10
       changed_when: false
       failed_when: false
       when: stop_c4.changed
@@ -225,8 +225,8 @@
       become_user: "{{ exa_user }}"
       register: stage_check
       until: stage_check.stdout is truthy
-      retries: 60
-      delay: 5
+      retries: 30
+      delay: 10
       changed_when: false
       failed_when: false
       run_once: true

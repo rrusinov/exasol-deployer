@@ -206,7 +206,7 @@ cmd_start() {
 
             if [[ -n "$first_host" ]]; then
                 log_debug "Checking c4.service status on $first_host"
-                if ssh -F "$deploy_dir/ssh_config" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$first_host" \
+                if ssh -F "$deploy_dir/ssh_config" -n -T -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$first_host" \
                     "sudo systemctl is-active c4.service" >/dev/null 2>&1; then
                     log_info "Database services are active"
                 else
@@ -282,6 +282,23 @@ cmd_start() {
                 log_info "  CLI: hcloud server poweron <server-name>"
                 log_info ""
                 log_info "To list all servers: hcloud server list"
+                ;;
+            oci)
+                log_error ""
+                log_error "=================================================================="
+                log_error "IMPORTANT: ORACLE CLOUD MANUAL START REQUIRED"
+                log_error "=================================================================="
+                log_error "You must manually start instances from OCI Console or API."
+                log_error ""
+                log_error "To start your instances:"
+                log_error "1. Open Oracle Cloud Console: https://console.oracle.com/"
+                log_error "2. Navigate to Compute > Instances"
+                log_error "3. Select your instances and click 'Start'"
+                log_error ""
+                log_error "After starting instances, press ENTER to continue with cluster startup..."
+                log_error "=================================================================="
+                log_error ""
+                read -r
                 ;;
             *)
                 log_info "Please manually power on the machines using your provider's interface."

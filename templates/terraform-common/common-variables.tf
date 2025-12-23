@@ -2,10 +2,25 @@
 # COMMON VARIABLES (shared across all cloud providers)
 # These variables are used by all cloud providers with the same definition.
 #
-# NOTE: These variables are redefined in each provider's variables.tf for
-# better organization and to allow provider-specific documentation/examples.
-# The definitions here serve as documentation and reference.
+# NOTE: This file is copied into every deployment and provides the shared
+# variable definitions used by all providers. Provider-specific variables live
+# in the corresponding terraform-<provider>/variables.tf.
 # ==============================================================================
+
+# ==============================================================================
+# INFRASTRUCTURE STATE MANAGEMENT
+# ==============================================================================
+
+variable "infra_desired_state" {
+  description = "Desired state of infrastructure: 'running' or 'stopped'"
+  type        = string
+  default     = "running"
+
+  validation {
+    condition     = contains(["running", "stopped"], var.infra_desired_state)
+    error_message = "infra_desired_state must be either 'running' or 'stopped'."
+  }
+}
 
 variable "instance_architecture" {
   description = "The architecture for the instances (e.g., 'x86_64' or 'arm64')."

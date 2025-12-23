@@ -430,6 +430,17 @@ if [[ "$LIST_TESTS" -eq 0 && -z "$RUN_TEST_IDS" && -z "$RERUN_EXEC_DIR" && -z "$
     exit 0
 fi
 
+# Create fresh release build before running tests (except for list-tests and rerun operations)
+if [[ "$LIST_TESTS" -eq 0 && -z "$RERUN_EXEC_DIR" ]]; then
+    echo "Creating fresh release build..."
+    if ! ./scripts/create-release.sh; then
+        echo "Error: Failed to create release build" >&2
+        exit 1
+    fi
+    echo "✓ Fresh release build created"
+    echo ""
+fi
+
 mapfile -t configs < <(discover_configs)
 
 if [[ "$LIST_TESTS" -eq 1 ]]; then

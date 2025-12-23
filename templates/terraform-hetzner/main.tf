@@ -65,6 +65,9 @@ locals {
   # Overlay mesh data for Ansible inventory (Hetzner requires overlay for proper networking - always enabled)
   overlay_data = local.overlay_data_always_on
 
+  # Volume attachment details (empty for Hetzner - uses direct volume attachment)
+  node_volume_attachments = {}
+
   # Private network details for per-node configuration
   private_network_cidr = hcloud_network_subnet.exasol_subnet.ip_range
   private_prefix_len   = tonumber(element(split("/", local.private_network_cidr), 1))

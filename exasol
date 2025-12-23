@@ -3,7 +3,8 @@
 # A bash script that simulates the interface of the binary Exasol deployer
 # using OpenTofu and Ansible
 
-set -euo pipefail
+# Do not enable errexit globally; health/diagnostic commands need to continue past warnings.
+set -uo pipefail
 
 # Resolve script directory, following symlinks (works on macOS/BSD readlink)
 resolve_script_dir() {
@@ -114,6 +115,17 @@ Examples:
 EOF
 }
 
+# Run a command with errexit temporarily enabled and restore previous state
+run_with_errexit() {
+    local had_errexit=0
+    [[ $- == *e* ]] && had_errexit=1
+    set -e
+    "$@"
+    local rc=$?
+    [[ $had_errexit -eq 0 ]] && set +e
+    return $rc
+}
+
 # Note: Command-specific help functions (show_init_help, show_deploy_help, etc.)
 # are now defined in their respective command files (lib/cmd_*.sh)
 # This keeps the help text in sync with the actual command options
@@ -207,28 +219,28 @@ main() {
                 show_deploy_help
                 exit 0
             fi
-            progress_wrap_command "deploy" "$DEPLOYMENT_DIR" cmd_deploy --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            run_with_errexit progress_wrap_command "deploy" "$DEPLOYMENT_DIR" cmd_deploy --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         destroy)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
                 show_destroy_help
                 exit 0
             fi
-            progress_wrap_command "destroy" "$DEPLOYMENT_DIR" cmd_destroy --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            run_with_errexit progress_wrap_command "destroy" "$DEPLOYMENT_DIR" cmd_destroy --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         start)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
                 show_start_help
                 exit 0
             fi
-            progress_wrap_command "start" "$DEPLOYMENT_DIR" cmd_start --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            run_with_errexit progress_wrap_command "start" "$DEPLOYMENT_DIR" cmd_start --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         stop)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
                 show_stop_help
                 exit 0
             fi
-            progress_wrap_command "stop" "$DEPLOYMENT_DIR" cmd_stop --deployment-dir "$DEPLOYMENT_DIR" "$@"
+            run_with_errexit progress_wrap_command "stop" "$DEPLOYMENT_DIR" cmd_stop --deployment-dir "$DEPLOYMENT_DIR" "$@"
             ;;
         status)
             if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then

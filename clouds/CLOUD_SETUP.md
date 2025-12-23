@@ -40,6 +40,11 @@ The Exasol Cloud Deployer supports the following cloud providers:
 - **[AWS (Amazon Web Services)](CLOUD_SETUP_AWS.md)** - Most feature-complete, includes spot instances
 - **[Azure (Microsoft Azure)](CLOUD_SETUP_AZURE.md)** - Full support with spot instances
 - **[GCP (Google Cloud Platform)](CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
+- **[OCI (Oracle Cloud Infrastructure)](CLOUD_SETUP_OCI.md)** - Full support with flexible shapes
+- **[Hetzner Cloud](CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
+- **[DigitalOcean](CLOUD_SETUP_DIGITALOCEAN.md)** - Simple and affordable
+- **[Local libvirt/KVM](CLOUD_SETUP_LIBVIRT.md)** - Local testing and development
+- **[GCP (Google Cloud Platform)](CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
 - **[Hetzner Cloud](CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
 - **[DigitalOcean](CLOUD_SETUP_DIGITALOCEAN.md)** - Simple and affordable cloud provider
 - **[Exoscale](CLOUD_SETUP_EXOSCALE.md)** - European cloud provider with automatic power control

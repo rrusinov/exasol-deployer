@@ -4,8 +4,8 @@
 [![Pull Request Tests](https://github.com/rrusinov/exasol-deployer/actions/workflows/pr-tests.yml/badge.svg)](https://github.com/rrusinov/exasol-deployer/actions/workflows/pr-tests.yml)
 [![Build and Release Installer](https://github.com/rrusinov/exasol-deployer/actions/workflows/release.yml/badge.svg)](https://github.com/rrusinov/exasol-deployer/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Shell](https://img.shields.io/badge/Shell-Bash-green.svg)](https://www.gnu.org/software/bash/)
-[![Cloud Providers](https://img.shields.io/badge/Cloud-AWS%20%7C%20Azure%20%7C%20GCP%20%7C%20Hetzner%20%7C%20DigitalOcean%20%7C%20Exoscale%20%7C%20libvirt-orange.svg)](#cloud-provider-setup)
+![Shell](https://img.shields.io/badge/Shell-Bash-green.svg)
+[![Cloud Providers](https://img.shields.io/badge/Cloud-AWS%20%7C%20Azure%20%7C%20GCP%20%7C%20OCI%20%7C%20Hetzner%20%7C%20DigitalOcean%20%7C%20Exoscale%20%7C%20libvirt-orange.svg)](#cloud-provider-setup)
 
 Deploy Exasol database clusters across multiple cloud providers with a single command.
 
@@ -15,6 +15,7 @@ Deploy Exasol database clusters across multiple cloud providers with a single co
   - [AWS] Amazon Web Services
   - [AZR] Microsoft Azure
   - [GCP] Google Cloud Platform
+  - [OCI] Oracle Cloud Infrastructure
   - [HTZ] Hetzner Cloud
   - [DO] DigitalOcean
   - [EXO] Exoscale
@@ -52,10 +53,11 @@ See [Installation Guide](INSTALLATION.md) for detailed instructions and prerequi
 
 Configure credentials for your chosen cloud provider:
 
-- **[AWS](clouds/CLOUD_SETUP_AWS.md)** - Most feature-complete
-- **[Azure](clouds/CLOUD_SETUP_AZURE.md)** - Full support with spot instances  
-- **[GCP](clouds/CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
-- **[Hetzner](clouds/CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
+- **[AWS (Amazon Web Services)](clouds/CLOUD_SETUP_AWS.md)** - Most feature-complete
+- **[Azure (Microsoft Azure)](clouds/CLOUD_SETUP_AZURE.md)** - Full support with spot instances
+- **[GCP (Google Cloud Platform)](clouds/CLOUD_SETUP_GCP.md)** - Full support with preemptible instances
+- **[OCI (Oracle Cloud Infrastructure)](clouds/CLOUD_SETUP_OCI.md)** - Full support with flexible shapes
+- **[Hetzner Cloud](clouds/CLOUD_SETUP_HETZNER.md)** - Cost-effective European provider
 - **[DigitalOcean](clouds/CLOUD_SETUP_DIGITALOCEAN.md)** - Simple and affordable
 - **[Exoscale](clouds/CLOUD_SETUP_EXOSCALE.md)** - European cloud with automatic power control
 - **[libvirt/KVM](clouds/CLOUD_SETUP_LIBVIRT.md)** - Local testing and development
@@ -118,6 +120,7 @@ If permissions are not available, generate them (only needed when templates chan
 - [AWS Setup Guide](clouds/CLOUD_SETUP_AWS.md)
 - [Azure Setup Guide](clouds/CLOUD_SETUP_AZURE.md)
 - [GCP Setup Guide](clouds/CLOUD_SETUP_GCP.md)
+- [OCI Setup Guide](clouds/CLOUD_SETUP_OCI.md)
 - [Hetzner Setup Guide](clouds/CLOUD_SETUP_HETZNER.md)
 - [DigitalOcean Setup Guide](clouds/CLOUD_SETUP_DIGITALOCEAN.md)
 - [Exoscale Setup Guide](clouds/CLOUD_SETUP_EXOSCALE.md)
@@ -152,6 +155,18 @@ If permissions are not available, generate them (only needed when templates chan
 ```
 
 Use `--gcp-zone` to pick a specific zone when the default (`<region>-a`) is not available for your instance type or quota setup.
+
+#### OCI Deployment
+
+```bash
+./exasol init \
+  --cloud-provider oci \
+  --deployment-dir ./my-oci-deployment \
+  --oci-region us-ashburn-1 \
+  --oci-compartment-ocid <your-compartment-ocid>
+```
+
+OCI credentials are automatically read from `~/.oci/config` (created by `oci setup config`). The compartment OCID is required and can be found in the OCI Console under Identity & Security → Compartments.
 
 #### Hetzner Cloud Deployment
 

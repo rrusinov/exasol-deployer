@@ -164,7 +164,7 @@ class ValidationRegistry:
         # Fall back to registered static checks
         return self.checks.get(check_name)
 
-    def _run_exasol_command(self, command: str, *args, timeout: int = 360) -> subprocess.CompletedProcess:
+    def _run_exasol_command(self, command: str, *args, timeout: int = 900) -> subprocess.CompletedProcess:
         """Run exasol CLI command"""
         cmd = [str(self.exasol_bin), command, '--deployment-dir', str(self.deploy_dir)]
         cmd.extend(args)
@@ -178,7 +178,7 @@ class ValidationRegistry:
                 return json.load(f)
         return {}
 
-    def _run_exasol_health(self, verbosity: str = 'quiet', timeout: int = 360) -> Dict[str, Any]:
+    def _run_exasol_health(self, verbosity: str = 'quiet', timeout: int = 900) -> Dict[str, Any]:
         """Run exasol health command and return parsed JSON"""
         try:
             cmd_args = ['health']
@@ -756,7 +756,7 @@ class WorkflowExecutor:
         """Execute cluster stop"""
         cmd = [str(self.exasol_bin), 'stop', '--deployment-dir', str(self.deploy_dir)]
         
-        result = self._run_command_with_streaming(cmd, timeout=600)
+        result = self._run_command_with_streaming(cmd, timeout=1200)
         
         if result.returncode != 0:
             raise RuntimeError(f"Stop cluster failed: {result.stderr}")
@@ -778,7 +778,7 @@ class WorkflowExecutor:
         """Execute destroy step to tear down the cluster"""
         cmd = [str(self.exasol_bin), 'destroy', '--deployment-dir', str(self.deploy_dir), '--auto-approve']
         
-        result = self._run_command_with_streaming(cmd, timeout=600)
+        result = self._run_command_with_streaming(cmd, timeout=1200)
         
         if result.returncode != 0:
             raise RuntimeError(f"Destroy failed: {result.stderr}")

@@ -1,0 +1,10 @@
+{
+  "description": "OCI single node configuration",
+  "provider": "oci",
+  "parameters": {
+    "cluster_size": 1,
+    "data_volumes_per_node": 3,
+    "data_volume_size": 50,
+    "root_volume_size": 52
+  }
+}

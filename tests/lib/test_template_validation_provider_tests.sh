@@ -320,6 +320,46 @@ test_exoscale_template_validation() {
     cleanup_test_dir "$test_dir"
 }
 
+# Test: OCI template validation
+test_oci_template_validation() {
+    echo ""
+    echo "Test: OCI template validation"
+
+    if ! command -v tofu >/dev/null 2>&1; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        echo -e "${YELLOW}⊘${NC} Skipping (tofu not available)"
+        return
+    fi
+
+    local test_dir
+    test_dir=$(setup_test_dir)
+    cmd_init --cloud-provider oci --deployment-dir "$test_dir" --oci-compartment-ocid "ocid1.compartment.oc1..test" 2>/dev/null
+
+    cd "$test_dir" || exit 1
+
+    if ! tofu init >/dev/null 2>&1; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} OCI: tofu init failed"
+        cd - >/dev/null
+        cleanup_test_dir "$test_dir"
+        return
+    fi
+
+    if tofu validate >/dev/null 2>&1; then
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "${GREEN}✓${NC} OCI: tofu validate successful"
+    else
+        TESTS_TOTAL=$((TESTS_TOTAL + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "${RED}✗${NC} OCI: tofu validate failed"
+    fi
+
+    cd - >/dev/null
+    cleanup_test_dir "$test_dir"
+}
+
 # Test: Libvirt template validation
 test_libvirt_template_validation() {
     echo ""

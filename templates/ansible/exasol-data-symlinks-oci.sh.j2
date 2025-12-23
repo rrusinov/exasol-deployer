@@ -1,0 +1,315 @@
+#!/bin/bash
+# OCI-specific device discovery for Exasol data symlinks
+
+# Terraform renders attachment metadata in template variables
+OCI_ATTACHMENT_COUNT={{ (oci_volume_attachments_list | default([])) | length }}
+OCI_ATTACHMENT_VOLUME_IDS=({% for attachment in oci_volume_attachments_list | default([]) %}"{{ attachment.id }}"{% if not loop.last %} {% endif %}{% endfor %})
+OCI_ATTACHMENT_IQNS=({% for attachment in oci_volume_attachments_list | default([]) %}"{{ attachment.iqn }}"{% if not loop.last %} {% endif %}{% endfor %})
+OCI_ATTACHMENT_IPS=({% for attachment in oci_volume_attachments_list | default([]) %}"{{ attachment.ipv4 }}"{% if not loop.last %} {% endif %}{% endfor %})
+OCI_ATTACHMENT_PORTS=({% for attachment in oci_volume_attachments_list | default([]) %}"{{ attachment.port }}"{% if not loop.last %} {% endif %}{% endfor %})
+
+oci_device_letter() {
+    local index="$1"
+    local letters=(b c d e f g h i j k l m n o p q r s t u v w x y z)
+
+    if [[ $index =~ ^[0-9]+$ ]]; then
+        local numeric_index="$index"
+        if (( numeric_index >= 0 && numeric_index < 25 )); then
+            echo "${letters[$numeric_index]}"
+            return
+        fi
+    fi
+
+    echo "z"
+}
+
+configure_iscsi_from_template() {
+    local configured_count=0
+    local expected_count=${OCI_ATTACHMENT_COUNT:-0}
+
+    for idx in "${!OCI_ATTACHMENT_IQNS[@]}"; do
+        local iqn="${OCI_ATTACHMENT_IQNS[$idx]}"
+        local portal_ip="${OCI_ATTACHMENT_IPS[$idx]}"
+        local portal_port="${OCI_ATTACHMENT_PORTS[$idx]}"
+
+        if [[ -z "$iqn" || -z "$portal_ip" || -z "$portal_port" ]]; then
+            log "Skipping OCI attachment index $idx due to incomplete metadata"
+            continue
+        fi
+
+        local portal="${portal_ip}:${portal_port}"
+        local node_added=false
+
+        log "Configuring iSCSI target: $iqn ($portal)"
+        if iscsiadm -m node -o new -T "$iqn" -p "$portal" >/dev/null 2>&1; then
+            node_added=true
+        else
+            if iscsiadm -m node -T "$iqn" -p "$portal" >/dev/null 2>&1; then
+                log "iSCSI node already present for $iqn ($portal)"
+            else
+                log "ERROR: Unable to create iSCSI node for $iqn ($portal)"
+                continue
+            fi
+        fi
+
+        if ! iscsiadm -m node -T "$iqn" -o update -n node.startup -v automatic >/dev/null 2>&1; then
+            log "Warning: Failed to mark $iqn ($portal) for automatic startup"
+        fi
+
+        local login_attempt=1
+        local login_max_attempts=10
+        local login_success=0
+
+        while (( login_attempt <= login_max_attempts )); do
+            if iscsiadm -m node -T "$iqn" -p "$portal" --login >/dev/null 2>&1; then
+                login_success=1
+                break
+            fi
+
+            log "Login attempt $login_attempt/$login_max_attempts failed for $iqn ($portal); retrying in 3s"
+            sleep 3
+            ((login_attempt++))
+        done
+
+        if (( login_success )); then
+            configured_count=$((configured_count + 1))
+            if [[ "$node_added" == true ]]; then
+                log "Added and logged in to iSCSI target $iqn ($portal)"
+            else
+                log "Logged in to existing iSCSI target $iqn ($portal)"
+            fi
+        else
+            log "ERROR: Failed to log in to iSCSI target $iqn ($portal) after $login_max_attempts attempts"
+        fi
+    done
+
+    log "Configured $configured_count/${expected_count} iSCSI targets from Terraform metadata"
+    return 0
+}
+
+wait_for_oci_devices() {
+    local max_wait=30
+    local wait_count=0
+    local expected_count=${OCI_ATTACHMENT_COUNT:-0}
+
+    if [[ $expected_count -eq 0 ]]; then
+        log "No OCI attachments to wait for"
+        return 0
+    fi
+
+    log "Waiting for OCI devices to appear..."
+    while [[ $wait_count -lt $max_wait ]]; do
+        local sessions_ready=0
+        local devices_ready=0
+
+        local session_output
+        session_output=$(iscsiadm -m session 2>/dev/null || true)
+
+        for idx in "${!OCI_ATTACHMENT_IQNS[@]}"; do
+            local iqn="${OCI_ATTACHMENT_IQNS[$idx]}"
+            local letter
+            letter=$(oci_device_letter "$idx")
+            local symlink="/dev/oracleoci/oraclevd${letter}"
+            local fallback="/dev/sd${letter}"
+
+            if [[ -n $session_output ]]; then
+                if printf '%s\n' "$session_output" | grep -Fq "$iqn"; then
+                    sessions_ready=$((sessions_ready + 1))
+                fi
+            fi
+
+            if [[ -L "$symlink" ]]; then
+                local resolved
+                resolved=$(readlink -f "$symlink" 2>/dev/null || true)
+                if [[ -n "$resolved" && -b "$resolved" && "$(lsblk -ndo TYPE "$resolved" 2>/dev/null)" == "disk" ]]; then
+                    devices_ready=$((devices_ready + 1))
+                    continue
+                fi
+            fi
+
+            if [[ -b "$fallback" && "$(lsblk -ndo TYPE "$fallback" 2>/dev/null)" == "disk" ]]; then
+                devices_ready=$((devices_ready + 1))
+            fi
+        done
+
+        if [[ $sessions_ready -ge $expected_count && $devices_ready -ge $expected_count ]]; then
+            log "Discovered $devices_ready/$expected_count OCI devices with active sessions"
+            return 0
+        fi
+
+        log "Waiting for OCI devices (sessions: $sessions_ready/$expected_count, devices: $devices_ready/$expected_count)"
+        sleep 2
+        udevadm trigger
+        udevadm settle
+        wait_count=$((wait_count + 1))
+    done
+
+    log "Warning: OCI devices missing after timeout (sessions/devices counts may be incomplete)"
+    return 1
+}
+
+provider_init_discovery() {
+    log "Initializing OCI iSCSI volume discovery..."
+
+    if ! systemctl is-active --quiet open-iscsi.service; then
+        log "Starting open-iscsi.service..."
+        if ! systemctl start open-iscsi.service >/dev/null 2>&1; then
+            log "Warning: Failed to start open-iscsi.service"
+        fi
+        sleep 3
+    fi
+
+    if [[ ${OCI_ATTACHMENT_COUNT:-0} -eq 0 ]]; then
+        log "Warning: No OCI attachment metadata provided; skipping iSCSI configuration"
+    else
+        configure_iscsi_from_template
+        sleep 5
+        udevadm trigger
+        udevadm settle
+        sleep 2
+    fi
+
+    wait_for_oci_devices
+
+    return 0
+}
+
+provider_find_device() {
+    local vol_id="$1"
+    local volume_index="$2"
+
+    local device_letter
+    device_letter=$(oci_device_letter "$volume_index")
+    local device_path="/dev/oracleoci/oraclevd${device_letter}"
+
+    if [[ -L "$device_path" ]]; then
+        local actual_device
+        actual_device=$(readlink -f "$device_path")
+        if [[ -b "$actual_device" ]]; then
+            echo "$actual_device"
+            return 0
+        fi
+    fi
+
+    log "OCI persistent path $device_path not found, searching active iSCSI sessions..."
+    local session_info
+    session_info=$(iscsiadm -m session -P 3 2>/dev/null || true)
+
+    if [[ -n "$session_info" ]]; then
+        local iqn=""
+        if [[ $volume_index -lt ${OCI_ATTACHMENT_COUNT:-0} ]]; then
+            iqn="${OCI_ATTACHMENT_IQNS[$volume_index]}"
+        fi
+
+        if [[ -n "$iqn" ]]; then
+            local target_device
+            target_device=$(echo "$session_info" | awk -v iqn_pattern="$iqn" '
+                /Target:/ { target = $2 }
+                /Attached scsi disk/ && target ~ iqn_pattern { print "/dev/" $4; exit }
+            ')
+
+            if [[ -n "$target_device" && -b "$target_device" ]]; then
+                log "Found device via iSCSI session for volume $vol_id: $target_device"
+                echo "$target_device"
+                return 0
+            fi
+        fi
+
+        local short_vol_id="${vol_id##*.}"
+        local target_device
+        target_device=$(echo "$session_info" | awk -v vol_id="$short_vol_id" '
+            /Target:/ { target = $2 }
+            /Attached scsi disk/ && target ~ vol_id { print "/dev/" $4; exit }
+        ')
+
+        if [[ -n "$target_device" && -b "$target_device" ]]; then
+            log "Found device by volume ID match: $target_device"
+            echo "$target_device"
+            return 0
+        fi
+    fi
+
+    log "All discovery methods failed, scanning fallback block devices..."
+    for device in /dev/sd[b-z]* /dev/vd[b-z]*; do
+        if [[ -b "$device" ]]; then
+            if [[ "$(lsblk -ndo TYPE "$device" 2>/dev/null)" != "disk" ]]; then
+                continue
+            fi
+            if lsblk -nlo MOUNTPOINT "$device" | grep -q -E '^/(|boot|var|usr|opt|home|tmp|etc)(/|$)'; then
+                continue
+            fi
+            log "Using fallback device: $device"
+            echo "$device"
+            return 0
+        fi
+    done
+
+    log "ERROR: Could not find any suitable device for volume $vol_id"
+    return 1
+}
+
+provider_log_available_devices() {
+    echo "=== OCI Device Discovery Debug Information ==="
+    echo ""
+    echo "1. OCI persistent device symlinks:"
+    if [[ -d "/dev/oracleoci" ]]; then
+        ls -la /dev/oracleoci/ 2>/dev/null || echo "  No symlinks found"
+    else
+        echo "  No /dev/oracleoci/ directory found"
+    fi
+    echo ""
+
+    echo "2. Terraform-provided iSCSI attachments:"
+    if [[ ${OCI_ATTACHMENT_COUNT:-0} -gt 0 ]]; then
+        for idx in "${!OCI_ATTACHMENT_IQNS[@]}"; do
+            local vol_id="${OCI_ATTACHMENT_VOLUME_IDS[$idx]:-unknown}"
+            local iqn="${OCI_ATTACHMENT_IQNS[$idx]:-}"
+            local ip="${OCI_ATTACHMENT_IPS[$idx]:-}"
+            local port="${OCI_ATTACHMENT_PORTS[$idx]:-}"
+            echo "  Volume: ${vol_id} | IQN: ${iqn} | Portal: ${ip}:${port}"
+        done
+    else
+        echo "  No attachment metadata available"
+    fi
+    echo ""
+
+    echo "3. iSCSI service status:"
+    if systemctl is-active --quiet open-iscsi.service; then
+        echo "  open-iscsi.service: active"
+    else
+        echo "  open-iscsi.service: inactive or failed"
+    fi
+    echo ""
+
+    echo "4. Active iSCSI sessions:"
+    local session_count
+    session_count=$(iscsiadm -m session 2>/dev/null | wc -l || echo "0")
+    echo "  Found $session_count active sessions"
+    if [[ "$session_count" -gt 0 ]]; then
+        iscsiadm -m session 2>/dev/null | sed 's/^/    /'
+    fi
+    echo ""
+
+    echo "5. Configured iSCSI nodes:"
+    local node_count
+    node_count=$(iscsiadm -m node 2>/dev/null | wc -l || echo "0")
+    echo "  Found $node_count configured nodes"
+    if [[ "$node_count" -gt 0 ]]; then
+        iscsiadm -m node 2>/dev/null | head -10 | sed 's/^/    /'
+        if [[ "$node_count" -gt 10 ]]; then
+            echo "    ... (showing first 10 of $node_count)"
+        fi
+    fi
+    echo ""
+
+    echo "6. Available block devices:"
+    lsblk -d -o NAME,SIZE,TYPE,MOUNTPOINT 2>/dev/null | grep disk | sed 's/^/    /' || echo "    No block devices found"
+    echo ""
+
+    echo "7. System information:"
+    echo "  Kernel: $(uname -r)"
+    echo "  iSCSI tools: $(iscsiadm --version 2>/dev/null | head -1 || echo "not available")"
+    echo "  jq: $(jq --version 2>/dev/null || echo "not available")"
+    echo ""
+    echo "=== End Debug Information ==="
+}

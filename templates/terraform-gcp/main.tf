@@ -31,6 +31,11 @@ provider "google" {
 # Common SSH key generation (tls_private_key, local_file, random_id) is in common.tf
 # ==============================================================================
 
+# Get current user info for OS Login
+data "google_client_openid_userinfo" "me" {}
+
+
+
 # ==============================================================================
 # VPC Network
 # ==============================================================================
@@ -135,6 +140,9 @@ locals {
   # Overlay mesh data for Ansible inventory (GCP requires overlay for proper networking - always enabled)
   overlay_data = local.overlay_data_always_on
 
+  # Volume attachment details (empty for GCP - uses direct volume attachment)
+  node_volume_attachments = {}
+
   # Generic cloud-init template (shared across providers)
   # Template is copied to .templates/ in deployment directory during init
   cloud_init_template_path = "${path.module}/.templates/cloud-init-generic.tftpl"
@@ -187,7 +195,7 @@ resource "google_compute_instance" "exasol_node" {
 
   metadata = {
     ssh-keys = local.ssh_keys_metadata
-    startup-script = templatefile(local.cloud_init_template_path, {
+    user-data = templatefile(local.cloud_init_template_path, {
       base_cloud_init = local.cloud_init_script
     })
   }

@@ -1,0 +1,14 @@
+[
+  {
+    "service": "Identity and Access Management",
+    "permissions": [
+      "Allow group <group> to manage compute-management-family in compartment <compartment>",
+      "Allow group <group> to manage instance-family in compartment <compartment>",
+      "Allow group <group> to manage volume-family in compartment <compartment>",
+      "Allow group <group> to manage virtual-network-family in compartment <compartment>",
+      "Allow group <group> to manage security-lists in compartment <compartment>",
+      "Allow group <group> to use subnets in compartment <compartment>",
+      "Allow group <group> to use vnics in compartment <compartment>"
+    ]
+  }
+]

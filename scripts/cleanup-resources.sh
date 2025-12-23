@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Source library functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/oci-utils.sh"
+source "$SCRIPT_DIR/lib/aws-utils.sh"
+source "$SCRIPT_DIR/lib/azure-utils.sh"
+source "$SCRIPT_DIR/lib/gcp-utils.sh"
+source "$SCRIPT_DIR/lib/hetzner-utils.sh"
+
 # Colors for output
 readonly COLOR_RED='\033[0;31m'
 readonly COLOR_GREEN='\033[0;32m'
@@ -129,7 +137,7 @@ if [[ -z "$PROVIDER" ]]; then
 fi
 
 case "$PROVIDER" in
-    aws|azure|gcp|hetzner|digitalocean|exoscale|libvirt)
+    aws|azure|gcp|oci|hetzner|digitalocean|exoscale|libvirt)
         ;;
     *)
         die "Unsupported provider: $PROVIDER. Supported: aws, azure, gcp, hetzner, digitalocean, exoscale, libvirt"
@@ -560,13 +568,13 @@ cleanup_aws() {
             # List instances
             # shellcheck disable=SC2016
             aws ec2 describe-instances --region "$region" \
-                --filters "Name=vpc-id,Values=$vpc" \
+                --filters "Name=vpc-id,Values=$vpc" "Name=instance-state-name,Values=pending,running,stopping,stopped,shutting-down" \
                 --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],State.Name]' \
                 --output table 2>/dev/null || true
             
             # List volumes
             aws ec2 describe-volumes --region "$region" \
-                --filters "Name=tag:VpcId,Values=$vpc" \
+                --filters "Name=tag:VpcId,Values=$vpc" "Name=status,Values=available,in-use" \
                 --query 'Volumes[].[VolumeId,Size,State]' \
                 --output table 2>/dev/null || true
         done
@@ -1325,6 +1333,79 @@ cleanup_exoscale() {
 
 
 # ============================================================================
+# OCI Cleanup
+# ============================================================================
+cleanup_oci() {
+    check_cli_tool "oci" "Install: pip install oci-cli"
+    
+    log_info "Collecting OCI resources with prefix '$PREFIX_FILTER'..."
+    
+    # Get compartment OCID
+    local compartment_ocid
+    compartment_ocid=$(get_oci_compartment_ocid)
+    
+    if [[ -z "$compartment_ocid" ]]; then
+        log_error "Could not determine compartment OCID"
+        return 1
+    fi
+    
+    # Generate summary and get resource data
+    generate_oci_cleanup_summary "$compartment_ocid" "$PREFIX_FILTER"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo ""
+        log_info "DRY RUN: Would delete the above resources"
+        return 0
+    fi
+    
+    echo ""
+    if [[ "${SKIP_CONFIRM:-false}" != "true" ]]; then
+        read -p "Delete all listed OCI resources? [y/N]: " -r
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Aborted by user"
+            return 0
+        fi
+    fi
+    
+    # Delete instances first
+    if [[ -f /tmp/oci_instances.json ]]; then
+        local instances_json
+        instances_json=$(cat /tmp/oci_instances.json)
+        local instance_count
+        instance_count=$(echo "$instances_json" | jq '. | length' 2>/dev/null || echo "0")
+        
+        if [[ "$instance_count" -gt 0 ]]; then
+            log_info "Terminating compute instances..."
+            echo "$instances_json" | jq -r '.[] | "\(.id):\(.name)"' | while IFS=: read -r id name; do
+                if [[ -n "$name" ]]; then
+                    terminate_oci_instance "$id" "$name"
+                fi
+            done
+        fi
+    fi
+    
+    # Delete volumes
+    if [[ -f /tmp/oci_volumes.json ]]; then
+        local volumes_json
+        volumes_json=$(cat /tmp/oci_volumes.json)
+        local volume_count
+        volume_count=$(echo "$volumes_json" | jq '. | length' 2>/dev/null || echo "0")
+        
+        if [[ "$volume_count" -gt 0 ]]; then
+            log_info "Deleting block volumes..."
+            echo "$volumes_json" | jq -r '.[] | "\(.id):\(.name)"' | while IFS=: read -r id name; do
+                if [[ -n "$name" ]]; then
+                    delete_oci_volume "$id" "$name"
+                fi
+            done
+        fi
+    fi
+    
+    # Cleanup temp files
+    rm -f /tmp/oci_instances.json /tmp/oci_volumes.json
+    
+    log_info "OCI cleanup completed"
+}
 # Libvirt Cleanup
 # ============================================================================
 cleanup_libvirt() {
@@ -1453,6 +1534,9 @@ case "$PROVIDER" in
         ;;
     exoscale)
         cleanup_exoscale
+        ;;
+    oci)
+        cleanup_oci
         ;;
     libvirt)
         cleanup_libvirt

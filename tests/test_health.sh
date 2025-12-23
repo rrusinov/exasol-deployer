@@ -785,6 +785,126 @@ test_health_temp_files_removed() {
     unset MOCK_HEALTH_MODE MOCK_HEALTH_ORIGINAL_IP MOCK_HEALTH_REMOTE_PRIVATE_IP
 }
 
+test_health_verbose_flag_accepted() {
+    echo ""
+    echo "Test: health --verbose flag is accepted"
+
+    setup_mock_env
+    local deploy_dir
+    deploy_dir=$(create_deployment_dir "1.2.3.4")
+
+    export MOCK_HEALTH_MODE="stable"
+    export MOCK_HEALTH_ORIGINAL_IP="1.2.3.4"
+    export MOCK_HEALTH_REMOTE_PRIVATE_IP="10.0.0.11"
+
+    if cmd_health --deployment-dir "$deploy_dir" --verbose >/dev/null 2>&1; then
+        assert_success 0 "Health command with --verbose should succeed"
+    else
+        assert_success $? "Health command with --verbose should succeed"
+    fi
+
+    cleanup_mock_env
+    cleanup_test_dir "$deploy_dir"
+    unset MOCK_HEALTH_MODE MOCK_HEALTH_ORIGINAL_IP MOCK_HEALTH_REMOTE_PRIVATE_IP
+}
+
+test_health_verbose_produces_output() {
+    echo ""
+    echo "Test: health --verbose produces output"
+
+    setup_mock_env
+    local deploy_dir
+    deploy_dir=$(create_deployment_dir "1.2.3.4")
+
+    export MOCK_HEALTH_MODE="stable"
+    export MOCK_HEALTH_ORIGINAL_IP="1.2.3.4"
+    export MOCK_HEALTH_REMOTE_PRIVATE_IP="10.0.0.11"
+
+    local output
+    output=$(cmd_health --deployment-dir "$deploy_dir" --verbose 2>&1)
+
+    assert_contains "$output" "Health report" "Verbose output should contain health report"
+
+    cleanup_mock_env
+    cleanup_test_dir "$deploy_dir"
+    unset MOCK_HEALTH_MODE MOCK_HEALTH_ORIGINAL_IP MOCK_HEALTH_REMOTE_PRIVATE_IP
+}
+
+test_health_verbose_vs_normal_output() {
+    echo ""
+    echo "Test: health --verbose vs normal output comparison"
+
+    setup_mock_env
+    local deploy_dir
+    deploy_dir=$(create_deployment_dir "1.2.3.4")
+
+    export MOCK_HEALTH_MODE="stable"
+    export MOCK_HEALTH_ORIGINAL_IP="1.2.3.4"
+    export MOCK_HEALTH_REMOTE_PRIVATE_IP="10.0.0.11"
+
+    local normal_output
+    normal_output=$(cmd_health --deployment-dir "$deploy_dir" 2>&1)
+    
+    local verbose_output
+    verbose_output=$(cmd_health --deployment-dir "$deploy_dir" --verbose 2>&1)
+
+    # Both should produce output (verbose doesn't add extra detail currently)
+    assert_contains "$normal_output" "Health report" "Normal output should contain health report"
+    assert_contains "$verbose_output" "Health report" "Verbose output should contain health report"
+
+    cleanup_mock_env
+    cleanup_test_dir "$deploy_dir"
+    unset MOCK_HEALTH_MODE MOCK_HEALTH_ORIGINAL_IP MOCK_HEALTH_REMOTE_PRIVATE_IP
+}
+
+test_health_verbose_with_json_output() {
+    echo ""
+    echo "Test: health --verbose with --output-format json"
+
+    setup_mock_env
+    local deploy_dir
+    deploy_dir=$(create_deployment_dir "1.2.3.4")
+
+    export MOCK_HEALTH_MODE="stable"
+    export MOCK_HEALTH_ORIGINAL_IP="1.2.3.4"
+    export MOCK_HEALTH_REMOTE_PRIVATE_IP="10.0.0.11"
+
+    local json_output
+    json_output=$(cmd_health --deployment-dir "$deploy_dir" --verbose --output-format json 2>/dev/null)
+
+    # Should produce valid JSON
+    local status
+    status=$(echo "$json_output" | jq -r '.status' 2>/dev/null || echo "")
+    assert_equals "$status" "healthy" "JSON output with --verbose should be valid"
+
+    cleanup_mock_env
+    cleanup_test_dir "$deploy_dir"
+    unset MOCK_HEALTH_MODE MOCK_HEALTH_ORIGINAL_IP MOCK_HEALTH_REMOTE_PRIVATE_IP
+}
+
+test_health_verbose_with_update_flag() {
+    echo ""
+    echo "Test: health --verbose with --update flag"
+
+    setup_mock_env
+    local deploy_dir
+    deploy_dir=$(create_deployment_dir "1.2.3.4")
+
+    export MOCK_HEALTH_MODE="stable"
+    export MOCK_HEALTH_ORIGINAL_IP="1.2.3.4"
+    export MOCK_HEALTH_REMOTE_PRIVATE_IP="10.0.0.11"
+
+    if cmd_health --deployment-dir "$deploy_dir" --verbose --update >/dev/null 2>&1; then
+        assert_success 0 "Health command with --verbose --update should succeed"
+    else
+        assert_success $? "Health command with --verbose --update should succeed"
+    fi
+
+    cleanup_mock_env
+    cleanup_test_dir "$deploy_dir"
+    unset MOCK_HEALTH_MODE MOCK_HEALTH_ORIGINAL_IP MOCK_HEALTH_REMOTE_PRIVATE_IP
+}
+
 test_health_succeeds_when_all_checks_pass
 test_health_updates_metadata_when_ip_changes
 test_health_json_output_with_ssh_failure
@@ -792,6 +912,11 @@ test_health_json_output_with_service_failures
 test_health_json_output_healthy_state
 test_health_multihost_mixed_results
 test_health_temp_files_removed
+test_health_verbose_flag_accepted
+test_health_verbose_produces_output
+test_health_verbose_vs_normal_output
+test_health_verbose_with_json_output
+test_health_verbose_with_update_flag
 test_health_status_update_from_failed
 
 test_summary

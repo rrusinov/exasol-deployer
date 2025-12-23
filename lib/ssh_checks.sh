@@ -66,11 +66,16 @@ ssh_run_with_retries() {
     local ssh_output=""
     for (( attempt = 1; attempt <= attempts; attempt++ )); do
         SSH_RETRY_ATTEMPT_COUNT=$attempt
-        if ssh_output=$(ssh -F "$ssh_config" \
+        local start_time=$(date +%s)
+        
+        if ssh_output=$(timeout "$timeout" ssh -F "$ssh_config" \
+            -n -T \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout="$timeout" \
+            -o ConnectTimeout=5 \
+            -o ServerAliveInterval=5 \
+            -o ServerAliveCountMax=2 \
             "$host" "${command[@]}" 2>&1); then
             SSH_RETRY_LAST_ERROR=""
             return 0
@@ -78,7 +83,19 @@ ssh_run_with_retries() {
 
         SSH_RETRY_LAST_ERROR="$ssh_output"
         if (( attempt < attempts )) && (( retry_delay > 0 )); then
-            sleep "$retry_delay"
+            local end_time=$(date +%s)
+            local duration=$((end_time - start_time))
+            
+            # Use shorter delay for quick failures (< 3 seconds)
+            local actual_delay=$retry_delay
+            if (( duration < 3 )); then
+                actual_delay=$((retry_delay / 3))  # Use 1/3 of normal delay
+                if (( actual_delay < 2 )); then
+                    actual_delay=2  # Minimum 2 seconds
+                fi
+            fi
+            
+            sleep "$actual_delay"
         fi
     done
 

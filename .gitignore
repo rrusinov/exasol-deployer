@@ -49,6 +49,7 @@ tmp*/
 
 # Generated reports and documentation
 limits-report.html
+test-report.html
 
 # Cloud and deployment artifacts
 .cloude*
@@ -59,3 +60,4 @@ limits-report.html
 
 # Project specific
 AGENTS.md
+

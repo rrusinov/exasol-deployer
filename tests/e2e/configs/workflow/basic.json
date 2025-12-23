@@ -25,7 +25,7 @@
         "health_status[*].database==ok"
       ],     
       "retry": {
-        "max_attempts": 6,
+        "max_attempts": 60,
         "delay_seconds": 10
       }
     },
@@ -43,7 +43,7 @@
         "health_status[*].database!=ok"
       ],
       "retry": {
-        "max_attempts": 6,
+        "max_attempts": 60,
         "delay_seconds": 10
       }
     },
@@ -61,7 +61,7 @@
         "health_status[*].database==ok"
       ],
       "retry": {
-        "max_attempts": 6,
+        "max_attempts": 60,
         "delay_seconds": 10
       }
     },
@@ -79,7 +79,7 @@
         "health_status[*].database!=ok"
       ],
       "retry": {
-        "max_attempts": 6,
+        "max_attempts": 60,
         "delay_seconds": 10
       }
     }
