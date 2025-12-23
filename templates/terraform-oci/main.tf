@@ -3,7 +3,7 @@ terraform {
   required_providers {
     oci = {
       source  = "oracle/oci"
-      version = "~> 5.0"
+      version = "~> 7.0"
     }
     local = {
       source  = "hashicorp/local"
@@ -17,6 +17,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.9"
+    }
   }
 }
 
@@ -29,6 +33,10 @@ provider "oci" {
   fingerprint      = var.oci_fingerprint
   private_key_path = var.oci_private_key_path
   region           = var.oci_region
+  
+  # Add retry configuration for intermittent authentication failures
+  retry_duration_seconds = 300
+  disable_auto_retries   = false
 }
 
 # ==============================================================================
@@ -308,6 +316,13 @@ resource "oci_core_volume" "exasol_data" {
   }
 }
 
+resource "time_sleep" "volume_attachment_delay" {
+  count           = var.node_count * var.data_volumes_per_node
+  create_duration = "${count.index * 5}s"  # Stagger attachments by 5 seconds each
+  
+  depends_on = [oci_core_instance.exasol]
+}
+
 resource "oci_core_volume_attachment" "exasol_data" {
   count           = var.node_count * var.data_volumes_per_node
   attachment_type = "iscsi"
@@ -316,14 +331,17 @@ resource "oci_core_volume_attachment" "exasol_data" {
   display_name    = "exasol-data-attachment-${floor(count.index / var.data_volumes_per_node) + 1}-${(count.index % var.data_volumes_per_node) + 1}-${random_id.instance.hex}"
   device          = "/dev/oracleoci/oraclevd${substr("bcdefghijklmnopqrstuvwxyz", count.index % var.data_volumes_per_node, 1)}"
 
-  # Timeouts for volume attachment operations
+  # Timeouts for volume attachment operations with retry-friendly values
   timeouts {
-    create = "10m"
-    delete = "10m"
+    create = "15m"  # Increased for retry scenarios
+    delete = "15m"  # Increased for retry scenarios
   }
 
-  # Wait for instance to be running before attaching volumes
-  depends_on = [oci_core_instance.exasol]
+  # Wait for instance to be running and staggered delay before attaching volumes
+  depends_on = [
+    oci_core_instance.exasol,
+    time_sleep.volume_attachment_delay
+  ]
 }
 
 # Power Control - OCI instances use manual power control
